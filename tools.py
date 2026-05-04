@@ -4,6 +4,7 @@ import json
 import os
 import re
 import shlex
+import shutil
 import subprocess
 import time
 import webbrowser
@@ -11,7 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 import requests
-from config import CONFIG
+from config import CONFIG, VISUAL_STATE_PATH
 from memory import MemoryStore
 from episodic_memory import EpisodicMemory
 from semantic_memory import SemanticMemory
@@ -31,65 +32,88 @@ class ToolResult:
 
 HARDCODED_HA_SCRIPTS: dict[str, str] = {
     # Lights
-    "lights on": "jarvis_lights_on",
-    "turn on lights": "jarvis_lights_on",
-    "turn on my lights": "jarvis_lights_on",
-    "lights off": "jarvis_lights_off",
-    "turn off lights": "jarvis_lights_off",
-    "turn off my lights": "jarvis_lights_off",
-    "dim lights": "jarvis_lights_dim",
-    "lights dim": "jarvis_lights_dim",
-    "brighten lights": "jarvis_lights_brighten",
-    "lights brighten": "jarvis_lights_brighten",
-    "default lights": "jarvis_lights_default",
-    "natural lights": "jarvis_lights_natural_75",
-    "red lights": "jarvis_lights_red",
-    "blue lights": "jarvis_lights_blue",
-    "green lights": "jarvis_lights_green",
-    "purple lights": "jarvis_lights_purple",
-    "movie mode": "jarvis_movie_mode",
-    "work mode": "jarvis_work_mode",
-    "night mode": "jarvis_night_mode",
-    "party mode": "jarvis_party_mode",
+    "lights on": "jarvis_lights_power_on",
+    "lights off": "jarvis_lights_power_off",
+    "dim lights": "jarvis_lights_brightness_down",
+    "brighten lights": "jarvis_lights_brightness_up",
+    "movie mode": "jarvis_lights_scene_movie",
+    "work mode": "jarvis_lights_scene_work",
+    "night mode": "jarvis_lights_scene_night",
+    "disco mode": "jarvis_lights_scene_disco",
+    "red lights": "jarvis_lights_scene_red",
+    "blue lights": "jarvis_lights_scene_blue",
+    "green lights": "jarvis_lights_scene_green",
+    "purple lights": "jarvis_lights_scene_purple",
     # Xbox
-    "xbox on": "jarvis_xbox_on",
-    "turn on xbox": "jarvis_xbox_on",
-    "xbox off": "jarvis_xbox_off",
-    "turn off xbox": "jarvis_xbox_off",
-    "pause xbox": "jarvis_xbox_pause",
-    "resume xbox": "jarvis_xbox_resume",
-    "play xbox": "jarvis_xbox_resume",
-    "xbox youtube": "jarvis_xbox_youtube",
-    "youtube on xbox": "jarvis_xbox_youtube",
-    "xbox netflix": "jarvis_xbox_netflix",
-    "netflix on xbox": "jarvis_xbox_netflix",
-    "xbox spotify": "jarvis_xbox_spotify",
-    "spotify on xbox": "jarvis_xbox_spotify",
-    "watch youtube": "jarvis_watch_youtube",
-    "watch netflix": "jarvis_watch_netflix",
-    "play spotify": "jarvis_play_spotify",
-    "xbox volume up": "jarvis_xbox_volume_up",
-    "volume up on xbox": "jarvis_xbox_volume_up",
-    "xbox volume down": "jarvis_xbox_volume_down",
-    "volume down on xbox": "jarvis_xbox_volume_down",
-    "good night": "jarvis_good_night",
+    "turn on xbox": "jarvis_xbox_power_on",
+    "turn off xbox": "jarvis_xbox_power_off",
+    "open youtube": "jarvis_xbox_app_youtube",
+    "open netflix": "jarvis_xbox_app_netflix",
+    "open spotify": "jarvis_xbox_app_spotify",
+    "pause": "jarvis_xbox_media_pause",
+    "resume": "jarvis_xbox_media_resume",
+    "volume up": "jarvis_xbox_volume_up",
+    "volume down": "jarvis_xbox_volume_down",
+    # Routines
+    "watch youtube": "jarvis_routine_watch_youtube",
+    "watch netflix": "jarvis_routine_watch_netflix",
+    "play spotify": "jarvis_routine_play_spotify",
+    "good night": "jarvis_routine_good_night",
 }
 EXACT_HA_SCRIPT_NAMES = set(HARDCODED_HA_SCRIPTS.values())
 
+# Ordered fallback binary candidates for apps that may not be in the user config
+_BUILTIN_APP_CMDS: dict[str, list[str]] = {
+    "code":                ["code", "code-insiders", "flatpak run com.visualstudio.code"],
+    "vscode":              ["code", "code-insiders", "flatpak run com.visualstudio.code"],
+    "visual studio code":  ["code", "code-insiders"],
+    "vs code":             ["code", "code-insiders"],
+    "visual studio":       ["code", "code-insiders"],
+    "dolphin":             ["dolphin", "nautilus", "xdg-open"],
+    "files":               ["dolphin", "nautilus", "nemo", "thunar"],
+    "file manager":        ["dolphin", "nautilus"],
+    "my files":            ["dolphin", "nautilus"],
+    "file explorer":       ["dolphin", "nautilus"],
+    "spotify":             ["spotify", "flatpak run com.spotify.Client"],
+    "firefox":             ["firefox"],
+    "chrome":              ["google-chrome", "chromium"],
+    "chromium":            ["chromium", "google-chrome"],
+    "terminal":            ["konsole", "gnome-terminal", "xterm"],
+}
+
+# Process names for pgrep running-check
+_APP_PROCESS_NAMES: dict[str, str] = {
+    "spotify":  "spotify",
+    "firefox":  "firefox",
+    "code":     "code",
+    "vscode":   "code",
+    "dolphin":  "dolphin",
+    "chromium": "chromium",
+    "chrome":   "chrome",
+}
+
 
 def run_ha_script(script_name: str) -> ToolResult:
+    import os
+    import requests
+
     token = os.getenv("HOME_ASSISTANT_API_KEY", "").strip()
     if not token:
         return ToolResult(False, "HOME_ASSISTANT_API_KEY is not set.")
+
     base_url = (
         os.getenv("HOME_ASSISTANT_URL", "http://localhost:8123").strip().rstrip("/")
     )
+    if not base_url:
+        return ToolResult(False, "HOME_ASSISTANT_URL is not set.")
+
     url = f"{base_url}/api/services/script/turn_on"
     headers = {
         "Authorization": f"Bearer {token}",
         "Content-Type": "application/json",
     }
     data = {"entity_id": f"script.{script_name}"}
+
     try:
         response = requests.post(url, headers=headers, json=data, timeout=5)
         if response.status_code >= 400:
@@ -140,6 +164,18 @@ ACTION_ENUM = [
     "shutdown",
     "confirm_pending",
     "cancel_pending",
+    "background_task",
+    # Code / git tools
+    "run_python",
+    "run_shell",
+    "search_codebase",
+    "git_status",
+    "git_diff",
+    "git_commit",
+    # Session / awareness tools
+    "session_wrapup",
+    "system_status",
+    "get_priorities",
 ]
 
 
@@ -168,6 +204,10 @@ def _step_schema() -> dict[str, Any]:
             "include_screenshot": {"type": "boolean"},
             "path": {"type": "string"},
             "content": {"type": "string"},
+            "command": {"type": "string"},
+            "file": {"type": "string"},
+            "message": {"type": "string"},
+            "confirmed": {"type": "boolean"},
             "steps": {
                 "type": "array",
                 "items": {
@@ -223,6 +263,7 @@ class ToolRegistry:
             working=self.working,
             episodes=self.episodes,
         )
+        self.worker_pool: Any | None = None  # set by main.py after pool starts
 
     def schemas(self) -> list[dict[str, Any]]:
         return [
@@ -263,6 +304,10 @@ class ToolRegistry:
                         "include_screenshot": {"type": "boolean"},
                         "path": {"type": "string"},
                         "content": {"type": "string"},
+                        "command": {"type": "string"},
+                        "file": {"type": "string"},
+                        "message": {"type": "string"},
+                        "confirmed": {"type": "boolean"},
                         "steps": {
                             "type": "array",
                             "items": _step_schema(),
@@ -348,12 +393,53 @@ class ToolRegistry:
         return self.execute(payload)
 
     def _launch(self, cmd: str, cwd: str | None = None) -> None:
-        subprocess.Popen(
-            shlex.split(cmd),
-            cwd=cwd or None,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
+        try:
+            subprocess.Popen(
+                shlex.split(cmd),
+                cwd=cwd or None,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+        except (FileNotFoundError, PermissionError, OSError) as exc:
+            log_event("launch_error", {"cmd": cmd, "error": str(exc)})
+            raise
+
+    def _launch_with_fallback(self, app_key: str, cwd: str | None = None) -> ToolResult:
+        """Try app from config first, then _BUILTIN_APP_CMDS candidates."""
+        # Config takes priority
+        cmd = CONFIG.get("apps", {}).get(app_key)
+        if cmd:
+            try:
+                self._launch(cmd, cwd=cwd)
+                return ToolResult(True, f"Opened {app_key}.")
+            except Exception as exc:
+                log_event("open_app_config_failed", {"app": app_key, "cmd": cmd, "error": str(exc)})
+
+        # Try builtin candidates in order
+        candidates = _BUILTIN_APP_CMDS.get(app_key) or _BUILTIN_APP_CMDS.get(app_key.replace("-", " ")) or []
+        for candidate in candidates:
+            binary = shlex.split(candidate)[0]
+            if binary == "xdg-open":
+                # xdg-open doesn't need which check
+                try:
+                    subprocess.Popen(
+                        [binary, str(Path.home())],
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                    )
+                    return ToolResult(True, f"Opened {app_key} via {binary}.")
+                except Exception as exc:
+                    log_event("open_app_fallback_failed", {"app": app_key, "binary": binary, "error": str(exc)})
+                    continue
+            if shutil.which(binary):
+                try:
+                    self._launch(candidate, cwd=cwd)
+                    return ToolResult(True, f"Opened {app_key} via {binary}.")
+                except Exception as exc:
+                    log_event("open_app_fallback_failed", {"app": app_key, "binary": binary, "error": str(exc)})
+                    continue
+
+        return ToolResult(False, f"Could not find a way to open {app_key}. Checked config and built-in fallbacks.")
 
     def _open_app_key(self, app_key: str, cwd: str | None = None) -> ToolResult:
         cmd = CONFIG.get("apps", {}).get(app_key)
@@ -469,30 +555,60 @@ class ToolRegistry:
     def _normalize_ha_script_name(self, raw_name: str) -> str:
         norm = raw_name.lower().replace("-", " ").replace("_", " ")
         norm = " ".join(norm.split())
-        aliases = {
-            "movie mode": "movie_mode_full",
-            "start movie mode": "movie_mode_full",
-            "turn on a movie": "movie_mode_full",
-            "turn on the movie": "movie_mode_full",
-            "put on a movie": "movie_mode_full",
-            "watch a movie": "movie_mode_full",
-            "movie mode full": "movie_mode_full",
-            "start movie mode on xbox": "movie_mode_full",
-            "movie mode on xbox": "movie_mode_full",
-            "netflix": "netflix_on_xbox",
-            "netflix on xbox": "netflix_on_xbox",
-            "open netflix on xbox": "netflix_on_xbox",
-            "start netflix on xbox": "netflix_on_xbox",
+
+        # if already an exact normalized HA script id, keep it
+        if raw_name in EXACT_HA_SCRIPT_NAMES:
+            return raw_name
+
+        alias_map = {
+            # Lights
+            "lights on": "jarvis_lights_power_on",
+            "turn on lights": "jarvis_lights_power_on",
+            "turn on my lights": "jarvis_lights_power_on",
+            "lights off": "jarvis_lights_power_off",
+            "turn off lights": "jarvis_lights_power_off",
+            "turn off my lights": "jarvis_lights_power_off",
+            "dim lights": "jarvis_lights_brightness_down",
+            "brighten lights": "jarvis_lights_brightness_up",
+            "default lights": "jarvis_lights_scene_default",
+            "natural lights": "jarvis_lights_scene_natural_75",
+            "red lights": "jarvis_lights_scene_red",
+            "blue lights": "jarvis_lights_scene_blue",
+            "green lights": "jarvis_lights_scene_green",
+            "purple lights": "jarvis_lights_scene_purple",
+            "movie mode": "jarvis_lights_scene_movie",
+            "work mode": "jarvis_lights_scene_work",
+            "night mode": "jarvis_lights_scene_night",
+            "disco mode": "jarvis_lights_scene_disco",
+            # Xbox
+            "turn on xbox": "jarvis_xbox_power_on",
+            "turn off xbox": "jarvis_xbox_power_off",
+            "youtube on xbox": "jarvis_xbox_app_youtube",
+            "open youtube on xbox": "jarvis_xbox_app_youtube",
+            "netflix on xbox": "jarvis_xbox_app_netflix",
+            "open netflix on xbox": "jarvis_xbox_app_netflix",
+            "spotify on xbox": "jarvis_xbox_app_spotify",
+            "open spotify on xbox": "jarvis_xbox_app_spotify",
+            "pause xbox": "jarvis_xbox_media_pause",
+            "resume xbox": "jarvis_xbox_media_resume",
+            # Routines
+            "watch youtube": "jarvis_routine_watch_youtube",
+            "watch netflix": "jarvis_routine_watch_netflix",
+            "play spotify": "jarvis_routine_play_spotify",
+            "good night": "jarvis_routine_good_night",
         }
-        chosen = aliases.get(norm)
+
+        chosen = alias_map.get(norm)
         if chosen:
             return chosen
-        routines_cfg = CONFIG.get("routines", {})
-        for key in routines_cfg.keys():
-            key_norm = key.lower().replace("-", " ").replace("_", " ")
-            key_norm = " ".join(key_norm.split())
-            if key_norm == norm or norm in key_norm or key_norm in norm:
-                return key
+
+        # allow normalized exact matches by comparing space-normalized ids
+        for exact_name in EXACT_HA_SCRIPT_NAMES:
+            exact_norm = exact_name.lower().replace("_", " ").replace("-", " ")
+            exact_norm = " ".join(exact_norm.split())
+            if exact_norm == norm:
+                return exact_name
+
         return raw_name.strip().lower().replace(" ", "_")
 
     def _match_ha_script_from_text(self, text: str) -> str:
@@ -511,7 +627,7 @@ class ToolRegistry:
                     "turn on my lights",
                     "lights on",
                 ],
-                "jarvis_lights_on",
+                "jarvis_lights_power_on",
             ),
             (
                 [
@@ -521,11 +637,11 @@ class ToolRegistry:
                     "turn off my lights",
                     "lights off",
                 ],
-                "jarvis_lights_off",
+                "jarvis_lights_power_off",
             ),
             (
                 ["dim the lights", "dim my lights", "dim lights", "lights dim"],
-                "jarvis_lights_dim",
+                "jarvis_lights_brightness_down",
             ),
             (
                 [
@@ -534,19 +650,19 @@ class ToolRegistry:
                     "brighten lights",
                     "lights brighten",
                 ],
-                "jarvis_lights_brighten",
+                "jarvis_lights_brightness_up",
             ),
             (
                 ["default lights", "lights default", "reset lights"],
-                "jarvis_lights_default",
+                "jarvis_lights_scene_default",
             ),
             (
                 ["natural lights", "lights natural", "natural 75"],
-                "jarvis_lights_natural_75",
+                "jarvis_lights_scene_natural_75",
             ),
             (
                 ["red lights", "lights red", "turn lights red", "make the lights red"],
-                "jarvis_lights_red",
+                "jarvis_lights_scene_red",
             ),
             (
                 [
@@ -555,7 +671,7 @@ class ToolRegistry:
                     "turn lights blue",
                     "make the lights blue",
                 ],
-                "jarvis_lights_blue",
+                "jarvis_lights_scene_blue",
             ),
             (
                 [
@@ -564,7 +680,7 @@ class ToolRegistry:
                     "turn lights green",
                     "make the lights green",
                 ],
-                "jarvis_lights_green",
+                "jarvis_lights_scene_green",
             ),
             (
                 [
@@ -573,11 +689,11 @@ class ToolRegistry:
                     "turn lights purple",
                     "make the lights purple",
                 ],
-                "jarvis_lights_purple",
+                "jarvis_lights_scene_purple",
             ),
             (
                 ["movie mode", "set movie mode", "movie lights", "watch a movie"],
-                "jarvis_movie_mode",
+                "jarvis_lights_scene_movie",
             ),
             (
                 [
@@ -586,39 +702,55 @@ class ToolRegistry:
                     "work lights",
                     "lets get to work lights",
                 ],
-                "jarvis_work_mode",
+                "jarvis_lights_scene_work",
             ),
             (
                 ["night mode", "set night mode", "good night lights"],
-                "jarvis_night_mode",
-            ),
-            (["party mode", "turn on party mode"], "jarvis_party_mode"),
-            (["xbox on", "turn on xbox", "power on xbox"], "jarvis_xbox_on"),
-            (["xbox off", "turn off xbox", "power off xbox"], "jarvis_xbox_off"),
-            (
-                [
-                    "open youtube on xbox",
-                    "youtube on xbox",
-                    "resume youtube on the xbox",
-                    "resume youtube on xbox",
-                ],
-                "jarvis_xbox_youtube",
+                "jarvis_lights_scene_night",
             ),
             (
-                ["open netflix on xbox", "netflix on xbox", "resume netflix on xbox"],
-                "jarvis_xbox_netflix",
+                ["disco mode", "turn on disco mode", "Activate disco mode"],
+                "jarvis_lights_scene_party",
+            ),
+            (
+                ["xbox on", "turn on xbox", "power on xbox"],
+                "jarvis_xbox_power_on",
+            ),
+            (
+                ["xbox off", "turn off xbox", "power off xbox"],
+                "jarvis_xbox_power_off",
+            ),
+            (
+                ["open youtube on xbox", "youtube on xbox"],
+                "jarvis_xbox_app_youtube",
+            ),
+            (
+                ["open netflix on xbox", "netflix on xbox"],
+                "jarvis_xbox_app_netflix",
             ),
             (
                 ["open spotify on xbox", "spotify on xbox", "play spotify on xbox"],
-                "jarvis_xbox_spotify",
+                "jarvis_xbox_app_spotify",
             ),
-            (["watch youtube", "watch youtube on xbox"], "jarvis_watch_youtube"),
-            (["watch netflix", "watch netflix on xbox"], "jarvis_watch_netflix"),
-            (["play spotify", "play spotify on xbox"], "jarvis_play_spotify"),
-            (["pause the xbox", "pause xbox", "xbox pause"], "jarvis_xbox_pause"),
+            (
+                ["watch youtube", "watch youtube on xbox"],
+                "jarvis_routine_watch_youtube",
+            ),
+            (
+                ["watch netflix", "watch netflix on xbox"],
+                "jarvis_routine_watch_netflix",
+            ),
+            (
+                ["play spotify"],
+                "jarvis_routine_play_spotify",
+            ),
+            (
+                ["pause the xbox", "pause xbox", "xbox pause"],
+                "jarvis_xbox_media_pause",
+            ),
             (
                 ["resume the xbox", "resume xbox", "xbox resume", "play the xbox"],
-                "jarvis_xbox_resume",
+                "jarvis_xbox_media_resume",
             ),
             (
                 ["xbox volume up", "volume up on xbox", "turn xbox volume up"],
@@ -628,59 +760,63 @@ class ToolRegistry:
                 ["xbox volume down", "volume down on xbox", "turn xbox volume down"],
                 "jarvis_xbox_volume_down",
             ),
-            (["good night"], "jarvis_good_night"),
+            (
+                ["good night"],
+                "jarvis_routine_good_night",
+            ),
         ]
 
         for phrases, script_name in phrase_order:
             if any(p in q for p in phrases):
                 return script_name
 
-        # fallback token logic for shorter utterances
+        # fallback token logic
         if "light" in q or "lights" in q:
             if "off" in q:
-                return "jarvis_lights_off"
+                return "jarvis_lights_power_off"
             if "on" in q:
-                return "jarvis_lights_on"
+                return "jarvis_lights_power_on"
             if "dim" in q:
-                return "jarvis_lights_dim"
+                return "jarvis_lights_brightness_down"
             if "bright" in q:
-                return "jarvis_lights_brighten"
+                return "jarvis_lights_brightness_up"
             if "red" in q:
-                return "jarvis_lights_red"
+                return "jarvis_lights_scene_red"
             if "blue" in q:
-                return "jarvis_lights_blue"
+                return "jarvis_lights_scene_blue"
             if "green" in q:
-                return "jarvis_lights_green"
+                return "jarvis_lights_scene_green"
             if "purple" in q:
-                return "jarvis_lights_purple"
+                return "jarvis_lights_scene_purple"
             if "movie" in q:
-                return "jarvis_movie_mode"
+                return "jarvis_lights_scene_movie"
             if "work" in q:
-                return "jarvis_work_mode"
+                return "jarvis_lights_scene_work"
             if "night" in q:
-                return "jarvis_night_mode"
-            if "party" in q:
-                return "jarvis_party_mode"
+                return "jarvis_lights_scene_night"
+            if "disco" in q:
+                return "jarvis_lights_scene_disco"
 
         if "xbox" in q:
-            if "pause" in q:
-                return "jarvis_xbox_pause"
-            if "resume" in q or "play" in q:
-                return "jarvis_xbox_resume"
-            if "off" in q:
-                return "jarvis_xbox_off"
-            if "on" in q:
-                return "jarvis_xbox_on"
-            if "youtube" in q:
-                return "jarvis_xbox_youtube"
-            if "netflix" in q:
-                return "jarvis_xbox_netflix"
-            if "spotify" in q:
-                return "jarvis_xbox_spotify"
             if "volume up" in q:
                 return "jarvis_xbox_volume_up"
             if "volume down" in q:
                 return "jarvis_xbox_volume_down"
+            if "pause" in q:
+                return "jarvis_xbox_media_pause"
+            if "resume" in q or "play" in q:
+                return "jarvis_xbox_media_resume"
+            if "off" in q:
+                return "jarvis_xbox_power_off"
+            if "on" in q:
+                return "jarvis_xbox_power_on"
+            if "youtube" in q:
+                return "jarvis_xbox_app_youtube"
+            if "netflix" in q:
+                return "jarvis_xbox_app_netflix"
+            if "spotify" in q:
+                return "jarvis_xbox_app_spotify"
+
         return ""
 
     def _extract_response_text(self, payload: dict[str, Any]) -> str:
@@ -1109,17 +1245,78 @@ class ToolRegistry:
             )
             return ToolResult(True, "Collected desktop state.", data)
         if action == "screen_context":
-            # Safe fallback to desktop state if no dedicated screen_context store is wired yet
-            windows = self._list_windows()
-            active = self._get_active_window()
+            # Read workspace state from visual_state.json — no screenshot needed
+            try:
+                vs = json.loads(VISUAL_STATE_PATH.read_text(encoding="utf-8"))
+            except Exception:
+                vs = {}
+            active_project = str(vs.get("active_project_name") or "unknown")
+            active_window = vs.get("active_window") or {}
+            win_title = str(active_window.get("title") or "unknown") if isinstance(active_window, dict) else "unknown"
+            xbox_state = vs.get("xbox_state")
+            xbox_app = str(vs.get("xbox_app") or "")
+            xbox_media = str(vs.get("xbox_media_title") or "")
+            summary_parts = [
+                f"Active project: {active_project}",
+                f"Active window: {win_title}",
+            ]
+            if xbox_state:
+                summary_parts.append(f"Xbox: {xbox_state}" + (f" — {xbox_app}" if xbox_app else ""))
             data = {
-                "active_window": active,
-                "windows": windows,
+                "active_project": active_project,
+                "active_window": active_window,
+                "xbox_state": xbox_state,
+                "xbox_app": xbox_app,
+                "xbox_media_title": xbox_media,
+                "summary": " | ".join(summary_parts),
             }
-            return ToolResult(True, "Loaded current screen context.", data)
+            log_event("screen_context_read", {"project": active_project, "window": win_title[:60]})
+            return ToolResult(True, " | ".join(summary_parts), data)
         if action == "open_app":
             app_key = str(payload.get("app", "")).strip().lower()
-            result = self._open_app_key(app_key)
+
+            # Check if app is already running — require BOTH pgrep AND wmctrl confirmation
+            # to avoid false-positive "already open" responses.
+            proc_name = _APP_PROCESS_NAMES.get(app_key)
+            pgrep_running = False
+            wmctrl_found = False
+            if proc_name:
+                try:
+                    pg = subprocess.run(
+                        ["pgrep", "-i", proc_name],
+                        capture_output=True, timeout=2.0,
+                    )
+                    pgrep_running = pg.returncode == 0
+                except Exception as exc:
+                    log_event("open_app_pgrep_error", {"app": app_key, "error": str(exc)})
+                if pgrep_running and command_exists("wmctrl"):
+                    try:
+                        wm_out = subprocess.run(
+                            ["wmctrl", "-l"],
+                            capture_output=True, text=True, timeout=2.0,
+                        )
+                        wmctrl_found = any(
+                            proc_name.lower() in line.lower() or app_key.lower() in line.lower()
+                            for line in wm_out.stdout.splitlines()
+                        )
+                    except Exception:
+                        pass
+
+            if pgrep_running and wmctrl_found:
+                # Both sources confirm app is running — bring it to focus
+                log_event("open_app_already_running", {"app": app_key, "proc": proc_name})
+                if command_exists("wmctrl"):
+                    subprocess.Popen(
+                        ["wmctrl", "-a", proc_name],
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                    )
+                self.working.write({"last_tool_action": "open_app"})
+                return ToolResult(True, f"{app_key.capitalize()} is already open.")
+            # Otherwise launch fresh — pgrep-only match or neither confirmed
+
+            # Launch with config → builtin fallback chain
+            result = self._launch_with_fallback(app_key)
             if result.ok:
                 self._episode(
                     "tool_action",
@@ -1128,6 +1325,8 @@ class ToolRegistry:
                     data={"action": action, "app": app_key},
                 )
                 self.working.write({"last_tool_action": "open_app"})
+            else:
+                log_event("open_app_failed", {"app": app_key, "message": result.message})
             return result
         if action == "close_app":
             app_key = str(payload.get("app", "")).strip().lower()
@@ -1628,4 +1827,350 @@ class ToolRegistry:
         if action == "shutdown":
             run_cmd(["systemctl", "poweroff"])
             return ToolResult(True, "Shutting down.")
+        if action == "background_task":
+            description = str(
+                payload.get("description") or payload.get("task") or payload.get("intent") or payload.get("request_text") or ""
+            ).strip()
+            task_context = payload.get("context") or {}
+            if not description:
+                log_event("background_task_no_description", {"payload_keys": list(payload.keys())})
+                return ToolResult(False, "No task description provided.")
+            if self.worker_pool is None:
+                return ToolResult(False, "Background worker pool is not running.")
+            context = {**self.working.read(), **task_context}
+            self.worker_pool.submit(description, context)
+            short = description[:60] + ("…" if len(description) > 60 else "")
+            log_event("background_task_submitted", {"description": short})
+            return ToolResult(True, f"Background task started: {short}")
+
+        if action == "run_python":
+            project_path = str(payload.get("project_path") or "").strip()
+            command = str(payload.get("command") or "").strip()
+            if not command:
+                log_event("run_python_error", {"error": "no command"})
+                return ToolResult(ok=False, message="run_python: no command provided")
+            _PYTHON_BLOCKED = [
+                "rm ", "rmtree", "os.remove", "shutil.rmtree",
+                "sys.exit(0)", "subprocess.call", "os.system",
+            ]
+            if any(p in command for p in _PYTHON_BLOCKED):
+                log_event("run_python_blocked", {"command": command[:120]})
+                return ToolResult(ok=False, message="run_python: blocked — command contains restricted patterns")
+            python_bin = "python3"
+            if project_path:
+                venv_python = Path(project_path) / ".venv" / "bin" / "python3"
+                if venv_python.exists():
+                    python_bin = str(venv_python)
+            try:
+                cmd_args = (
+                    [python_bin, command]
+                    if command.endswith(".py")
+                    else [python_bin, "-c", command]
+                )
+                result = subprocess.run(
+                    cmd_args,
+                    capture_output=True, text=True, timeout=30,
+                    cwd=project_path or None,
+                )
+                output = (result.stdout + result.stderr).strip()[:2000]
+                ok = result.returncode == 0
+                log_event(
+                    "run_python_ok" if ok else "run_python_failed",
+                    {"returncode": result.returncode, "output_len": len(output)},
+                )
+                return ToolResult(
+                    ok=ok,
+                    message="Python executed." if ok else "Python error.",
+                    data={"output": output, "returncode": result.returncode},
+                )
+            except subprocess.TimeoutExpired:
+                log_event("run_python_timeout", {})
+                return ToolResult(ok=False, message="run_python: timed out after 30s")
+            except Exception as exc:
+                log_event("run_python_error", {"error": str(exc)})
+                return ToolResult(ok=False, message=f"run_python error: {exc}")
+
+        if action == "run_shell":
+            command = str(payload.get("command") or "").strip()
+            if not command:
+                log_event("run_shell_error", {"error": "no command"})
+                return ToolResult(ok=False, message="run_shell: no command provided")
+            _SHELL_WHITELIST = {
+                "grep", "find", "ls", "cat", "python3", "pip",
+                "git", "wmctrl", "pgrep", "systemctl",
+            }
+            try:
+                tokens = shlex.split(command)
+            except Exception:
+                return ToolResult(ok=False, message="run_shell: could not parse command")
+            first_token = tokens[0] if tokens else ""
+            if first_token == "git":
+                git_sub = tokens[1] if len(tokens) > 1 else ""
+                _GIT_ALLOWED = {"status", "diff", "log", "add"}
+                if git_sub not in _GIT_ALLOWED:
+                    return ToolResult(
+                        ok=False,
+                        message=f"run_shell: git {git_sub} not allowed. Allowed: {sorted(_GIT_ALLOWED)}",
+                    )
+            elif first_token not in _SHELL_WHITELIST:
+                return ToolResult(
+                    ok=False,
+                    message=f"run_shell: '{first_token}' not in whitelist. Allowed: {sorted(_SHELL_WHITELIST)}",
+                )
+            try:
+                result = subprocess.run(
+                    command, shell=True, capture_output=True, text=True, timeout=15,
+                )
+                output = (result.stdout + result.stderr).strip()[:3000]
+                ok = result.returncode == 0
+                log_event(
+                    "run_shell_ok" if ok else "run_shell_failed",
+                    {"command": command[:80], "returncode": result.returncode},
+                )
+                return ToolResult(
+                    ok=ok,
+                    message="Shell command executed.",
+                    data={"output": output, "returncode": result.returncode},
+                )
+            except subprocess.TimeoutExpired:
+                log_event("run_shell_timeout", {"command": command[:80]})
+                return ToolResult(ok=False, message="run_shell: timed out after 15s")
+            except Exception as exc:
+                log_event("run_shell_error", {"error": str(exc)})
+                return ToolResult(ok=False, message=f"run_shell error: {exc}")
+
+        if action == "search_codebase":
+            query = str(payload.get("query") or "").strip()
+            project_path = str(payload.get("project_path") or "").strip()
+            if not query:
+                return ToolResult(ok=False, message="search_codebase: no query provided")
+            if not project_path:
+                try:
+                    vs = json.loads(VISUAL_STATE_PATH.read_text(encoding="utf-8"))
+                    project_path = str(
+                        vs.get("active_project_path") or vs.get("project_path") or ""
+                    )
+                except Exception:
+                    pass
+            if not project_path or not Path(project_path).is_dir():
+                return ToolResult(ok=False, message="search_codebase: no valid project path")
+            try:
+                result = subprocess.run(
+                    [
+                        "grep", "-rn",
+                        "--include=*.py", "--include=*.js", "--include=*.ts",
+                        "--include=*.json", "--include=*.md",
+                        "-m", "50", query, project_path,
+                    ],
+                    capture_output=True, text=True, timeout=15,
+                )
+                lines = result.stdout.strip().splitlines()[:50]
+                output = "\n".join(lines)
+                log_event("search_codebase_done", {"query": query[:80], "count": len(lines)})
+                return ToolResult(
+                    ok=True,
+                    message=f"Found {len(lines)} matches.",
+                    data={"matches": lines, "count": len(lines), "output": output},
+                )
+            except Exception as exc:
+                log_event("search_codebase_error", {"error": str(exc)})
+                return ToolResult(ok=False, message=f"search_codebase error: {exc}")
+
+        if action == "git_status":
+            project_path = str(payload.get("project_path") or "").strip()
+            if not project_path:
+                try:
+                    vs = json.loads(VISUAL_STATE_PATH.read_text(encoding="utf-8"))
+                    project_path = str(vs.get("active_project_path") or "")
+                except Exception:
+                    pass
+            if not project_path or not Path(project_path).is_dir():
+                return ToolResult(ok=False, message="git_status: no valid project path")
+            try:
+                result = subprocess.run(
+                    ["git", "status", "--short"],
+                    capture_output=True, text=True, timeout=10, cwd=project_path,
+                )
+                output = result.stdout.strip()
+                log_event("git_status_done", {"project_path": project_path, "clean": not bool(output)})
+                return ToolResult(
+                    ok=True,
+                    message="Git status retrieved.",
+                    data={"status": output, "clean": not bool(output)},
+                )
+            except Exception as exc:
+                log_event("git_status_error", {"error": str(exc)})
+                return ToolResult(ok=False, message=f"git_status error: {exc}")
+
+        if action == "git_diff":
+            project_path = str(payload.get("project_path") or "").strip()
+            file_arg = str(payload.get("file") or "").strip()
+            if not project_path:
+                try:
+                    vs = json.loads(VISUAL_STATE_PATH.read_text(encoding="utf-8"))
+                    project_path = str(vs.get("active_project_path") or "")
+                except Exception:
+                    pass
+            if not project_path or not Path(project_path).is_dir():
+                return ToolResult(ok=False, message="git_diff: no valid project path")
+            try:
+                cmd = ["git", "diff"]
+                if file_arg:
+                    cmd.append(file_arg)
+                result = subprocess.run(
+                    cmd, capture_output=True, text=True, timeout=10, cwd=project_path,
+                )
+                output = result.stdout.strip()[:4000]
+                log_event("git_diff_done", {"project_path": project_path, "has_changes": bool(output)})
+                return ToolResult(
+                    ok=True,
+                    message="Git diff retrieved.",
+                    data={"diff": output, "has_changes": bool(output)},
+                )
+            except Exception as exc:
+                log_event("git_diff_error", {"error": str(exc)})
+                return ToolResult(ok=False, message=f"git_diff error: {exc}")
+
+        if action == "git_commit":
+            project_path = str(payload.get("project_path") or "").strip()
+            message = str(payload.get("message") or "").strip()
+            confirmed = bool(payload.get("confirmed", False))
+            if not project_path:
+                try:
+                    vs = json.loads(VISUAL_STATE_PATH.read_text(encoding="utf-8"))
+                    project_path = str(vs.get("active_project_path") or "")
+                except Exception:
+                    pass
+            if not project_path or not Path(project_path).is_dir():
+                return ToolResult(ok=False, message="git_commit: no valid project path")
+            if not message:
+                return ToolResult(ok=False, message="git_commit: no commit message provided")
+            if not confirmed:
+                return ToolResult(
+                    ok=False,
+                    message=(
+                        f"Awaiting confirmation: commit all changes with message '{message}'. "
+                        "Say 'confirm commit' to proceed."
+                    ),
+                )
+            try:
+                subprocess.run(
+                    ["git", "add", "-A"],
+                    capture_output=True, cwd=project_path, timeout=10,
+                )
+                result = subprocess.run(
+                    ["git", "commit", "-m", message],
+                    capture_output=True, text=True, timeout=15, cwd=project_path,
+                )
+                output = result.stdout.strip()
+                ok = result.returncode == 0
+                log_event(
+                    "git_commit_ok" if ok else "git_commit_failed",
+                    {"message": message[:80], "returncode": result.returncode},
+                )
+                return ToolResult(
+                    ok=ok,
+                    message=f"Committed: {message}" if ok else f"Commit failed: {result.stderr.strip()[:200]}",
+                    data={"output": output},
+                )
+            except Exception as exc:
+                log_event("git_commit_error", {"error": str(exc)})
+                return ToolResult(ok=False, message=f"git_commit error: {exc}")
+
+        if action == "session_wrapup":
+            try:
+                from session_summarizer import SessionSummarizer
+
+                ss = SessionSummarizer()
+                ok = ss.trigger_wrapup(client=None)
+                wm = WorkingMemory()
+                wm_data = wm.read()
+                project = str(wm_data.get("active_workspace") or "the current project")
+                last_req = str(
+                    wm_data.get("last_user_request") or wm_data.get("last_tool_action") or "recent work"
+                )
+                wm.write({"next_session_context": f"{project}: {last_req[:100]}"})
+                log_event("session_wrapup_triggered", {"ok": ok})
+                return ToolResult(
+                    ok=ok,
+                    message=(
+                        "Session wrapped up. Summary written to vault."
+                        if ok
+                        else "Wrap-up failed — check vault_path config."
+                    ),
+                    data={"project": project},
+                )
+            except Exception as exc:
+                log_event("session_wrapup_error", {"error": str(exc)})
+                return ToolResult(ok=False, message=f"Wrap-up error: {exc}")
+
+        if action == "system_status":
+            try:
+                wm = WorkingMemory().read()
+                vs: dict = {}
+                try:
+                    vs = json.loads(VISUAL_STATE_PATH.read_text(encoding="utf-8"))
+                except Exception:
+                    pass
+                bt: list = []
+                try:
+                    bt_path = Path.home() / ".jarvis" / "background_tasks.json"
+                    if bt_path.exists():
+                        raw_bt = json.loads(bt_path.read_text(encoding="utf-8"))
+                        if isinstance(raw_bt, list):
+                            bt = [t for t in raw_bt[-3:] if isinstance(t, dict)]
+                except Exception:
+                    pass
+                active_win = vs.get("active_window") or {}
+                win_title = (
+                    str(active_win.get("title", ""))
+                    if isinstance(active_win, dict)
+                    else str(active_win)
+                )
+                status = {
+                    "active_project": str(
+                        vs.get("active_project")
+                        or vs.get("active_project_name")
+                        or wm.get("active_workspace", "unknown")
+                    ),
+                    "active_window": win_title,
+                    "last_user_request": str(wm.get("last_user_request", "")),
+                    "last_tool_action": str(wm.get("last_tool_action", "")),
+                    "background_tasks": bt,
+                    "xbox_state": vs.get("xbox_state"),
+                }
+                return ToolResult(ok=True, message="System status retrieved.", data=status)
+            except Exception as exc:
+                log_event("system_status_error", {"error": str(exc)})
+                return ToolResult(ok=False, message=f"system_status error: {exc}")
+
+        if action == "get_priorities":
+            try:
+                from memory_core import query_vault
+
+                month = time.strftime("%B")
+                results = query_vault(f"priorities goals {month}", limit=5)
+                priorities: list[str] = []
+                for r in results[:3]:
+                    title = str(r.get("title") or "").strip()
+                    text = str(r.get("text") or "")
+                    first_sentence = text.split(".")[0][:100].strip() if text else ""
+                    label = title or first_sentence
+                    if label and label not in priorities:
+                        priorities.append(label)
+                wm_data = WorkingMemory().read()
+                active_goal = str(wm_data.get("active_goal") or "").strip()
+                if active_goal and active_goal not in priorities:
+                    priorities.insert(0, active_goal)
+                priorities = priorities[:3]
+                log_event("get_priorities_done", {"count": len(priorities)})
+                return ToolResult(
+                    ok=True,
+                    message=f"Found {len(priorities)} priorities.",
+                    data={"priorities": priorities},
+                )
+            except Exception as exc:
+                log_event("get_priorities_error", {"error": str(exc)})
+                return ToolResult(ok=False, message=f"get_priorities error: {exc}")
+
         return ToolResult(False, f"Unknown action: {action}")

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import threading
 
 from config import VISUAL_STATE_PATH
@@ -34,10 +35,20 @@ class VisualStateController:
         log_event("visual_state", {"state": state})
 
     def _write_state(self, state: str) -> None:
+        # Read-modify-write with atomic rename so workspace keys written by
+        # WorkspaceManager are not clobbered when the visual state changes.
         try:
-            VISUAL_STATE_PATH.write_text(
-                json.dumps({"state": state}),
-                encoding="utf-8",
-            )
-        except Exception as e:
-            log_event("visual_state_write_error", {"error": str(e)})
+            try:
+                existing: dict = json.loads(
+                    VISUAL_STATE_PATH.read_text(encoding="utf-8")
+                )
+                if not isinstance(existing, dict):
+                    existing = {}
+            except Exception:
+                existing = {}
+            existing["state"] = state
+            tmp = VISUAL_STATE_PATH.with_suffix(".tmp")
+            tmp.write_text(json.dumps(existing, indent=2), encoding="utf-8")
+            os.replace(tmp, VISUAL_STATE_PATH)
+        except Exception as exc:
+            log_event("visual_state_write_error", {"error": str(exc)})

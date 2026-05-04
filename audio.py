@@ -157,8 +157,29 @@ class Speaker:
             _write_audio_levels(speaker_level=0.0)
             self._set_state("idle")
 
+    def force_stop(self) -> None:
+        """Abort audio playback immediately.
+
+        Calls sd.stop() BEFORE acquiring the lock so it can unblock a
+        play_pcm_chunk() call that is currently holding the lock inside a
+        blocking stream write.  Safe to call from any thread.
+        """
+        sd.stop()  # aborts pending stream write without needing the lock
+        with self._lock:
+            if self._stream is not None:
+                try:
+                    self._stream.stop()
+                    self._stream.close()
+                except Exception:
+                    pass
+                self._stream = None
+            self.is_speaking = False
+            self.last_audio_end_at = time.time()
+            _write_audio_levels(speaker_level=0.0)
+            self._set_state("idle")
+
     def interrupt(self) -> None:
-        self.stop()
+        self.force_stop()
 
     def stop(self):
         with self._lock:

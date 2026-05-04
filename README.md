@@ -132,17 +132,34 @@ source .venv/bin/activate
 pip install requirements.txt
 ```
 
-### 4. Configure environment variables
+### 4. Home Assistant Integration
+
+Jarvis uses normalized script naming:
+
+jarvis_<domain>_<intent>_<detail>
+
+Examples:
+- jarvis_lights_scene_movie
+- jarvis_xbox_app_netflix
+- jarvis_routine_good_night
+
+Notes:
+- Natural language is mapped to scripts via internal phrase matching
+- You can extend mappings inside tools.py (HARDCODED_HA_SCRIPTS)
+- Script names MUST match Home Assistant exactly
+
+### 5. Configure environment variables
 
 Create a `.env` file in the root directory:
 
 ```env
 OPENAI_API_KEY=your_key_here
-HOME_ASSISTANT_URL=your_url   # optional
-HOME_ASSISTANT_TOKEN=your_token   # optional
+HOME_ASSISTANT_API_KEY=your_token
+HOME_ASSISTANT_URL=http://homeassistant.local:8123
+
 ```
 
-### 5. Add MediaPipe model
+### 6. Add MediaPipe model for Gesture Control
 
 Place the model here:
 

@@ -1,5 +1,6 @@
 {
   "openai_api_key": "",
+  "vault_path": "/home/tatel/Desktop/Tates Brain",
   "realtime_model": "gpt-realtime",
   "voice": "arbor",
   "sample_rate_out": 24000,
@@ -9,6 +10,10 @@
   "screenshot_dir": "~/Pictures/Screenshots",
   "projector_on_script": "~/.jarvis/projector_on.sh",
   "projector_off_script": "~/.jarvis/projector_off.sh",
+  "home_assistant": {
+    "enabled": true,
+    "script_prefix": "jarvis_"
+  },
   "apps": {
     "chrome": "google-chrome",
     "browser": "google-chrome",
@@ -94,7 +99,7 @@
       "steps": [
         {
           "action": "run_ha_script",
-          "script_name": "movie_mode_full"
+          "script_name": "jarvis_lights_scene_movie"
         }
       ]
     },
@@ -103,7 +108,7 @@
       "steps": [
         {
           "action": "run_ha_script",
-          "script_name": "netflix_on_xbox"
+          "script_name": "jarvis_routine_watch_netflix"
         }
       ]
     }

@@ -3,7 +3,9 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+import os
 import time
+from pathlib import Path
 from typing import Any
 
 import numpy as np
@@ -18,27 +20,28 @@ from utils import log_event, notify
 
 
 SYSTEM_PROMPT = """
-Voice should feel grounded, mature, and composed — never youthful.
+You are Prometheus — a composed, intelligent local desktop assistant.
+You have access to real-time workspace context, personal memory from the user's vault, and direct machine control.
 
-Tone:
-- Quiet confidence
-- Masculine
-- Very intelligent
-
-Delivery:
-- Minimal upward inflection
-- Slight pauses between clauses
-- No filler words
-- No enthusiasm spikes
-
-Operational rules:
+Rules you always follow:
+- When a tool result is available, base your response on it. Never ignore tool results.
+- When asked what is open or running, use the screen_context tool to check — never guess from memory.
+- When asked what you remember, use the vault memory context already injected into your instructions — answer naturally without mentioning the vault.
+- Keep responses short and direct. No preamble. No apologies.
+- For simple actions say only what happened: "Done." "Opening now." "VS Code is already open."
+- For background tasks, tell the user where the output was written when complete.
+- Never say you cannot access local information — you have workspace context available.
+- If you are unsure, ask one short clarifying question.
 - Never invent Home Assistant script names.
-- For any lights, Xbox, projector, TV, media-room, or smart-home request, route to the desktop_action tool and let the deterministic tool layer choose the exact jarvis_* script.
-- For any request about the current screen, current tab, current file, or what the user is looking at, use desktop_action with action summarize_screen.
-- For search-style requests, current events, near-me queries, or explicit lookups, prefer desktop_action with action web_search.
-- For work/project/workspace switching, prefer desktop_action with action smart_action so the local planner can restore or switch workspaces.
-- If a tool is needed, first give one short acknowledgment, then call desktop_action.
+- For lights, Xbox, projector, TV, or smart-home requests, call desktop_action and let the tool layer choose the correct jarvis_* script.
+- For search-style requests or current events, call desktop_action with web_search.
+- For project or workspace switching, call desktop_action with smart_action.
 - Do not pretend something succeeded if the tool says it failed.
+
+Voice:
+- Quiet confidence. Masculine. Intelligent.
+- Minimal upward inflection. No filler words. No enthusiasm spikes.
+- Speak results, not process. "Done." not "I have successfully completed the task of..."
 """.strip()
 
 
@@ -61,6 +64,161 @@ class RealtimeJarvisClient:
         self.last_cycle_end_at = 0.0
         self._override_handled = False
         self._drop_audio_until = 0.0
+
+        # Vault / workspace context injected before or during a session
+        self._vault_context: str = ""
+        self._workspace_context: str = ""
+
+        # Dynamic system prompt — can be updated before connect()
+        self._system_prompt: str = SYSTEM_PROMPT
+
+    def set_system_prompt(self, prompt: str) -> None:
+        """Set the base system prompt. Call before connect() for full effect."""
+        if prompt and prompt.strip():
+            self._system_prompt = prompt.strip()
+            log_event("system_prompt_updated", {"length": len(self._system_prompt)})
+
+    # ── Vault / workspace context ─────────────────────────────────────────────
+
+    def _log_vault_warning(self, msg: str) -> None:
+        try:
+            warn_file = Path.home() / ".jarvis" / "vault_warnings.json"
+            existing: list = []
+            if warn_file.exists():
+                try:
+                    existing = json.loads(warn_file.read_text(encoding="utf-8"))
+                    if not isinstance(existing, list):
+                        existing = []
+                except Exception:
+                    pass
+            existing.append({"ts": time.strftime("%Y-%m-%dT%H:%M:%S"), "warning": msg})
+            tmp = warn_file.with_suffix(".tmp")
+            tmp.write_text(json.dumps(existing[-50:], indent=2), encoding="utf-8")
+            os.replace(tmp, warn_file)
+        except Exception:
+            pass
+
+    def inject_vault_context(self, chunks: list[dict]) -> None:
+        """
+        Build and store a formatted vault context block from retrieved chunks.
+        Keeps the injected block under ~2000 tokens (≈8000 chars).
+        Call before connect() for initial session, or anytime mid-session
+        followed by _update_session_instructions() to push a fresh session.update.
+        """
+        try:
+            MAX_CHUNKS = 5
+            CHUNK_CHARS = 300
+            lines: list[str] = [
+                "--- PERSONAL MEMORY CONTEXT ---",
+                "The following is retrieved from the user's personal knowledge vault.",
+                "Use this to answer questions about their history, projects, and preferences.",
+                "Do not mention that you are reading from a vault — answer naturally as if you know this.",
+                "",
+            ]
+            for chunk in (chunks or [])[:MAX_CHUNKS]:
+                title = str(chunk.get("title") or "")
+                year  = str(chunk.get("year") or "")
+                text  = str(chunk.get("text") or "")[:CHUNK_CHARS]
+                header = f"[TITLE: {title}"
+                if year:
+                    header += f" | YEAR: {year}"
+                header += "]"
+                lines.append(header)
+                lines.append(text)
+                lines.append("")
+            lines.append("--- END MEMORY CONTEXT ---")
+            self._vault_context = "\n".join(lines)
+        except Exception as exc:
+            self._vault_context = ""
+            self._log_vault_warning(f"inject_vault_context failed: {exc}")
+
+    def inject_workspace_context(self, workspace: dict) -> None:
+        """Store workspace state block to include in session instructions."""
+        try:
+            project     = str(workspace.get("project_name") or workspace.get("active_project_name") or "")
+            path        = str(workspace.get("project_path") or workspace.get("active_project_path") or "")
+            win_info    = workspace.get("active_window") or {}
+            win_title   = str(win_info.get("title") or "") if isinstance(win_info, dict) else ""
+            xbox_state  = workspace.get("xbox_state")
+            xbox_app    = str(workspace.get("xbox_app") or "")
+            xbox_media  = str(workspace.get("xbox_media_title") or "")
+            lines = [
+                "--- CURRENT WORKSPACE ---",
+                f"Active project: {project or 'unknown'}",
+            ]
+            if win_title:
+                lines.append(f"Active window: {win_title}")
+            if path:
+                lines.append(f"Project path: {path}")
+            if xbox_state is not None:
+                lines.append(f"Xbox state: {xbox_state or 'off'}")
+                if xbox_app:
+                    lines.append(f"Xbox app: {xbox_app}")
+                if xbox_media:
+                    lines.append(f"Xbox media: {xbox_media}")
+            lines.append("--- END WORKSPACE ---")
+            self._workspace_context = "\n".join(lines)
+        except Exception as exc:
+            self._workspace_context = ""
+            self._log_vault_warning(f"inject_workspace_context failed: {exc}")
+
+    def _build_instructions(self) -> str:
+        """Combine dynamic system prompt with any stored vault/workspace context."""
+        parts = [self._system_prompt]
+        if self._workspace_context:
+            parts.append(self._workspace_context)
+        if self._vault_context:
+            parts.append(self._vault_context)
+        return "\n\n".join(parts)
+
+    async def _update_session_instructions(self) -> None:
+        """Push updated instructions to an already-connected session via session.update."""
+        if not self.connected or not self.ws:
+            return
+        try:
+            await self.send({
+                "type": "session.update",
+                "session": {"instructions": self._build_instructions()},
+            })
+            log_event("vault_context_injected", {
+                "vault_chars": len(self._vault_context),
+                "workspace_chars": len(self._workspace_context),
+            })
+        except Exception as exc:
+            self._log_vault_warning(f"_update_session_instructions failed: {exc}")
+
+    async def _handle_vault_recall(self, transcript: str) -> None:
+        """On-demand vault search triggered by 'what do you remember about...' phrases."""
+        query = transcript.strip()
+        for phrase in ("what do you remember about ", "what do you know about ", "do you remember "):
+            lower = query.lower()
+            if lower.startswith(phrase):
+                query = query[len(phrase):]
+                break
+        try:
+            from memory_core import query_vault
+            loop = asyncio.get_running_loop()
+            results = await loop.run_in_executor(None, lambda: query_vault(query, limit=5))
+            if results:
+                self.inject_vault_context(results)
+                await self._update_session_instructions()
+                log_event("vault_recall_injected", {"query": query[:80], "count": len(results)})
+        except Exception as exc:
+            self._log_vault_warning(f"_handle_vault_recall failed: {exc}")
+            log_event("vault_recall_error", {"error": str(exc)})
+
+        await self.send({
+            "type": "response.create",
+            "response": {
+                "modalities": ["audio", "text"],
+                "instructions": (
+                    "Answer the user's question using the personal memory context "
+                    "that was just injected into the session instructions. "
+                    "Answer naturally — do not say you are reading from a vault. "
+                    "If you cannot find the information, say so briefly."
+                ),
+            },
+        })
 
     def _project_resume_override(
         self, transcript: str, text: str
@@ -121,6 +279,128 @@ class RealtimeJarvisClient:
         if not text:
             return None
 
+        # Wrap-up phrases → session_wrapup action
+        if any(
+            p in text
+            for p in [
+                "wrap up",
+                "wrap it up",
+                "end session",
+                "that's it for today",
+                "thats it for today",
+                "i'm done",
+                "im done",
+                "call it a day",
+                "end of day",
+                "log off",
+                "wrap up the session",
+            ]
+        ):
+            return {
+                "type": "direct_tool",
+                "payload": {"action": "session_wrapup", "request_text": transcript},
+            }
+
+        # "What are you working with" → system status
+        if any(
+            p in text
+            for p in [
+                "what are you working with",
+                "what do you know",
+                "what context do you have",
+                "what are you aware of",
+                "what do you have loaded",
+            ]
+        ):
+            return {
+                "type": "direct_tool",
+                "payload": {"action": "system_status", "request_text": transcript},
+            }
+
+        # "What should I focus on" → get_priorities
+        if any(
+            p in text
+            for p in [
+                "what should i focus on",
+                "what's the priority",
+                "whats the priority",
+                "what are my priorities",
+                "what should i work on",
+                "what are we working on today",
+            ]
+        ):
+            return {
+                "type": "direct_tool",
+                "payload": {"action": "get_priorities", "request_text": transcript},
+            }
+
+        # Search codebase
+        if any(
+            p in text
+            for p in [
+                "search the codebase",
+                "search codebase",
+                "search the code for",
+                "find in the codebase",
+                "grep the code",
+                "search the project for",
+            ]
+        ):
+            query = text
+            for phrase in [
+                "search the codebase for",
+                "search codebase for",
+                "search the code for",
+                "find in the codebase",
+                "grep the code for",
+                "search the project for",
+                "search the codebase",
+                "search codebase",
+            ]:
+                if phrase in text:
+                    query = text.split(phrase, 1)[-1].strip()
+                    break
+            return {
+                "type": "direct_tool",
+                "payload": {
+                    "action": "search_codebase",
+                    "query": query,
+                    "request_text": transcript,
+                },
+            }
+
+        # Check git status / diff
+        if any(
+            p in text
+            for p in [
+                "check git",
+                "what changed",
+                "git status",
+                "what files changed",
+                "what's changed",
+                "whats changed",
+                "show me the diff",
+            ]
+        ):
+            action = (
+                "git_diff"
+                if any(
+                    p in text
+                    for p in [
+                        "diff",
+                        "what changed",
+                        "whats changed",
+                        "what's changed",
+                        "show me the diff",
+                    ]
+                )
+                else "git_status"
+            )
+            return {
+                "type": "direct_tool",
+                "payload": {"action": action, "request_text": transcript},
+            }
+
         if any(
             p in text
             for p in [
@@ -140,6 +420,64 @@ class RealtimeJarvisClient:
                     "request_text": transcript,
                 },
             }
+
+        if any(
+            p in text
+            for p in [
+                "what am i working on",
+                "what are you tracking",
+                "what project am i on",
+                "what do i have open",
+                "what's open",
+                "what is open",
+                "what windows do i have",
+            ]
+        ):
+            return {
+                "type": "direct_tool",
+                "payload": {
+                    "action": "screen_context",
+                    "request_text": transcript,
+                },
+            }
+
+        # Xbox / TV watching awareness — must precede the generic smart_action block
+        if any(
+            p in text
+            for p in [
+                "what am i watching",
+                "what is on xbox",
+                "what is playing on xbox",
+                "what's on xbox",
+                "what is on tv",
+                "what's on tv",
+                "what are you playing",
+            ]
+        ):
+            return {
+                "type": "direct_tool",
+                "payload": {"action": "screen_context", "request_text": transcript},
+            }
+
+        # App name variant → canonical open_app action
+        _APP_OPEN_VARIANTS = [
+            (["vs code", "vscode", "visual studio code", "visual studio"], "code"),
+            (["files", "file manager", "dolphin", "my files", "file explorer"], "files"),
+            (["spotify"], "spotify"),
+        ]
+        for variants, canonical in _APP_OPEN_VARIANTS:
+            if any(
+                f"open {v}" in text or text.startswith(f"launch {v}")
+                for v in variants
+            ):
+                return {
+                    "type": "direct_tool",
+                    "payload": {
+                        "action": "open_app",
+                        "app": canonical,
+                        "request_text": transcript,
+                    },
+                }
 
         if any(
             k in text
@@ -207,6 +545,36 @@ class RealtimeJarvisClient:
                 },
             }
 
+        if any(
+            k in text
+            for k in [
+                "in the background",
+                "when you get a chance",
+                "background task",
+                "run in the background",
+                "do it in the background",
+                "handle it in the background",
+            ]
+        ):
+            return {
+                "type": "direct_tool",
+                "payload": {
+                    "action": "background_task",
+                    "description": transcript,
+                    "request_text": transcript,
+                },
+            }
+
+        if any(
+            p in text
+            for p in [
+                "what do you remember about",
+                "what do you know about",
+                "do you remember",
+            ]
+        ):
+            return {"type": "vault_recall", "query": transcript}
+
         return None
 
     async def _run_direct_tool(self, payload: dict[str, Any]) -> None:
@@ -225,9 +593,31 @@ class RealtimeJarvisClient:
             "summarize_screen",
             "web_search",
             "smart_action",
+            "background_task",
+            "screen_context",
+            "search_codebase",
+            "git_status",
+            "git_diff",
+            "git_commit",
+            "run_python",
+            "run_shell",
+            "session_wrapup",
+            "system_status",
+            "get_priorities",
         }
 
         action = str(payload.get("action", "")).strip().lower()
+
+        # Log web search result content before generating spoken response
+        if action == "web_search":
+            search_summary = str((result.data or {}).get("summary", "")).strip()
+            log_event("web_search_result_direct", {
+                "query": str(payload.get("query", ""))[:120],
+                "summary_length": len(search_summary),
+                "summary_empty": not bool(search_summary),
+                "ok": result.ok,
+            })
+
         needs_followup = (
             action in followup_actions
             or not result.ok
@@ -261,15 +651,88 @@ class RealtimeJarvisClient:
                 }
             )
 
+            if action == "web_search":
+                search_summary = str((result.data or {}).get("summary", "")).strip()
+                if search_summary:
+                    response_instructions = (
+                        f"Web search result: {search_summary[:800]} "
+                        "Speak this information naturally and concisely. "
+                        "Do not say you searched the web. Do not add filler."
+                    )
+                else:
+                    response_instructions = (
+                        "The web search returned no useful results. "
+                        "Say exactly: 'I searched but couldn't find a clear answer for that.'"
+                    )
+            elif action == "screen_context":
+                response_instructions = (
+                    "Report the current workspace state from the tool result data. "
+                    "Mention the active project, active window, and xbox state if relevant. "
+                    "Be brief and factual."
+                )
+            elif action == "search_codebase":
+                count = (result.data or {}).get("count", 0)
+                output = str((result.data or {}).get("output", ""))[:600]
+                if count > 0:
+                    response_instructions = (
+                        f"Found {count} matches in the codebase. "
+                        f"Results: {output[:400]}. Report the key matches concisely."
+                    )
+                else:
+                    response_instructions = "Say: 'No matches found for that search.'"
+            elif action in ("git_status", "git_diff"):
+                data = result.data or {}
+                if action == "git_status":
+                    status_text = str(data.get("status", ""))
+                    if data.get("clean"):
+                        response_instructions = "Say: 'No uncommitted changes.'"
+                    else:
+                        response_instructions = (
+                            f"Git status: {status_text[:300]}. Report which files have changed."
+                        )
+                else:
+                    diff = str(data.get("diff", ""))[:500]
+                    if diff:
+                        response_instructions = (
+                            f"Git diff: {diff}. Summarize what changed in one or two sentences."
+                        )
+                    else:
+                        response_instructions = "Say: 'No staged or unstaged changes in the diff.'"
+            elif action == "session_wrapup":
+                response_instructions = f"The session wrap-up has been triggered. {result.message}"
+            elif action == "system_status":
+                data_str = json.dumps(result.data or {}, indent=1)[:600]
+                response_instructions = (
+                    f"Describe what you currently have loaded — workspace context, vault context, "
+                    f"active project, and current state. Data: {data_str}"
+                )
+            elif action == "get_priorities":
+                priorities = (result.data or {}).get("priorities", [])
+                response_instructions = (
+                    f"State Tate's top priorities right now based on: {priorities}. Be specific and direct."
+                )
+            elif action in ("run_python", "run_shell"):
+                output = str((result.data or {}).get("output", ""))[:400]
+                if result.ok:
+                    response_instructions = (
+                        f"Command executed. Output: {output}. Report the result concisely."
+                    )
+                else:
+                    response_instructions = (
+                        f"Command failed. Error: {result.message}. Report the failure."
+                    )
+            else:
+                response_instructions = (
+                    "Briefly report the result in polished British butler style. "
+                    "Be precise and do not claim an app or project was already open unless the tool result explicitly shows that."
+                )
+
             await self.send(
                 {
                     "type": "response.create",
                     "response": {
                         "modalities": ["audio", "text"],
-                        "instructions": (
-                            "Briefly report the result in polished British butler style. "
-                            "Be precise and do not claim an app or project was already open unless the tool result explicitly shows that."
-                        ),
+                        "instructions": response_instructions,
                     },
                 }
             )
@@ -295,11 +758,21 @@ class RealtimeJarvisClient:
         self.connected = True
         self._receiver_task = asyncio.create_task(self._receiver())
 
+        _instructions = self._build_instructions()
+        log_event("session_instructions_debug", {
+            "total_length": len(_instructions),
+            "has_vault": "PERSONAL MEMORY CONTEXT" in _instructions,
+            "has_workspace": "CURRENT WORKSPACE" in _instructions,
+            "vault_titles": [
+                l.strip() for l in _instructions.splitlines()
+                if l.strip().startswith("[TITLE:")
+            ],
+        })
         await self.send(
             {
                 "type": "session.update",
                 "session": {
-                    "instructions": SYSTEM_PROMPT,
+                    "instructions": _instructions,
                     "modalities": ["audio", "text"],
                     "voice": self.voice,
                     "input_audio_format": "pcm16",
@@ -324,6 +797,19 @@ class RealtimeJarvisClient:
         if self.ws:
             await self.ws.close()
         log_event("realtime_closed", {})
+
+    async def interrupt(self) -> None:
+        """Cancel the current assistant response and drop incoming audio for 2s."""
+        self._drop_audio_until = time.time() + 2.0
+        self.busy = False
+        self.waiting_for_tool_followup = False
+        self._override_handled = False
+        if self.connected and self.ws:
+            try:
+                await self.send({"type": "response.cancel"})
+                log_event("interrupt_sent", {})
+            except Exception as exc:
+                log_event("interrupt_send_error", {"error": str(exc)})
 
     async def send(self, data: dict[str, Any]) -> None:
         if not self.ws:
@@ -401,9 +887,30 @@ class RealtimeJarvisClient:
             "summarize_screen",
             "web_search",
             "smart_action",
+            "background_task",
+            "screen_context",
+            "search_codebase",
+            "git_status",
+            "git_diff",
+            "git_commit",
+            "run_python",
+            "run_shell",
+            "session_wrapup",
+            "system_status",
+            "get_priorities",
         }
 
         tool_action = str(args.get("action", "")).strip().lower()
+
+        # Log web search result content before generating spoken response
+        if tool_action == "web_search":
+            search_summary = str((result.data or {}).get("summary", "")).strip()
+            log_event("web_search_result", {
+                "query": str(args.get("query", ""))[:120],
+                "summary_length": len(search_summary),
+                "summary_empty": not bool(search_summary),
+                "ok": result.ok,
+            })
 
         needs_followup = (
             tool_action in followup_actions
@@ -415,17 +922,88 @@ class RealtimeJarvisClient:
 
         if needs_followup:
             self.waiting_for_tool_followup = True
+            if tool_action == "web_search":
+                search_summary = str((result.data or {}).get("summary", "")).strip()
+                if search_summary:
+                    response_instructions = (
+                        f"Web search result: {search_summary[:800]} "
+                        "Speak this information naturally and concisely. "
+                        "Do not say you searched the web. Do not add filler."
+                    )
+                else:
+                    response_instructions = (
+                        "The web search returned no useful results. "
+                        "Say exactly: 'I searched but couldn't find a clear answer for that.'"
+                    )
+            elif tool_action == "screen_context":
+                response_instructions = (
+                    "Report the current workspace state from the tool result data. "
+                    "Mention the active project, active window, and xbox state if relevant. "
+                    "Be brief and factual."
+                )
+            elif tool_action == "search_codebase":
+                count = (result.data or {}).get("count", 0)
+                output = str((result.data or {}).get("output", ""))[:600]
+                if count > 0:
+                    response_instructions = (
+                        f"Found {count} matches in the codebase. "
+                        f"Results: {output[:400]}. Report the key matches concisely."
+                    )
+                else:
+                    response_instructions = "Say: 'No matches found for that search.'"
+            elif tool_action in ("git_status", "git_diff"):
+                data = result.data or {}
+                if tool_action == "git_status":
+                    status_text = str(data.get("status", ""))
+                    if data.get("clean"):
+                        response_instructions = "Say: 'No uncommitted changes.'"
+                    else:
+                        response_instructions = (
+                            f"Git status: {status_text[:300]}. Report which files have changed."
+                        )
+                else:
+                    diff = str(data.get("diff", ""))[:500]
+                    if diff:
+                        response_instructions = (
+                            f"Git diff: {diff}. Summarize what changed in one or two sentences."
+                        )
+                    else:
+                        response_instructions = "Say: 'No staged or unstaged changes in the diff.'"
+            elif tool_action == "session_wrapup":
+                response_instructions = f"The session wrap-up has been triggered. {result.message}"
+            elif tool_action == "system_status":
+                data_str = json.dumps(result.data or {}, indent=1)[:600]
+                response_instructions = (
+                    f"Describe what you currently have loaded — workspace context, vault context, "
+                    f"active project, and current state. Data: {data_str}"
+                )
+            elif tool_action == "get_priorities":
+                priorities = (result.data or {}).get("priorities", [])
+                response_instructions = (
+                    f"State Tate's top priorities right now based on: {priorities}. Be specific and direct."
+                )
+            elif tool_action in ("run_python", "run_shell"):
+                output = str((result.data or {}).get("output", ""))[:400]
+                if result.ok:
+                    response_instructions = (
+                        f"Command executed. Output: {output}. Report the result concisely."
+                    )
+                else:
+                    response_instructions = (
+                        f"Command failed. Error: {result.message}. Report the failure."
+                    )
+            else:
+                response_instructions = (
+                    "Briefly report the result in polished British butler style. "
+                    "Do not add filler. "
+                    "Do not claim something is already open unless the tool result explicitly says so."
+                )
             await self.send(
                 {
                     "type": "response.create",
                     "response": {
                         "modalities": ["audio", "text"],
-                        "instructions": (
-                            "Briefly report the result in polished British butler style. "
-                            "Natural Oxford accent, male, early middle-aged, warm and controlled. "
-                            "Do not add filler. "
-                            "Do not claim something is already open unless the tool result explicitly says so."
-                        ),
+                        "instructions": response_instructions,
                     },
                 }
             )
@@ -458,12 +1036,18 @@ class RealtimeJarvisClient:
                     transcript = event.get("transcript", "")
                     if transcript:
                         notify(f"Heard: {transcript}")
+                        log_event("transcript", {"transcript": transcript[:300]})
 
                         override = self._direct_intent_override(transcript)
                         if override and override.get("type") == "direct_tool":
                             self.awaiting_user_audio = False
                             self.busy = True
                             await self._run_direct_tool(override["payload"])
+                            continue
+                        if override and override.get("type") == "vault_recall":
+                            self.awaiting_user_audio = False
+                            self.busy = True
+                            await self._handle_vault_recall(override["query"])
                             continue
 
                     if not self._override_handled:

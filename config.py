@@ -32,7 +32,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "speaker_blocksize": 2048,
     # Push-to-talk
     "ptt_hold_seconds": 0.25,
-    "ptt_key": "space",
+    "ptt_key": "esc",
     # Wake word
     "enable_wake_word": True,
     "wake_word_engine": "porcupine",
@@ -88,6 +88,10 @@ DEFAULT_CONFIG: dict[str, Any] = {
     },
     "gesture_control_enabled": False,
     "vision_enabled": True,
+    "vault_path": "",
+    "workspace_poll_interval": 5.0,
+    "ollama_model": "mistral",
+    "ollama_url": "http://localhost:11434",
     "projects": {},
     "routines": {
         "movie_mode_full": {
