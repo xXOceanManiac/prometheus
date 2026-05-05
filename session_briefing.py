@@ -220,7 +220,11 @@ class SessionBriefing:
                 },
             })
 
-            log_event("briefing_generated", {"length": len(briefing_text)})
+            log_event("briefing_generated", {
+                "length": len(briefing_text),
+                "snippet": briefing_text[:120],
+                "has_prev_context": bool(next_session_context),
+            })
 
         except asyncio.CancelledError:
             pass

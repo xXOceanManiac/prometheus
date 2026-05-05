@@ -86,10 +86,9 @@ class Orchestrator:
 
         # ── Phase 0: Git checkpoint ──────────────────────────────────────
         checkpoint_sha = self._git.checkpoint(label=goal[:50])
-        log_event("orchestrator_start", {
-            "goal": goal[:80],
-            "checkpoint_sha": checkpoint_sha,
-        })
+        _start_payload = {"goal": goal[:80], "checkpoint_sha": checkpoint_sha}
+        log_event("orchestrator_start", _start_payload)
+        log_event("orchestration_start", _start_payload)
 
         # ── Phase 1: Architect ───────────────────────────────────────────
         cost_abort = self._check_cost()
@@ -130,10 +129,9 @@ class Orchestrator:
             files_of_interest = plan.get("files_of_interest", [])
             test_command = plan.get("test_command", test_command)
 
-        log_event("orchestrator_architect_ok", {
-            "steps": len(plan.get("steps", [])) if plan else 0,
-            "files": files_of_interest,
-        })
+        _plan_payload = {"steps": len(plan.get("steps", [])) if plan else 0, "files": files_of_interest}
+        log_event("orchestrator_architect_ok", _plan_payload)
+        log_event("orchestration_plan_ready", _plan_payload)
 
         # ── Phase 2: Coder ───────────────────────────────────────────────
         coder_task = AgentTask(
@@ -146,10 +144,9 @@ class Orchestrator:
         agent_outputs["coder"] = coder_result.output
         phases.append("coder")
 
-        log_event("orchestrator_coder_done", {
-            "success": coder_result.success,
-            "duration": coder_result.duration_seconds,
-        })
+        _coder_payload = {"success": coder_result.success, "duration": coder_result.duration_seconds}
+        log_event("orchestrator_coder_done", _coder_payload)
+        log_event("orchestration_coder_complete", _coder_payload)
 
         # ── Phase 3: Tester (initial run) ────────────────────────────────
         tester_task = AgentTask(
@@ -163,19 +160,15 @@ class Orchestrator:
         phases.append("tester")
         test_counts = self._tester.parse_results(tester_result.output)
 
-        log_event("orchestrator_tester_done", {
-            "passed": test_counts["passed"],
-            "failed": test_counts["failed"],
-            "errors": test_counts["errors"],
-        })
+        _test_payload = {"passed": test_counts["passed"], "failed": test_counts["failed"], "errors": test_counts["errors"]}
+        log_event("orchestrator_tester_done", _test_payload)
+        log_event("orchestration_test_results", _test_payload)
 
         if tester_result.success:
             diff = self._git.diff_since(checkpoint_sha)
-            log_event("orchestrator_success", {
-                "goal": goal[:80],
-                "phases": phases,
-                "passed": test_counts["passed"],
-            })
+            _success_payload = {"goal": goal[:80], "phases": phases, "passed": test_counts["passed"]}
+            log_event("orchestrator_success", _success_payload)
+            log_event("orchestration_complete", _success_payload)
             return OrchestrationResult(
                 goal=goal,
                 success=True,

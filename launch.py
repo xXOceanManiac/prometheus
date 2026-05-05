@@ -9,6 +9,8 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import asyncio
+import json
 import os
 import signal
 import sys
@@ -44,6 +46,25 @@ def _parse_args(args: list[str] | None = None) -> argparse.Namespace:
     return parser.parse_args(args)
 
 
+def _prom_log(kind: str, payload: dict | None = None) -> None:
+    """
+    Write a log entry to ~/.prometheus/prometheus.jsonl.
+    This is a secondary unified log for critical lifecycle events.
+    """
+    try:
+        _PROMETHEUS_DIR.mkdir(parents=True, exist_ok=True)
+        entry = {
+            "ts": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "kind": kind,
+            **(payload or {}),
+        }
+        prom_log = _PROMETHEUS_DIR / "prometheus.jsonl"
+        with prom_log.open("a", encoding="utf-8") as f:
+            f.write(json.dumps(entry) + "\n")
+    except Exception:
+        pass
+
+
 def _ensure_bashrc_alias() -> None:
     """Add a 'prometheus' alias to ~/.bashrc if not already present."""
     bashrc = Path.home() / ".bashrc"
@@ -55,6 +76,67 @@ def _ensure_bashrc_alias() -> None:
                 f.write(f"\n# Prometheus launcher\n{alias_line}\n")
     except Exception:
         pass
+
+
+def _run_proactive_loop_thread(client: Any = None, workspace: Any = None) -> None:
+    """
+    Run ProactiveLoop in a dedicated daemon thread with its own asyncio event loop.
+    Compatible with --no-voice mode (client=None → cycles log but don't surface).
+    """
+    try:
+        from proactive_loop import ProactiveLoop
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+        pl = ProactiveLoop(client=client, workspace_manager=workspace)
+        loop.run_until_complete(pl.run())
+    except Exception as exc:
+        try:
+            from utils import log_event
+            log_event("proactive_loop_thread_error", {"error": str(exc)[:200]})
+        except Exception:
+            pass
+
+
+def _fire_no_voice_briefing() -> None:
+    """
+    Generate and log a startup briefing without the voice client.
+    Uses the template fallback so no LLM is required.
+    Fires after a 3-second delay.
+    """
+    time.sleep(3.0)
+    try:
+        from session_briefing import _template_briefing, _time_of_day_label
+        from working_memory import WorkingMemory
+        wm = WorkingMemory().read()
+        next_ctx = str(wm.get("next_session_context") or "").strip()
+
+        context = {
+            "time_of_day": _time_of_day_label(),
+            "active_project": str(wm.get("active_workspace") or "Prometheus").strip(),
+            "next_session_context": next_ctx,
+            "recent_sessions": [],
+            "vault_memories": [],
+            "background_tasks": [],
+        }
+        text = _template_briefing(context)
+        from utils import log_event
+        log_event("briefing_generated", {
+            "length": len(text),
+            "no_voice": True,
+            "snippet": text[:120],
+            "has_prev_context": bool(next_ctx),
+        })
+        _prom_log("briefing_generated", {
+            "length": len(text),
+            "snippet": text[:120],
+            "has_prev_context": bool(next_ctx),
+        })
+    except Exception as exc:
+        try:
+            from utils import log_event
+            log_event("briefing_no_voice_error", {"error": str(exc)[:200]})
+        except Exception:
+            pass
 
 
 class PrometheusApp:
@@ -82,6 +164,8 @@ class PrometheusApp:
         self.hud: Any = None
         self.realtime_client: Any = None
         self._log_viewer: Any = None
+        self._proactive_thread: threading.Thread | None = None
+        self._briefing_thread: threading.Thread | None = None
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -139,15 +223,37 @@ class PrometheusApp:
 
         # ── 8. HUD ────────────────────────────────────────────────────────
         if not self._args.no_hud:
-            from hud import PrometheusHUD
-            self.hud = PrometheusHUD(
-                working_memory=self.working_memory,
-                git_safety=self.git_safety,
-                log_path=log_path,
-            )
-            self.hud.start()
+            try:
+                from hud import PrometheusHUD
+                self.hud = PrometheusHUD(
+                    working_memory=self.working_memory,
+                    git_safety=self.git_safety,
+                    log_path=log_path,
+                )
+                self.hud.start()
+            except Exception as exc:
+                log_event("hud_init_error", {"error": str(exc)[:200]})
 
-        # ── 9. RealtimeClient (voice) ─────────────────────────────────────
+        # ── 9. ProactiveLoop (daemon thread) ──────────────────────────────
+        self._proactive_thread = threading.Thread(
+            target=_run_proactive_loop_thread,
+            args=(None, None),  # client=None compatible with --no-voice
+            daemon=True,
+            name="proactive-loop",
+        )
+        self._proactive_thread.start()
+
+        # ── 10. Startup briefing ──────────────────────────────────────────
+        if self._args.no_voice:
+            # No-voice mode: generate briefing text offline and log it
+            self._briefing_thread = threading.Thread(
+                target=_fire_no_voice_briefing,
+                daemon=True,
+                name="briefing-no-voice",
+            )
+            self._briefing_thread.start()
+
+        # ── 11. RealtimeClient (voice) ────────────────────────────────────
         if not self._args.no_voice:
             try:
                 from realtime_client import RealtimeJarvisClient
@@ -155,17 +261,19 @@ class PrometheusApp:
             except Exception as exc:
                 log_event("prometheus_voice_init_error", {"error": str(exc)[:200]})
 
-        # ── 10. Bashrc alias ──────────────────────────────────────────────
+        # ── 12. Bashrc alias ──────────────────────────────────────────────
         _ensure_bashrc_alias()
 
-        # ── 11. prometheus_start ──────────────────────────────────────────
-        log_event("prometheus_start", {
+        # ── 13. prometheus_start ──────────────────────────────────────────
+        start_payload = {
             "version": _VERSION,
             "no_hud": self._args.no_hud,
             "no_voice": self._args.no_voice,
             "dev": self._args.dev,
             "cost_limit": self._args.cost_limit,
-        })
+        }
+        log_event("prometheus_start", start_payload)
+        _prom_log("prometheus_start", start_payload)
 
         # Register signal handlers
         signal.signal(signal.SIGINT, self._handle_signal)
@@ -181,16 +289,26 @@ class PrometheusApp:
 
         from utils import log_event
 
-        # Session summary
+        # Session wrap-up
+        try:
+            from session_summarizer import SessionSummarizer
+            ss = SessionSummarizer()
+            ss.trigger_wrapup(client=None)
+        except Exception as exc:
+            log_event("wrapup_error", {"error": str(exc)[:200]})
+
+        # Session summary for log
         try:
             summary = self._log_viewer.summarize_session() if self._log_viewer else ""
         except Exception:
             summary = ""
 
-        log_event("prometheus_shutdown", {
+        shutdown_payload = {
             "version": _VERSION,
             "summary": summary[:500],
-        })
+        }
+        log_event("prometheus_shutdown", shutdown_payload)
+        _prom_log("prometheus_shutdown", shutdown_payload)
 
         # Stop voice
         if self.realtime_client is not None:
@@ -207,32 +325,25 @@ class PrometheusApp:
             except Exception:
                 pass
 
-        # Session wrap-up
-        try:
-            from session_summarizer import trigger_wrapup
-            trigger_wrapup()
-        except Exception:
-            pass
-
         self._stop_event.set()
         self._started = False
 
     def run(self) -> None:
         """
         Block until stop() is called or SIGTERM received.
-        For production use — call start() first.
+        For production use — call start() first or it will be called here.
         """
         self.start()
         try:
             if self.realtime_client is not None and hasattr(self.realtime_client, "run"):
-                import asyncio
                 asyncio.run(self.realtime_client.run())
             else:
                 self._stop_event.wait()
         except KeyboardInterrupt:
             pass
         finally:
-            self.stop()
+            if self._started:
+                self.stop()
 
     def _handle_signal(self, signum: int, frame: Any) -> None:
         """SIGINT / SIGTERM handler."""
