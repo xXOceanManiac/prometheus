@@ -64,6 +64,7 @@ class Orchestrator:
         tester: TesterAgent | None = None,
         debugger: DebuggerAgent | None = None,
         git_safety: GitSafety | None = None,
+        cost_tracker: Any | None = None,
     ) -> None:
         self.max_debug_cycles = max_debug_cycles
         self._architect = architect or ArchitectAgent()
@@ -71,6 +72,7 @@ class Orchestrator:
         self._tester = tester or TesterAgent()
         self._debugger = debugger or DebuggerAgent()
         self._git = git_safety or GitSafety()
+        self._cost_tracker = cost_tracker
 
     def run(self, goal: str, context: str = "") -> OrchestrationResult:
         """
@@ -90,6 +92,16 @@ class Orchestrator:
         })
 
         # ── Phase 1: Architect ───────────────────────────────────────────
+        cost_abort = self._check_cost()
+        if cost_abort:
+            return OrchestrationResult(
+                goal=goal,
+                success=False,
+                phases_completed=["cost_limit_abort"],
+                checkpoint_sha=checkpoint_sha,
+                duration_seconds=round(time.monotonic() - t0, 1),
+                agent_outputs={"abort": cost_abort},
+            )
         arch_task = AgentTask(goal=goal, context=context)
         arch_result = self._architect.run(arch_task)
         agent_outputs["architect"] = arch_result.output
@@ -250,6 +262,23 @@ class Orchestrator:
             checkpoint_sha=checkpoint_sha,
             agent_outputs=agent_outputs,
         )
+
+    def _check_cost(self) -> str | None:
+        """
+        Check cost limits before a claude invocation.
+        Returns an abort reason string if limits are exceeded, or None if ok.
+        """
+        if self._cost_tracker is None:
+            return None
+        try:
+            result = self._cost_tracker.check_limits()
+            if not result.get("ok", True):
+                reason = result.get("reason", "cost limit reached")
+                log_event("cost_limit_abort", {"reason": reason})
+                return reason
+        except Exception:
+            pass
+        return None
 
 
 # ------------------------------------------------------------------

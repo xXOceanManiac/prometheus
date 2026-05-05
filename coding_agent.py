@@ -56,11 +56,13 @@ class CodingAgent:
         git_safety: GitSafety | None = None,
         max_retries: int = 3,
         timeout: int = 300,
+        cost_tracker: Any | None = None,
     ) -> None:
         self.git_safety = git_safety or GitSafety()
         self.max_retries = max_retries
         self.timeout = timeout
         self._criteria_engine = SuccessCriteriaEngine()
+        self._cost_tracker = cost_tracker
 
     # ------------------------------------------------------------------
     # Public API
@@ -93,6 +95,19 @@ class CodingAgent:
         last_output = ""
 
         for attempt in range(1, self.max_retries + 1):
+            # Cost limit check before each claude invocation
+            if self._cost_tracker is not None:
+                limit_check = self._cost_tracker.check_limits()
+                if not limit_check["ok"]:
+                    reason = limit_check.get("reason", "cost limit reached")
+                    log_event("cost_limit_abort", {"reason": reason, "goal": goal[:80]})
+                    return CodingResult(
+                        success=False,
+                        attempts=attempt - 1,
+                        output=f"[ABORTED: cost limit — {reason}]",
+                        checkpoint_sha=checkpoint_sha,
+                    )
+
             log_event("coding_agent_attempt", {
                 "attempt": attempt,
                 "goal": goal[:80],
