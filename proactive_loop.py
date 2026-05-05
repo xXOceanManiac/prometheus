@@ -166,6 +166,15 @@ class ProactiveLoop:
         if last_tool:
             recent_tools.append(last_tool)
 
+        # Orchestration build result
+        build_result: dict = {}
+        try:
+            raw_build = wm.get("last_orchestration_result")
+            if isinstance(raw_build, dict) and raw_build.get("status") == "complete":
+                build_result = raw_build
+        except Exception:
+            pass
+
         # Active window title
         active_window = vs.get("active_window") or {}
         if isinstance(active_window, dict):
@@ -194,6 +203,7 @@ class ProactiveLoop:
             "open_apps": open_apps[:10],
             "xbox_state": vs.get("xbox_state"),
             "recent_tool_actions": recent_tools[:3],
+            "last_build_result": build_result,
         }
 
     def _llm_decide(self, context: dict) -> dict | None:
@@ -224,6 +234,9 @@ class ProactiveLoop:
                 "- Never surface anything in the same category as something surfaced within the last 10 minutes\n"
                 "- Only surface if seconds_since_last_voice >= 30\n"
                 "- Background task completed: worth surfacing if output_path or result_summary is new\n"
+                "- last_build_result.status == 'complete' and seconds_since_last_voice > 60: surface build outcome once\n"
+                "- Build succeeded: say 'Build complete. N tests passing.'\n"
+                "- Build needs_human: say 'Build hit the debug limit. Your review is needed.'\n"
                 "- Same file open 2+ hours: worth surfacing\n"
                 "- Evening with no wrap-up: worth surfacing once\n"
                 "- Relevant vault connection to current window: worth surfacing once per session\n"

@@ -179,6 +179,9 @@ ACTION_ENUM = [
     # Autonomous coding tools
     "start_coding_task",
     "get_coding_status",
+    # Orchestrated build tools
+    "start_build",
+    "get_build_status",
 ]
 
 
@@ -2210,5 +2213,48 @@ class ToolRegistry:
             except Exception as exc:
                 log_event("get_coding_status_error", {"error": str(exc)})
                 return ToolResult(ok=False, message=f"get_coding_status error: {exc}")
+
+        if action == "start_build":
+            try:
+                from orchestrator import start_build as _start_build
+                goal = str(params.get("goal") or "").strip()
+                context = str(params.get("context") or "").strip()
+                if not goal:
+                    return ToolResult(ok=False, message="start_build: 'goal' is required")
+                result = _start_build(goal=goal, context=context)
+                return ToolResult(
+                    ok=True,
+                    message=f"Build started for: {goal[:60]}",
+                    data=result,
+                )
+            except Exception as exc:
+                log_event("start_build_error", {"error": str(exc)})
+                return ToolResult(ok=False, message=f"start_build error: {exc}")
+
+        if action == "get_build_status":
+            try:
+                from orchestrator import get_build_status as _build_status
+                result = _build_status()
+                has_result = result.get("status") not in ("no build running", None)
+                if not has_result:
+                    msg = "No orchestrated build has been run yet."
+                elif result.get("status") == "running":
+                    msg = f"Build running: {result.get('goal','')[:60]}"
+                elif result.get("success"):
+                    tr = result.get("test_results", {})
+                    msg = (
+                        f"Build succeeded: {result.get('goal','')[:50]}. "
+                        f"{tr.get('passed', 0)} tests passing."
+                    )
+                else:
+                    needs_human = result.get("needs_human", False)
+                    msg = (
+                        f"Build {'needs human review' if needs_human else 'failed'}: "
+                        f"{result.get('goal','')[:50]}."
+                    )
+                return ToolResult(ok=True, message=msg, data=result)
+            except Exception as exc:
+                log_event("get_build_status_error", {"error": str(exc)})
+                return ToolResult(ok=False, message=f"get_build_status error: {exc}")
 
         return ToolResult(False, f"Unknown action: {action}")

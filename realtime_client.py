@@ -444,6 +444,47 @@ class RealtimeJarvisClient:
                 "payload": {"action": "get_coding_status", "request_text": transcript},
             }
 
+        # Orchestrated build — start
+        if any(
+            p in text
+            for p in [
+                "start a build",
+                "run the orchestrator",
+                "build this feature",
+                "orchestrate",
+                "start the build pipeline",
+                "run architect coder tester",
+                "full build",
+                "start build",
+            ]
+        ):
+            return {
+                "type": "direct_tool",
+                "payload": {
+                    "action": "start_build",
+                    "goal": transcript,
+                    "request_text": transcript,
+                },
+            }
+
+        # Orchestrated build — status
+        if any(
+            p in text
+            for p in [
+                "how's the build",
+                "build status",
+                "is the build done",
+                "did the build finish",
+                "orchestrator status",
+                "get build status",
+                "how many tests are passing",
+            ]
+        ):
+            return {
+                "type": "direct_tool",
+                "payload": {"action": "get_build_status", "request_text": transcript},
+            }
+
         if any(
             p in text
             for p in [
@@ -793,6 +834,42 @@ class RealtimeJarvisClient:
                         + ("Changes were rolled back. " if rolled else "")
                         + "Report the failure briefly."
                     )
+            elif action == "start_build":
+                d = result.data or {}
+                goal = d.get("goal", "")[:60]
+                response_instructions = (
+                    f"Orchestrated build started for: '{goal}'. "
+                    "Say: 'Build started. Architect, Coder, and Tester are running in the background. "
+                    "I'll let you know when it's done.'"
+                )
+            elif action == "get_build_status":
+                d = result.data or {}
+                status = d.get("status", "")
+                if status == "no build running":
+                    response_instructions = "Say: 'No orchestrated build has been run yet.'"
+                elif status == "running":
+                    response_instructions = (
+                        f"Build is still running for: '{d.get('goal','')[:50]}'. "
+                        "Say: 'The build is still in progress. I'll let you know when it completes.'"
+                    )
+                elif d.get("success"):
+                    tr = d.get("test_results", {})
+                    phases = d.get("phases_completed", [])
+                    response_instructions = (
+                        f"Build succeeded. {tr.get('passed', 0)} tests passing. "
+                        f"Phases: {', '.join(phases[:5])}. Report the success concisely."
+                    )
+                elif d.get("needs_human"):
+                    tr = d.get("test_results", {})
+                    response_instructions = (
+                        f"Build hit the debug limit and needs human review. "
+                        f"{tr.get('failed', 0)} tests still failing. "
+                        "Say: 'The build hit its debug limit. I need your help to resolve the remaining failures.'"
+                    )
+                else:
+                    response_instructions = (
+                        f"Build failed. Goal: '{d.get('goal','')[:50]}'. Report the failure briefly."
+                    )
             else:
                 response_instructions = (
                     "Briefly report the result in polished British butler style. "
@@ -1092,6 +1169,45 @@ class RealtimeJarvisClient:
                         f"Coding task failed after {d.get('attempts',0)} attempt(s). "
                         + ("Changes were rolled back. " if rolled else "")
                         + "Report the failure briefly."
+                    )
+            elif tool_action == "start_build":
+                d = result.data or {}
+                goal = d.get("goal", "")[:60]
+                response_instructions = (
+                    f"Orchestrated build started for: '{goal}'. "
+                    "Say: 'Build started. Architect, Coder, and Tester are running in the background. "
+                    "I'll let you know when it's done.'"
+                )
+            elif tool_action == "get_build_status":
+                d = result.data or {}
+                status = d.get("status", "")
+                if status == "no build running":
+                    response_instructions = "Say: 'No orchestrated build has been run yet.'"
+                elif status == "running":
+                    response_instructions = (
+                        f"Build is still running for: '{d.get('goal','')[:50]}'. "
+                        "Say: 'The build is still in progress. I'll let you know when it completes.'"
+                    )
+                elif d.get("success"):
+                    tr = d.get("test_results", {})
+                    phases = d.get("phases_completed", [])
+                    response_instructions = (
+                        f"Build succeeded. Goal: '{d.get('goal','')[:50]}'. "
+                        f"{tr.get('passed', 0)} tests passing. Phases: {', '.join(phases[:5])}. "
+                        "Report the success concisely."
+                    )
+                elif d.get("needs_human"):
+                    tr = d.get("test_results", {})
+                    response_instructions = (
+                        f"Build hit the debug limit and needs human review. "
+                        f"Goal: '{d.get('goal','')[:50]}'. "
+                        f"{tr.get('failed', 0)} tests still failing. "
+                        "Say: 'The build hit its debug limit. I need your help to resolve the remaining failures.'"
+                    )
+                else:
+                    response_instructions = (
+                        f"Build failed. Goal: '{d.get('goal','')[:50]}'. "
+                        "Report the failure briefly."
                     )
             else:
                 response_instructions = (
