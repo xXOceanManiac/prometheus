@@ -284,4 +284,7 @@ def start_coding_task(goal: str, context: str = "") -> dict[str, Any]:
 def get_coding_status() -> dict[str, Any]:
     """Return the most recent coding task result from WorkingMemory."""
     wm = WorkingMemory().read()
-    return wm.get("last_coding_result", {"status": "no task running"})
+    result = wm.get("last_coding_result")
+    if not result or not isinstance(result, dict):
+        return {"status": "no task running"}
+    return result
