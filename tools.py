@@ -329,8 +329,8 @@ def run_diagnostics() -> dict:
         from config import CONFIG
         vault_path = str(CONFIG.get("vault_path", "") or "").strip()
         if not vault_path:
-            vault_path = str(Path.home() / "Tates_Brain" / "data")
-        db_path = Path(vault_path) / "memory.db"
+            vault_path = str(Path.home() / "Tates_Brain")
+        db_path = Path(vault_path) / "data" / "memory.db"
         db_exists = db_path.exists()
         chunk_count = 0
         last_indexed = ""
