@@ -176,6 +176,9 @@ ACTION_ENUM = [
     "session_wrapup",
     "system_status",
     "get_priorities",
+    # Autonomous coding tools
+    "start_coding_task",
+    "get_coding_status",
 ]
 
 
@@ -208,6 +211,8 @@ def _step_schema() -> dict[str, Any]:
             "file": {"type": "string"},
             "message": {"type": "string"},
             "confirmed": {"type": "boolean"},
+            "goal": {"type": "string"},
+            "context": {"type": "string"},
             "steps": {
                 "type": "array",
                 "items": {
@@ -2172,5 +2177,38 @@ class ToolRegistry:
             except Exception as exc:
                 log_event("get_priorities_error", {"error": str(exc)})
                 return ToolResult(ok=False, message=f"get_priorities error: {exc}")
+
+        if action == "start_coding_task":
+            try:
+                from coding_agent import start_coding_task as _start
+                goal = str(payload.get("goal") or payload.get("description") or "").strip()
+                context = str(payload.get("context") or "").strip()
+                if not goal:
+                    return ToolResult(ok=False, message="start_coding_task: 'goal' is required")
+                result = _start(goal=goal, context=context)
+                log_event("coding_task_dispatched_tool", {"goal": goal[:80]})
+                return ToolResult(
+                    ok=True,
+                    message=f"Coding task started: {goal[:60]}",
+                    data=result,
+                )
+            except Exception as exc:
+                log_event("start_coding_task_error", {"error": str(exc)})
+                return ToolResult(ok=False, message=f"start_coding_task error: {exc}")
+
+        if action == "get_coding_status":
+            try:
+                from coding_agent import get_coding_status as _status
+                result = _status()
+                has_result = result.get("status") != "no task running"
+                msg = (
+                    f"Task {'succeeded' if result.get('success') else 'failed'}: {result.get('goal','')[:60]}"
+                    if has_result and "success" in result
+                    else "No coding task has been run yet."
+                )
+                return ToolResult(ok=True, message=msg, data=result)
+            except Exception as exc:
+                log_event("get_coding_status_error", {"error": str(exc)})
+                return ToolResult(ok=False, message=f"get_coding_status error: {exc}")
 
         return ToolResult(False, f"Unknown action: {action}")

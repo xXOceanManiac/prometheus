@@ -401,6 +401,49 @@ class RealtimeJarvisClient:
                 "payload": {"action": action, "request_text": transcript},
             }
 
+        # Autonomous coding task dispatch
+        if any(
+            p in text
+            for p in [
+                "fix this bug",
+                "fix the bug",
+                "code this",
+                "implement this",
+                "build this",
+                "write the code",
+                "start a coding task",
+                "run the coding agent",
+                "code it up",
+                "make the change",
+            ]
+        ):
+            return {
+                "type": "direct_tool",
+                "payload": {
+                    "action": "start_coding_task",
+                    "goal": transcript,
+                    "request_text": transcript,
+                },
+            }
+
+        # Coding task status check
+        if any(
+            p in text
+            for p in [
+                "how's the coding task",
+                "coding task status",
+                "how's the code going",
+                "is the agent done",
+                "what's the coding agent doing",
+                "did the agent finish",
+                "get coding status",
+            ]
+        ):
+            return {
+                "type": "direct_tool",
+                "payload": {"action": "get_coding_status", "request_text": transcript},
+            }
+
         if any(
             p in text
             for p in [
@@ -604,6 +647,8 @@ class RealtimeJarvisClient:
             "session_wrapup",
             "system_status",
             "get_priorities",
+            "start_coding_task",
+            "get_coding_status",
         }
 
         action = str(payload.get("action", "")).strip().lower()
@@ -720,6 +765,33 @@ class RealtimeJarvisClient:
                 else:
                     response_instructions = (
                         f"Command failed. Error: {result.message}. Report the failure."
+                    )
+            elif action == "start_coding_task":
+                d = result.data or {}
+                goal = d.get("goal", "")[:60]
+                criteria = d.get("criteria", "")
+                response_instructions = (
+                    f"Coding task started in background: '{goal}'. "
+                    f"Success criteria: {criteria}. "
+                    "Say: 'Coding task started. I'll let you know when it's done.'"
+                )
+            elif action == "get_coding_status":
+                d = result.data or {}
+                if d.get("status") == "no task running":
+                    response_instructions = "Say: 'No coding task has been run yet.'"
+                elif d.get("success"):
+                    att = d.get("attempts", 1)
+                    diff = d.get("diff", "")[:200]
+                    response_instructions = (
+                        f"Coding task succeeded in {att} attempt(s). Changes: {diff}. "
+                        "Report the success and key changes concisely."
+                    )
+                else:
+                    rolled = d.get("rolled_back", False)
+                    response_instructions = (
+                        f"Coding task failed after {d.get('attempts',0)} attempt(s). "
+                        + ("Changes were rolled back. " if rolled else "")
+                        + "Report the failure briefly."
                     )
             else:
                 response_instructions = (
@@ -898,6 +970,8 @@ class RealtimeJarvisClient:
             "session_wrapup",
             "system_status",
             "get_priorities",
+            "start_coding_task",
+            "get_coding_status",
         }
 
         tool_action = str(args.get("action", "")).strip().lower()
@@ -991,6 +1065,33 @@ class RealtimeJarvisClient:
                 else:
                     response_instructions = (
                         f"Command failed. Error: {result.message}. Report the failure."
+                    )
+            elif tool_action == "start_coding_task":
+                d = result.data or {}
+                goal = d.get("goal", "")[:60]
+                criteria = d.get("criteria", "")
+                response_instructions = (
+                    f"Coding task started in background: '{goal}'. "
+                    f"Success criteria: {criteria}. "
+                    "Say: 'Coding task started. I'll let you know when it's done.'"
+                )
+            elif tool_action == "get_coding_status":
+                d = result.data or {}
+                if d.get("status") == "no task running":
+                    response_instructions = "Say: 'No coding task has been run yet.'"
+                elif d.get("success"):
+                    att = d.get("attempts", 1)
+                    diff = d.get("diff", "")[:200]
+                    response_instructions = (
+                        f"Coding task succeeded in {att} attempt(s). Changes: {diff}. "
+                        "Report the success and key changes concisely."
+                    )
+                else:
+                    rolled = d.get("rolled_back", False)
+                    response_instructions = (
+                        f"Coding task failed after {d.get('attempts',0)} attempt(s). "
+                        + ("Changes were rolled back. " if rolled else "")
+                        + "Report the failure briefly."
                     )
             else:
                 response_instructions = (
