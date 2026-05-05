@@ -1349,7 +1349,7 @@ class HUDWindow(QWidget):
             ("Claude Code", diag.get("claude_code", {}),      lambda d: d.get("on_path", False)),
             ("Vault",       diag.get("vault", {}),             lambda d: d.get("db_exists", False)),
             ("Workers",     diag.get("background_workers", {}), lambda d: d.get("stuck_tasks", 0) == 0),
-            ("Watchdog",    diag.get("watchdog", {}),          lambda d: bool(d.get("last_check_ts"))),
+            ("Watchdog",    diag.get("watchdog", {}),          lambda d: None if d.get("status", "pending") == "pending" else d.get("status") == "healthy"),
             ("System",      diag.get("system", {}),            lambda d: d.get("cpu_pct", 0) < 90),
             ("Cost",        diag.get("cost", {}),              lambda d: d.get("pct_used", 0) < 80),
         ]
@@ -1370,8 +1370,13 @@ class HUDWindow(QWidget):
             try:
                 ok = ok_fn(data)
             except Exception:
-                ok = False
-            dot_color = _GREEN if ok else _RED
+                ok = None
+            if ok is True:
+                dot_color = _GREEN
+            elif ok is False:
+                dot_color = _RED
+            else:
+                dot_color = _AMBER
 
             # Dot
             p.setPen(Qt.PenStyle.NoPen)

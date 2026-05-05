@@ -433,12 +433,20 @@ def run_diagnostics() -> dict:
     # watchdog
     try:
         from working_memory import WorkingMemory
+        import datetime as _dt2
         wm = WorkingMemory().read()
-        result["watchdog"] = {
-            "last_check_ts": str(wm.get("watchdog_last_check_ts", "")),
-        }
+        ts = str(wm.get("watchdog_last_check_ts", ""))
+        if ts:
+            try:
+                age_s = time.time() - _dt2.datetime.fromisoformat(ts).timestamp()
+                w_status = "healthy" if age_s < 120 else "stale"
+            except Exception:
+                w_status = "pending"
+        else:
+            w_status = "pending"  # just started, first cycle hasn't fired yet
+        result["watchdog"] = {"last_check_ts": ts, "status": w_status}
     except Exception as e:
-        result["watchdog"] = {"last_check_ts": "", "error": str(e)[:80]}
+        result["watchdog"] = {"last_check_ts": "", "status": "pending", "error": str(e)[:80]}
 
     # proactive_loop
     try:
@@ -523,7 +531,12 @@ def run_diagnostics() -> dict:
     else:
         healthy += 1
 
-    healthy += 1  # watchdog
+    watchdog_status = result.get("watchdog", {}).get("status", "pending")
+    if watchdog_status == "stale":
+        warnings += 1
+        warning_msgs.append("watchdog hasn't checked in over 2 minutes")
+    else:
+        healthy += 1  # healthy or pending both count fine
 
     healthy += 1  # proactive loop
 
