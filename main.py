@@ -13,7 +13,7 @@ import numpy as np
 from audio import MicRecorder, Speaker
 from config import CONFIG
 from ptt import PushToTalkController
-from realtime_client import RealtimeJarvisClient
+from realtime_client import RealtimePrometheusClient
 from tools import ToolRegistry
 from utils import log_event, notify
 from visuals import VisualStateController
@@ -32,7 +32,7 @@ from proactive_loop import ProactiveLoop
 _PID_FILE = Path.home() / ".jarvis" / "prometheus.pid"
 
 
-class JarvisV4:
+class PrometheusCore:
     def __init__(self) -> None:
         self.sample_rate_in = int(CONFIG.get("sample_rate_in", 16000))
         self.sample_rate_out = int(CONFIG.get("sample_rate_out", 24000))
@@ -65,7 +65,7 @@ class JarvisV4:
         )
         self.mic = MicRecorder(samplerate=self.sample_rate_in, device=self.mic_device)
         self.tools = ToolRegistry()
-        self.client = RealtimeJarvisClient(self.speaker, self.tools)
+        self.client = RealtimePrometheusClient(self.speaker, self.tools)
         self.wakeword = WakeWordDetector()
 
         self._pid_file: Path | None = None
@@ -197,7 +197,7 @@ class JarvisV4:
         status = "wake word armed" if self.wakeword.is_ready else "PTT ready"
         notify(f"Prometheus started. {status}")
         log_event(
-            "jarvis_started",
+            "prometheus_started",
             {
                 "wake_word_ready": self.wakeword.is_ready,
                 "wake_word_error": self.wakeword.error,
@@ -228,7 +228,7 @@ class JarvisV4:
 
         self.worker_pool.shutdown(wait=False, cancel_futures=True)
         self._release_pid_lock()
-        log_event("jarvis_stopped", {})
+        log_event("prometheus_stopped", {})
 
     async def _heartbeat_loop(self) -> None:
         _hb = Path.home() / ".jarvis" / "heartbeat.json"
@@ -502,7 +502,7 @@ class JarvisV4:
 
 
 async def amain() -> None:
-    await JarvisV4().run()
+    await PrometheusCore().run()
 
 
 if __name__ == "__main__":

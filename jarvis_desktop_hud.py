@@ -134,7 +134,7 @@ def format_log_event(rec: dict) -> str | None:
     # Success
     if kind == "realtime_connected":
         return f"{ts}  ✓  Realtime API connected"
-    if kind == "jarvis_started":
+    if kind == "prometheus_started":
         return f"{ts}  ✓  Prometheus online"
     if kind == "background_task_done":
         ok   = bool(rec.get("ok", False))
@@ -158,7 +158,7 @@ def format_log_event(rec: dict) -> str | None:
     if kind == "background_task_submitted":
         desc = str(rec.get("description", ""))[:45]
         return f"{ts}  ⟳  Background task queued: {desc}"
-    if kind == "jarvis_stopped":
+    if kind == "prometheus_stopped":
         return f"{ts}  ⟳  Shutting down"
     if kind in {"workspace_project_changed", "workspace_changed"}:
         name = str(rec.get("name") or rec.get("to") or "unknown")

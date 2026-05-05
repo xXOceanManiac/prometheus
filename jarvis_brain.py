@@ -26,7 +26,7 @@ class BrainPlan:
         }
 
 
-class JarvisBrain:
+class PrometheusBrain:
     def __init__(
         self,
         *,
@@ -70,17 +70,17 @@ class JarvisBrain:
             payload,
             confidence=0.98,
             source=source,
-            tags=["preference", "trigger", "jarvis_v3"],
+            tags=["preference", "trigger", "prometheus_v3"],
         )
 
         if clean_steps:
             chosen_name = payload["routine_name"] or f"preference::{phrase}"
             self.procedural.save_routine(
                 chosen_name,
-                description=payload["notes"] or f"Preferred Jarvis behavior for '{phrase}'.",
+                description=payload["notes"] or f"Preferred Prometheus behavior for '{phrase}'.",
                 triggers=[phrase],
                 steps=clean_steps,
-                tags=["preference", "jarvis_v3"],
+                tags=["preference", "prometheus_v3"],
             )
             payload["routine_name"] = chosen_name
 

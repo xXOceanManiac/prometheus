@@ -52,10 +52,10 @@ def run_cmd(
 
 def notify(message: str) -> None:
     try:
-        run_cmd(["notify-send", "Jarvis", message])
+        run_cmd(["notify-send", "Prometheus", message])
     except Exception:
         pass
-    print(f"[Jarvis] {message}")
+    print(f"[Prometheus] {message}")
 
 
 def command_exists(name: str) -> bool:

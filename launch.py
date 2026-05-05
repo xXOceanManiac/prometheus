@@ -257,8 +257,8 @@ class PrometheusApp:
         # ── 11. RealtimeClient (voice) ────────────────────────────────────
         if not self._args.no_voice:
             try:
-                from realtime_client import RealtimeJarvisClient
-                self.realtime_client = RealtimeJarvisClient()
+                from realtime_client import RealtimePrometheusClient
+                self.realtime_client = RealtimePrometheusClient()
             except Exception as exc:
                 log_event("prometheus_voice_init_error", {"error": str(exc)[:200]})
 

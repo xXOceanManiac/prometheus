@@ -182,6 +182,8 @@ ACTION_ENUM = [
     # Orchestrated build tools
     "start_build",
     "get_build_status",
+    # Vault / personal memory query
+    "query_vault",
 ]
 
 
@@ -2180,6 +2182,33 @@ class ToolRegistry:
             except Exception as exc:
                 log_event("get_priorities_error", {"error": str(exc)})
                 return ToolResult(ok=False, message=f"get_priorities error: {exc}")
+
+        if action == "query_vault":
+            try:
+                from memory_core import query_vault as _qv
+                query = str(payload.get("query") or payload.get("q") or "").strip()
+                limit = int(payload.get("limit") or 5)
+                if not query:
+                    return ToolResult(ok=False, message="query_vault: 'query' is required")
+                results = _qv(query, limit=limit)
+                chunks = []
+                for r in results:
+                    title = str(r.get("title") or "").strip()
+                    year = str(r.get("year") or "").strip()
+                    text = str(r.get("text") or "").strip()[:400]
+                    if text:
+                        header = f"[{title}" + (f" | {year}" if year else "") + "]"
+                        chunks.append(f"{header}\n{text}")
+                formatted = "\n\n".join(chunks) if chunks else "No results found in vault."
+                log_event("query_vault_done", {"query": query[:60], "count": len(results)})
+                return ToolResult(
+                    ok=True,
+                    message=formatted,
+                    data={"results": results, "count": len(results)},
+                )
+            except Exception as exc:
+                log_event("query_vault_error", {"error": str(exc)})
+                return ToolResult(ok=False, message=f"query_vault error: {exc}")
 
         if action == "start_coding_task":
             try:

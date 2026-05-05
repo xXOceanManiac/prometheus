@@ -38,7 +38,7 @@ class OverlayHUD(QWidget):
     def _init_ui(self):
         screen = QGuiApplication.primaryScreen().geometry()
         self.setGeometry(screen)
-        self.setWindowTitle('Jarvis Gesture HUD')
+        self.setWindowTitle('Prometheus Gesture HUD')
         self.setWindowFlags(
             Qt.WindowType.FramelessWindowHint
             | Qt.WindowType.WindowStaysOnTopHint
@@ -124,7 +124,7 @@ class OverlayHUD(QWidget):
         title_font = QFont('DejaVu Sans', 11)
         title_font.setBold(True)
         painter.setFont(title_font)
-        painter.drawText(box.adjusted(14, 14, -14, -14), Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft, 'JARVIS GESTURE')
+        painter.drawText(box.adjusted(14, 14, -14, -14), Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft, 'PROMETHEUS GESTURE')
 
         info_font = QFont('DejaVu Sans Mono', 9)
         painter.setFont(info_font)

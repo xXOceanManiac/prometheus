@@ -311,7 +311,7 @@ class BehaviorLearningEngine:
                 "previous work",
                 "switch to",
                 "work on microschool",
-                "work on jarvis",
+                "work on prometheus",
             ]
         ):
             return "context_resume", 0.86, "Detected resume-context intent."
@@ -487,7 +487,7 @@ class BehaviorLearningEngine:
             rule,
             confidence=0.98,
             source="behavior_learning",
-            tags=["behavior_rule", "jarvis_v4"],
+            tags=["behavior_rule", "prometheus_v4"],
         )
         try:
             self.working.set_preference_edit(rule)
@@ -768,6 +768,7 @@ class BehaviorLearningEngine:
                     "project",
                     "workspace",
                     "jarvis",
+                    "prometheus",
                     "microschool",
                     "tileworld",
                     "lumen",

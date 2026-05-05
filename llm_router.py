@@ -50,7 +50,7 @@ def get_llm(task_type: str = "background") -> Any | None:
     """
     if task_type == "realtime":
         raise ValueError(
-            "Realtime tasks use RealtimeJarvisClient, not get_llm()"
+            "Realtime tasks use RealtimePrometheusClient, not get_llm()"
         )
 
     ollama_url = str(CONFIG.get("ollama_url", "http://localhost:11434")).strip()

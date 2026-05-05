@@ -179,7 +179,7 @@ class SessionSummarizer:
     def trigger_wrapup(self, client: Any = None) -> bool:
         """
         Full session wrap-up: summarize session, write to vault, update next_session_context.
-        Optionally speak a summary via client (RealtimeJarvisClient).
+        Optionally speak a summary via client (RealtimePrometheusClient).
         Returns True on success, False on failure. Never raises.
         """
         try:

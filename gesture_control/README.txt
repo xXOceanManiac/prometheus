@@ -1,5 +1,5 @@
-Jarvis Gesture Control v2
-=========================
+Prometheus Gesture Control v2
+=============================
 
 What this version does
 ----------------------

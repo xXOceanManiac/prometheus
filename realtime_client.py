@@ -45,7 +45,7 @@ Voice:
 """.strip()
 
 
-class RealtimeJarvisClient:
+class RealtimePrometheusClient:
     def __init__(self, speaker: Speaker, tools: ToolRegistry) -> None:
         self.api_key = CONFIG.get("openai_api_key", "")
         self.model = CONFIG.get("realtime_model", "gpt-realtime")
@@ -190,7 +190,26 @@ class RealtimeJarvisClient:
     async def _handle_vault_recall(self, transcript: str) -> None:
         """On-demand vault search triggered by 'what do you remember about...' phrases."""
         query = transcript.strip()
-        for phrase in ("what do you remember about ", "what do you know about ", "do you remember "):
+        _strip_prefixes = (
+            "what do you remember about ",
+            "what do you know about ",
+            "do you remember ",
+            "check my vault and find out ",
+            "check my vault and find ",
+            "check my vault for ",
+            "check my vault ",
+            "search my vault for ",
+            "search my vault ",
+            "look in my vault for ",
+            "look in my vault ",
+            "query my vault for ",
+            "query my vault ",
+            "search the vault for ",
+            "search the vault ",
+            "find in my vault ",
+            "from my vault ",
+        )
+        for phrase in _strip_prefixes:
             lower = query.lower()
             if lower.startswith(phrase):
                 query = query[len(phrase):]
@@ -225,6 +244,7 @@ class RealtimeJarvisClient:
     ) -> dict[str, Any] | None:
         known_targets = (
             "jarvis",
+            "prometheus",
             "microschool",
             "tileworld",
             "lumen",
@@ -415,6 +435,29 @@ class RealtimeJarvisClient:
                 "run the coding agent",
                 "code it up",
                 "make the change",
+                # natural build/create phrases
+                "build me a",
+                "build me an",
+                "create a website",
+                "create a web",
+                "create an app",
+                "create a script",
+                "make me a website",
+                "make me a script",
+                "spin me up",
+                "spin up a",
+                "write me a script",
+                "write me a program",
+                "write me a website",
+                "write a script",
+                "write a website",
+                "write a program",
+                "write an app",
+                "create a program",
+                "create a tool",
+                "make a website",
+                "make a script",
+                "make an app",
             ]
         ):
             return {
@@ -655,6 +698,18 @@ class RealtimeJarvisClient:
                 "what do you remember about",
                 "what do you know about",
                 "do you remember",
+                # direct vault access phrases
+                "check my vault",
+                "look in my vault",
+                "search my vault",
+                "query my vault",
+                "search the vault",
+                "what's in my vault",
+                "whats in my vault",
+                "find in my vault",
+                "from my vault",
+                "in my vault",
+                "vault knows",
             ]
         ):
             return {"type": "vault_recall", "query": transcript}
@@ -1274,7 +1329,7 @@ class RealtimeJarvisClient:
                                 "response": {
                                     "modalities": ["audio", "text"],
                                     "instructions": (
-                                        "Respond as Jarvis. "
+                                        "Respond as Prometheus. "
                                         "Never invent Home Assistant script names. "
                                         "For lights, Xbox, and smart-home requests, call desktop_action and let the deterministic tool layer choose the exact jarvis_* script. "
                                         "For current screen or tab understanding, call desktop_action with summarize_screen. "

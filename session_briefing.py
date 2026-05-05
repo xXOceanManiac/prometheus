@@ -17,7 +17,7 @@ from utils import log_event
 from working_memory import WorkingMemory
 
 if TYPE_CHECKING:
-    from realtime_client import RealtimeJarvisClient
+    from realtime_client import RealtimePrometheusClient
 
 
 class SessionBriefing:
