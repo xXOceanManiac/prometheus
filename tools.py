@@ -1905,7 +1905,7 @@ class ToolRegistry:
                 return ToolResult(ok=False, message="run_shell: no command provided")
             _SHELL_WHITELIST = {
                 "grep", "find", "ls", "cat", "python3", "pip",
-                "git", "wmctrl", "pgrep", "systemctl",
+                "git", "wmctrl", "pgrep", "systemctl", "echo",
             }
             try:
                 tokens = shlex.split(command)

@@ -54,11 +54,20 @@ class SuccessCriteriaEngine:
         (r"add\s+a?\s*(new\s+)?tool\s+(called\s+)?(\w+)", "log", "tool_registered",
          "Prometheus log shows tool_registered event"),
 
-        # file creation goals
-        (r"create\s+(?:a\s+)?(?:new\s+)?(?:file\s+)?([~/\w.\-]+\.py)", "file_exists", "{1}",
+        # file creation goals — named file with extension
+        (r"(?:create|write|generate|output)\s+(?:a\s+)?(?:new\s+)?(?:\w+\s+)?(?:file\s+)?([~/\w.\-]+\.\w+)", "file_exists", "{1}",
          "Confirm the file exists after the agent runs"),
-        (r"write\s+(?:a\s+)?(?:new\s+)?(?:file\s+)?([~/\w.\-]+\.py)", "file_exists", "{1}",
-         "Confirm the file exists after the agent runs"),
+        # generic file creation intent without a specific path
+        (r"(?:create|write|generate|output)\s+(?:a\s+)?(?:new\s+)?(?:\w+\s+)*(?:report|file|output|result|document|summary)\b", "file_exists", "output_report.txt",
+         "Confirm an output file exists after the agent runs"),
+
+        # shell exit code checks — goal mentions exit N or verifying a process exits correctly
+        (r".*\breturns?\s+exit\s+\d", "shell_exit",
+         "python3 -c 'import main' && echo ok",
+         "Verify shell command returns expected exit code"),
+        (r"make\s+sure\b.*\b(?:exit|return|returns|works?|runs?)\b", "shell_exit",
+         "python3 -c 'import main' && echo ok",
+         "Verify shell command succeeds"),
 
         # import / startup errors
         (r"fix.*(import|startup|crash|start)", "shell_exit",

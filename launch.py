@@ -26,6 +26,7 @@ if str(_PROJECT_ROOT) not in sys.path:
 
 _PROMETHEUS_DIR = Path.home() / ".prometheus"
 _VERSION = "4.0.0"
+__version__ = "4.0.0"
 
 
 def _parse_args(args: list[str] | None = None) -> argparse.Namespace:
@@ -289,15 +290,8 @@ class PrometheusApp:
 
         from utils import log_event
 
-        # Session wrap-up
-        try:
-            from session_summarizer import SessionSummarizer
-            ss = SessionSummarizer()
-            ss.trigger_wrapup(client=None)
-        except Exception as exc:
-            log_event("wrapup_error", {"error": str(exc)[:200]})
-
-        # Session summary for log
+        # Write shutdown log FIRST — before any blocking operations so SIGTERM
+        # under a tight timeout still captures this critical lifecycle event.
         try:
             summary = self._log_viewer.summarize_session() if self._log_viewer else ""
         except Exception:
@@ -309,6 +303,14 @@ class PrometheusApp:
         }
         log_event("prometheus_shutdown", shutdown_payload)
         _prom_log("prometheus_shutdown", shutdown_payload)
+
+        # Session wrap-up (best-effort — may call LLM, must not block shutdown)
+        try:
+            from session_summarizer import SessionSummarizer
+            ss = SessionSummarizer()
+            ss.trigger_wrapup(client=None)
+        except Exception as exc:
+            log_event("wrapup_error", {"error": str(exc)[:200]})
 
         # Stop voice
         if self.realtime_client is not None:
