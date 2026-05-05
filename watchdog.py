@@ -14,7 +14,7 @@ from typing import Any
 from utils import log_event
 from working_memory import WorkingMemory
 
-_TASK_TIMEOUT_MINUTES = 10
+_TASK_TIMEOUT_MINUTES = 5
 _VOICE_LOST_MINUTES = 5
 _GIT_LOG_DEPTH = 30
 
@@ -88,10 +88,13 @@ class PrometheusWatchdog:
 
     def _loop(self) -> None:
         """Main loop: wait INTERVAL seconds, run all checks, repeat until stopped."""
+        self._wm.write({"watchdog_last_check_ts": time.strftime("%Y-%m-%dT%H:%M:%S")})
         while not self._stop_event.wait(timeout=self._INTERVAL):
             try:
+                self._wm.write({"watchdog_last_check_ts": time.strftime("%Y-%m-%dT%H:%M:%S")})
                 self._check_voice_connection()
                 self._check_background_threads()
+                self._check_background_tasks_file()
                 self._check_cost_limits()
                 self._check_git_state()
             except Exception as exc:
@@ -185,6 +188,58 @@ class PrometheusWatchdog:
         except Exception as exc:
             log_event("watchdog_cost_check_error", {"error": str(exc)[:200]})
             return True
+
+    def _check_background_tasks_file(self) -> None:
+        """Check background_tasks.json for tasks running > 5 minutes."""
+        _tasks_file = Path.home() / ".jarvis" / "background_tasks.json"
+        now = time.time()
+        try:
+            if not _tasks_file.exists():
+                return
+            import json, os
+            raw = _tasks_file.read_text(encoding="utf-8")
+            data = json.loads(raw)
+            tasks = data.get("tasks") or []
+            changed = False
+            for task in tasks:
+                if not isinstance(task, dict):
+                    continue
+                if task.get("status") != "running":
+                    continue
+                started_at = str(task.get("started_at", ""))
+                if not started_at:
+                    continue
+                started_epoch = _parse_iso(started_at)
+                if started_epoch == 0.0:
+                    continue
+                running_minutes = (now - started_epoch) / 60.0
+                if running_minutes > 5.0:
+                    goal = str(task.get("intent", ""))[:40]
+                    log_event("watchdog_task_timeout", {
+                        "task_id": task.get("id", ""),
+                        "goal": goal,
+                        "running_minutes": round(running_minutes, 1),
+                    })
+                    task["status"] = "timeout"
+                    changed = True
+                    self._notify_voice_error(
+                        "background task",
+                        f"'{goal}' has been running over 5 minutes",
+                    )
+            if changed:
+                tmp = _tasks_file.with_suffix(".tmp")
+                tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
+                os.replace(tmp, _tasks_file)
+        except Exception as exc:
+            log_event("watchdog_tasks_file_error", {"error": str(exc)[:200]})
+
+    def _notify_voice_error(self, action: str, error: str) -> None:
+        """Forward error to voice if a callback is set. Fail silently."""
+        try:
+            from tools import notify_voice_error
+            notify_voice_error(action, error)
+        except Exception:
+            pass
 
     def _check_git_state(self) -> bool:
         """

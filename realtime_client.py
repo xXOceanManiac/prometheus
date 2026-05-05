@@ -72,6 +72,51 @@ class RealtimePrometheusClient:
         # Dynamic system prompt — can be updated before connect()
         self._system_prompt: str = SYSTEM_PROMPT
 
+        # Register voice error callback so tools.py can speak errors
+        try:
+            import tools as _tools
+            _tools.set_voice_error_callback(self._handle_voice_error_sync)
+        except Exception:
+            pass
+
+    def _handle_voice_error_sync(self, action: str, error: str) -> None:
+        """Called from tools.py on tool failure. Queues an error speech via asyncio."""
+        if not self.connected:
+            return
+        msg = f"I hit an error running {action}: {error[:80]}"
+        try:
+            import asyncio
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                loop.call_soon_threadsafe(
+                    lambda: asyncio.ensure_future(self._speak_text(msg))
+                )
+        except Exception:
+            pass
+
+    async def _speak_text(self, text: str) -> None:
+        """Send a text-only response through the Realtime session."""
+        if not self.connected or not self.ws:
+            return
+        try:
+            await self.send({
+                "type": "conversation.item.create",
+                "item": {
+                    "type": "message",
+                    "role": "system",
+                    "content": [{"type": "input_text", "text": text}],
+                },
+            })
+            await self.send({
+                "type": "response.create",
+                "response": {
+                    "modalities": ["audio", "text"],
+                    "instructions": f"Say exactly: '{text}'",
+                },
+            })
+        except Exception:
+            pass
+
     def set_system_prompt(self, prompt: str) -> None:
         """Set the base system prompt. Call before connect() for full effect."""
         if prompt and prompt.strip():
@@ -321,6 +366,54 @@ class RealtimePrometheusClient:
                 "payload": {"action": "session_wrapup", "request_text": transcript},
             }
 
+        # Session / task awareness → system_status
+        if any(
+            p in text
+            for p in [
+                "remind me what i was working on",
+                "what was i doing",
+                "pull up my last session",
+                "what have i been building",
+                "what's running in the background",
+                "whats running in the background",
+                "any background tasks",
+                "what are you working on",
+                "is anything running",
+            ]
+        ):
+            return {
+                "type": "direct_tool",
+                "payload": {"action": "system_status", "request_text": transcript},
+            }
+
+        # Diagnostics → run_diagnostics
+        if any(
+            p in text
+            for p in [
+                "run a diagnostic",
+                "run diagnostics",
+                "check your systems",
+                "are you healthy",
+                "self check",
+                "self-check",
+                "system status",
+                "what's your status",
+                "whats your status",
+                "how are you doing",
+                "check everything",
+                "how much have i spent",
+                "what's the cost so far",
+                "whats the cost so far",
+                "how much is this costing",
+                "run health check",
+                "health check",
+            ]
+        ):
+            return {
+                "type": "direct_tool",
+                "payload": {"action": "run_diagnostics", "request_text": transcript},
+            }
+
         # "What are you working with" → system status
         if any(
             p in text
@@ -458,6 +551,17 @@ class RealtimePrometheusClient:
                 "make a website",
                 "make a script",
                 "make an app",
+                "put together a simple site",
+                "put together a site",
+                "code me a script",
+                "code me a program",
+                "write me some code",
+                "write some code for me",
+                "there's a bug in",
+                "theres a bug in",
+                "debug this for me",
+                "debug this",
+                "help me debug",
             ]
         ):
             return {
@@ -662,6 +766,7 @@ class RealtimePrometheusClient:
                 "open project",
                 "resume ",
                 "continue ",
+                "pick up where we left off",
             ]
         ):
             return {
@@ -710,6 +815,13 @@ class RealtimePrometheusClient:
                 "from my vault",
                 "in my vault",
                 "vault knows",
+                "look in my notes",
+                "check my notes",
+                "what did i write about",
+                "search my memory",
+                "what do i know about",
+                "find my notes",
+                "find my note",
             ]
         ):
             return {"type": "vault_recall", "query": transcript}
@@ -745,6 +857,7 @@ class RealtimePrometheusClient:
             "get_priorities",
             "start_coding_task",
             "get_coding_status",
+            "run_diagnostics",
         }
 
         action = str(payload.get("action", "")).strip().lower()
@@ -925,6 +1038,12 @@ class RealtimePrometheusClient:
                     response_instructions = (
                         f"Build failed. Goal: '{d.get('goal','')[:50]}'. Report the failure briefly."
                     )
+            elif action == "run_diagnostics":
+                summary = str((result.data or {}).get("spoken_summary", "Diagnostics complete."))
+                response_instructions = (
+                    f"Read the diagnostic summary: {summary}. "
+                    "Report it clearly. Do not add preamble."
+                )
             else:
                 response_instructions = (
                     "Briefly report the result in polished British butler style. "
@@ -991,8 +1110,58 @@ class RealtimePrometheusClient:
             }
         )
 
+        asyncio.create_task(self._chat_polling_loop())
+
         log_event("realtime_connected", {"model": self.model, "voice": self.voice})
         print("Realtime connected")
+
+    async def _chat_polling_loop(self) -> None:
+        """
+        Poll working_memory["chat_input"] every 500ms.
+        When a new message arrives, route it through the intent router and
+        write the response to working_memory["chat_response"].
+        """
+        from working_memory import WorkingMemory
+        wm = WorkingMemory()
+        last_ts = ""
+        while self.connected:
+            try:
+                await asyncio.sleep(0.5)
+                data = wm.read()
+                chat_input = data.get("chat_input")
+                if not isinstance(chat_input, dict):
+                    continue
+                ts = str(chat_input.get("ts", ""))
+                if not ts or ts == last_ts:
+                    continue
+                last_ts = ts
+                text = str(chat_input.get("text", "")).strip()
+                if not text:
+                    continue
+
+                # Route through intent router
+                override = self._direct_intent_override(text)
+                if override and override.get("type") == "direct_tool":
+                    result = self.tools.execute(override["payload"])
+                    response_text = result.message
+                    if result.data:
+                        response_text += " " + json.dumps(result.data)[:200]
+                elif override and override.get("type") == "vault_recall":
+                    response_text = "Vault search triggered — check activity log."
+                else:
+                    response_text = "Received. Routing to voice assistant."
+
+                wm.write({
+                    "chat_response": {
+                        "text": response_text[:500],
+                        "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
+                    }
+                })
+                log_event("chat_input_routed", {"text": text[:80], "response": response_text[:80]})
+            except asyncio.CancelledError:
+                break
+            except Exception as exc:
+                log_event("chat_polling_error", {"error": str(exc)[:200]})
 
     async def close(self) -> None:
         self.connected = False
@@ -1104,6 +1273,7 @@ class RealtimePrometheusClient:
             "get_priorities",
             "start_coding_task",
             "get_coding_status",
+            "run_diagnostics",
         }
 
         tool_action = str(args.get("action", "")).strip().lower()
@@ -1264,6 +1434,12 @@ class RealtimePrometheusClient:
                         f"Build failed. Goal: '{d.get('goal','')[:50]}'. "
                         "Report the failure briefly."
                     )
+            elif tool_action == "run_diagnostics":
+                summary = str((result.data or {}).get("spoken_summary", "Diagnostics complete."))
+                response_instructions = (
+                    f"Read the diagnostic summary: {summary}. "
+                    "Report it clearly. Do not add preamble."
+                )
             else:
                 response_instructions = (
                     "Briefly report the result in polished British butler style. "

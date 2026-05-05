@@ -140,6 +140,69 @@ def _fire_no_voice_briefing() -> None:
             pass
 
 
+def _check_and_start_ollama(working_memory: Any) -> None:
+    """Check if Ollama is running; attempt autostart if not. Non-blocking."""
+    import subprocess
+    import threading
+    import time
+    try:
+        import requests as _requests
+    except ImportError:
+        return
+
+    def _poll() -> None:
+        try:
+            from utils import log_event
+        except Exception:
+            return
+
+        url = "http://localhost:11434/api/tags"
+        # First check
+        try:
+            r = _requests.get(url, timeout=3)
+            if r.status_code == 200:
+                models = [m.get("name", "") for m in r.json().get("models", [])]
+                log_event("ollama_healthy", {"models": models})
+                working_memory.write({"ollama_available": True})
+                return
+        except Exception:
+            pass
+
+        # Not up — start it
+        log_event("ollama_unavailable", {})
+        try:
+            subprocess.Popen(
+                ["ollama", "serve"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+        except Exception as exc:
+            log_event("ollama_start_failed", {"error": str(exc)[:200]})
+            working_memory.write({"ollama_available": False})
+            return
+
+        # Poll for 8 seconds
+        deadline = time.time() + 8.0
+        while time.time() < deadline:
+            time.sleep(2)
+            try:
+                r = _requests.get(url, timeout=3)
+                if r.status_code == 200:
+                    models = [m.get("name", "") for m in r.json().get("models", [])]
+                    log_event("ollama_autostarted", {"models": models})
+                    working_memory.write({"ollama_available": True})
+                    return
+            except Exception:
+                pass
+
+        log_event("ollama_start_failed", {"error": "timeout after 8s"})
+        working_memory.write({"ollama_available": False})
+
+    t = threading.Thread(target=_poll, daemon=True, name="ollama-healthcheck")
+    t.start()
+
+
 class PrometheusApp:
     """
     Orchestrates startup and shutdown of all Prometheus components.
@@ -204,6 +267,9 @@ class PrometheusApp:
         # ── 4. WorkingMemory ─────────────────────────────────────────────
         from working_memory import WorkingMemory
         self.working_memory = WorkingMemory()
+
+        # ── 4b. Ollama health check ───────────────────────────────────────
+        _check_and_start_ollama(self.working_memory)
 
         # ── 5. LogViewer ─────────────────────────────────────────────────
         from log_viewer import LogViewer

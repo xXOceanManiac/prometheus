@@ -23,6 +23,25 @@ from behavior_learning import BehaviorLearningEngine
 from utils import command_exists, ensure_dir, kill_existing, log_event, run_cmd
 
 
+# Module-level voice error callback — set by realtime client at startup
+_voice_error_callback = None
+
+
+def set_voice_error_callback(cb) -> None:
+    global _voice_error_callback
+    _voice_error_callback = cb
+
+
+def notify_voice_error(action: str, error: str) -> None:
+    """Send a spoken error notification through the Realtime API if connected."""
+    if _voice_error_callback is None:
+        return
+    try:
+        _voice_error_callback(str(action)[:60], str(error)[:80])
+    except Exception:
+        pass
+
+
 @dataclass
 class ToolResult:
     ok: bool
@@ -184,6 +203,8 @@ ACTION_ENUM = [
     "get_build_status",
     # Vault / personal memory query
     "query_vault",
+    # System diagnostics
+    "run_diagnostics",
 ]
 
 
@@ -253,6 +274,287 @@ def _step_schema() -> dict[str, Any]:
         "required": ["action"],
         "additionalProperties": False,
     }
+
+
+def run_diagnostics() -> dict:
+    """
+    Run a full system health check and return status for all subsystems.
+    Written to working_memory["last_diagnostic"] and voiced as a summary.
+    """
+    import shutil as _shutil
+    import datetime as _dt
+
+    result: dict = {
+        "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
+    }
+
+    # voice
+    try:
+        from working_memory import WorkingMemory
+        wm = WorkingMemory().read()
+        result["voice"] = {
+            "connected": bool(wm.get("voice_connected", True)),
+            "last_response_ts": str(wm.get("last_voice_response_ts", "")),
+        }
+    except Exception as e:
+        result["voice"] = {"connected": False, "error": str(e)[:100]}
+
+    # ollama
+    try:
+        import requests as _req
+        t0 = time.time()
+        r = _req.get("http://localhost:11434/api/tags", timeout=5)
+        latency_ms = round((time.time() - t0) * 1000)
+        if r.status_code == 200:
+            models = [m.get("name", "") for m in r.json().get("models", [])]
+            result["ollama"] = {"available": True, "models": models, "latency_ms": latency_ms}
+        else:
+            result["ollama"] = {"available": False, "models": [], "latency_ms": latency_ms}
+    except Exception:
+        result["ollama"] = {"available": False, "models": [], "latency_ms": -1}
+
+    # claude_code
+    try:
+        from working_memory import WorkingMemory
+        wm = WorkingMemory().read()
+        result["claude_code"] = {
+            "on_path": _shutil.which("claude") is not None,
+            "last_result": str(wm.get("last_coding_result", ""))[:80],
+        }
+    except Exception as e:
+        result["claude_code"] = {"on_path": _shutil.which("claude") is not None, "error": str(e)[:80]}
+
+    # vault
+    try:
+        from config import CONFIG
+        vault_path = str(CONFIG.get("vault_path", "") or "").strip()
+        if not vault_path:
+            vault_path = str(Path.home() / "Tates_Brain" / "data")
+        db_path = Path(vault_path) / "memory.db"
+        db_exists = db_path.exists()
+        chunk_count = 0
+        last_indexed = ""
+        if db_exists:
+            import sqlite3 as _sqlite3
+            try:
+                with _sqlite3.connect(str(db_path)) as conn:
+                    row = conn.execute("SELECT COUNT(*) FROM chunks").fetchone()
+                    chunk_count = int(row[0]) if row else 0
+            except Exception:
+                pass
+            try:
+                mtime = db_path.stat().st_mtime
+                last_indexed = _dt.datetime.fromtimestamp(mtime).strftime("%Y-%m-%dT%H:%M:%S")
+            except Exception:
+                pass
+        result["vault"] = {
+            "db_exists": db_exists,
+            "chunk_count": chunk_count,
+            "last_indexed": last_indexed,
+        }
+    except Exception as e:
+        result["vault"] = {"db_exists": False, "chunk_count": 0, "error": str(e)[:80]}
+
+    # background_workers
+    try:
+        tasks_file = Path.home() / ".jarvis" / "background_tasks.json"
+        active_tasks = 0
+        stuck_tasks = 0
+        if tasks_file.exists():
+            import json as _json
+            data = _json.loads(tasks_file.read_text(encoding="utf-8"))
+            tasks = data.get("tasks") or []
+            now_ts = time.time()
+            for t in tasks:
+                if not isinstance(t, dict):
+                    continue
+                if t.get("status") == "running":
+                    active_tasks += 1
+                    started_at = str(t.get("started_at", ""))
+                    if started_at:
+                        try:
+                            started_epoch = _dt.datetime.fromisoformat(started_at).timestamp()
+                            if (now_ts - started_epoch) / 60.0 > 5.0:
+                                stuck_tasks += 1
+                        except Exception:
+                            pass
+        result["background_workers"] = {
+            "active_tasks": active_tasks,
+            "stuck_tasks": stuck_tasks,
+        }
+    except Exception as e:
+        result["background_workers"] = {"active_tasks": 0, "stuck_tasks": 0, "error": str(e)[:80]}
+
+    # git
+    try:
+        from git_safety import GitSafety
+        gs = GitSafety()
+        sha = gs.last_checkpoint_sha()
+        git_r = subprocess.run(
+            ["git", "status", "--porcelain"],
+            capture_output=True, text=True, timeout=10,
+            cwd=str(Path(__file__).parent),
+        )
+        uncommitted = len([l for l in git_r.stdout.splitlines() if l.strip()]) if git_r.returncode == 0 else 0
+        result["git"] = {
+            "last_checkpoint": sha or "none",
+            "uncommitted_changes": uncommitted,
+            "claude_code_on_path": _shutil.which("claude") is not None,
+        }
+    except Exception as e:
+        result["git"] = {"last_checkpoint": "unknown", "uncommitted_changes": 0, "error": str(e)[:80]}
+
+    # cost
+    try:
+        from cost_tracker import CostTracker
+        ct = CostTracker()
+        summary = ct.session_summary()
+        pct = round(summary["daily_total"] / ct.daily_limit_usd * 100, 1) if ct.daily_limit_usd > 0 else 0.0
+        result["cost"] = {
+            "session_usd": summary["session_total"],
+            "daily_usd": summary["daily_total"],
+            "daily_limit_usd": ct.daily_limit_usd,
+            "pct_used": pct,
+        }
+    except Exception as e:
+        result["cost"] = {"session_usd": 0.0, "daily_usd": 0.0, "daily_limit_usd": 5.0, "pct_used": 0.0, "error": str(e)[:80]}
+
+    # system
+    try:
+        import psutil as _psutil
+        result["system"] = {
+            "cpu_pct": _psutil.cpu_percent(interval=None),
+            "ram_pct": _psutil.virtual_memory().percent,
+            "disk_pct": _psutil.disk_usage("/").percent,
+        }
+    except Exception:
+        result["system"] = {"cpu_pct": 0.0, "ram_pct": 0.0, "disk_pct": 0.0}
+
+    # watchdog
+    try:
+        from working_memory import WorkingMemory
+        wm = WorkingMemory().read()
+        result["watchdog"] = {
+            "last_check_ts": str(wm.get("watchdog_last_check_ts", "")),
+        }
+    except Exception as e:
+        result["watchdog"] = {"last_check_ts": "", "error": str(e)[:80]}
+
+    # proactive_loop
+    try:
+        log_dir = Path.home() / ".jarvis" / "logs"
+        cycles = 0
+        last_fired = ""
+        if log_dir.exists():
+            import json as _json
+            files = sorted(log_dir.glob("*.jsonl"))
+            if files:
+                lines = files[-1].read_text(encoding="utf-8", errors="ignore").splitlines()
+                for raw in lines:
+                    try:
+                        rec = _json.loads(raw)
+                        if rec.get("kind") == "proactive_loop_cycle":
+                            cycles += 1
+                            last_fired = str(rec.get("ts", ""))
+                    except Exception:
+                        pass
+        result["proactive_loop"] = {
+            "last_fired_ts": last_fired,
+            "cycles_this_session": cycles,
+        }
+    except Exception as e:
+        result["proactive_loop"] = {"last_fired_ts": "", "cycles_this_session": 0, "error": str(e)[:80]}
+
+    # Build spoken summary
+    healthy = 0
+    warnings = 0
+    critical = 0
+    warning_msgs = []
+    critical_msgs = []
+
+    if result.get("voice", {}).get("connected", True):
+        healthy += 1
+    else:
+        warnings += 1
+        warning_msgs.append("voice disconnected")
+
+    ollama = result.get("ollama", {})
+    if ollama.get("available"):
+        latency = ollama.get("latency_ms", 0)
+        if latency > 3000:
+            warnings += 1
+            warning_msgs.append(f"Ollama latency is {latency}ms")
+        else:
+            healthy += 1
+    else:
+        warnings += 1
+        warning_msgs.append("Ollama unavailable")
+
+    if result.get("claude_code", {}).get("on_path"):
+        healthy += 1
+    else:
+        critical += 1
+        critical_msgs.append("Claude Code not found on PATH")
+
+    if result.get("vault", {}).get("db_exists"):
+        healthy += 1
+    else:
+        critical += 1
+        critical_msgs.append("vault database missing")
+
+    workers = result.get("background_workers", {})
+    stuck = workers.get("stuck_tasks", 0)
+    if stuck > 0:
+        warnings += 1
+        warning_msgs.append(f"{stuck} task(s) stuck over 5 minutes")
+    else:
+        healthy += 1
+
+    healthy += 1  # git always counts
+
+    cost = result.get("cost", {})
+    pct = cost.get("pct_used", 0)
+    if pct > 80:
+        critical += 1
+        critical_msgs.append(f"at {pct:.0f}% of daily cost limit")
+    elif pct > 50:
+        warnings += 1
+        warning_msgs.append(f"at {pct:.0f}% of daily cost limit")
+    else:
+        healthy += 1
+
+    healthy += 1  # watchdog
+
+    healthy += 1  # proactive loop
+
+    healthy += 1  # system
+
+    if critical > 0:
+        spoken = f"{critical} critical issue{'s' if critical > 1 else ''}: " + ", ".join(critical_msgs)
+        if warnings:
+            spoken += f"; {warnings} warning{'s' if warnings > 1 else ''}: " + ", ".join(warning_msgs)
+    elif warnings > 0:
+        spoken = f"{warnings} warning{'s' if warnings > 1 else ''}: " + ", ".join(warning_msgs)
+    else:
+        spoken = f"All systems nominal — {healthy} systems healthy."
+
+    result["spoken_summary"] = spoken
+
+    # Write to working memory
+    try:
+        from working_memory import WorkingMemory
+        WorkingMemory().write({"last_diagnostic": result})
+    except Exception:
+        pass
+
+    log_event("diagnostics_run", {
+        "healthy": healthy,
+        "warnings": warnings,
+        "critical": critical,
+        "summary": spoken[:120],
+    })
+
+    return result
 
 
 class ToolRegistry:
@@ -1040,6 +1342,31 @@ class ToolRegistry:
         return self._remember_tool_result(payload, result)
 
     def _execute_one(self, payload: dict[str, Any]) -> ToolResult:
+        action = str(payload.get("action", "")).strip()
+        try:
+            return self._execute_one_inner(payload)
+        except Exception as exc:
+            import traceback
+            tb_last = traceback.format_exc().strip().splitlines()[-1]
+            log_event("tool_error", {
+                "action": action,
+                "error": str(exc)[:200],
+                "traceback_last": tb_last,
+            })
+            try:
+                self.working.write({
+                    "last_tool_error": {
+                        "action": action,
+                        "error": str(exc)[:200],
+                        "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
+                    }
+                })
+            except Exception:
+                pass
+            notify_voice_error(action, str(exc))
+            return ToolResult(False, f"Tool error: {str(exc)[:120]}")
+
+    def _execute_one_inner(self, payload: dict[str, Any]) -> ToolResult:
         action = str(payload.get("action", "")).strip()
         if action == "confirm_pending":
             return self._resolve_pending(True)
@@ -2209,6 +2536,14 @@ class ToolRegistry:
             except Exception as exc:
                 log_event("query_vault_error", {"error": str(exc)})
                 return ToolResult(ok=False, message=f"query_vault error: {exc}")
+
+        if action == "run_diagnostics":
+            diag = run_diagnostics()
+            return ToolResult(
+                True,
+                diag.get("spoken_summary", "Diagnostics complete."),
+                diag,
+            )
 
         if action == "start_coding_task":
             try:

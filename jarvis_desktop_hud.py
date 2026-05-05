@@ -20,7 +20,7 @@ from PyQt6.QtGui import (
     QPainterPath,
     QPen,
 )
-from PyQt6.QtWidgets import QApplication, QMessageBox, QToolTip, QWidget
+from PyQt6.QtWidgets import QApplication, QLineEdit, QMessageBox, QToolTip, QWidget
 
 try:
     import psutil
@@ -29,17 +29,32 @@ except Exception:
 
 # ── File paths ──────────────────────────────────────────────────────────────
 
-STATE_FILE     = Path.home() / ".jarvis" / "visual_state.json"
-AUDIO_FILE     = Path.home() / ".jarvis" / "audio_levels.json"
-LOG_DIR        = Path.home() / ".jarvis" / "logs"
-TASKS_FILE     = Path.home() / ".jarvis" / "background_tasks.json"
-AGENTS_FILE    = Path.home() / ".jarvis" / "agents.json"
-HEARTBEAT_FILE = Path.home() / ".jarvis" / "heartbeat.json"
+STATE_FILE          = Path.home() / ".jarvis" / "visual_state.json"
+AUDIO_FILE          = Path.home() / ".jarvis" / "audio_levels.json"
+LOG_DIR             = Path.home() / ".jarvis" / "logs"
+TASKS_FILE          = Path.home() / ".jarvis" / "background_tasks.json"
+AGENTS_FILE         = Path.home() / ".jarvis" / "agents.json"
+HEARTBEAT_FILE      = Path.home() / ".jarvis" / "heartbeat.json"
+WORKING_MEMORY_FILE = Path.home() / ".jarvis" / "memory_v2" / "working_memory.json"
+COST_LOG_FILE       = Path.home() / ".prometheus" / "cost_log.jsonl"
 
 # ── Layout constants ─────────────────────────────────────────────────────────
 
 _HEADER_H   = 44
 _TAB_LABELS = ["MAIN", "OPS", "AGENTS"]
+
+# ── Sidebar constants ─────────────────────────────────────────────────────────
+
+_SIDEBAR_W = 48
+_SIDEBAR_ICONS = [
+    (0, "⌂", "HOME"),
+    (1, "✉", "CHAT"),
+    (2, "≡", "ACTV"),
+    (3, "⚙", "AGNT"),
+    (4, "♥", "DIAG"),
+    (5, "◈", "SYS"),
+    (6, "$", "COST"),
+]
 
 # ── Color palette ─────────────────────────────────────────────────────────────
 
@@ -185,22 +200,27 @@ class Store:
     MAX_ACTIVITY = 50
 
     def __init__(self) -> None:
-        self.state:         str        = "armed"
-        self.mic:           float      = 0.0
-        self.spk:           float      = 0.0
-        self.lines:         list[str]  = []
-        self.active_tab:    int        = 0
-        self.bg_tasks:      list[dict] = []
-        self.agents:        list[dict] = []
-        self.heartbeat_ok:  bool       = False
-        self._log_mtime:    float      = 0.0
+        self.state:              str        = "armed"
+        self.mic:                float      = 0.0
+        self.spk:                float      = 0.0
+        self.lines:              list[str]  = []
+        self.active_tab:         int        = 0
+        self.bg_tasks:           list[dict] = []
+        self.agents:             list[dict] = []
+        self.heartbeat_ok:       bool       = False
+        self._log_mtime:         float      = 0.0
+        self.chat_history:       list[dict] = []
+        self.activity_filter:    str        = "ALL"
+        self.diagnostic:         dict       = {}
+        self.cost_log:           list[dict] = []
+        self._last_chat_resp_ts: str        = ""
 
     def refresh(self) -> None:
         # Visual state + active tab
         try:
             data           = json.loads(STATE_FILE.read_text(encoding="utf-8"))
             self.state     = str(data.get("state", "armed"))
-            self.active_tab = max(0, min(2, int(data.get("active_hud_tab", 0))))
+            self.active_tab = max(0, min(6, int(data.get("active_hud_tab", 0))))
         except Exception:
             pass
 
@@ -257,6 +277,46 @@ class Store:
             self.heartbeat_ok = (datetime.datetime.now() - dt).total_seconds() <= 10.0
         except Exception:
             self.heartbeat_ok = False
+
+        # Diagnostic — read from working memory
+        try:
+            if WORKING_MEMORY_FILE.exists():
+                wm_data = json.loads(WORKING_MEMORY_FILE.read_text(encoding="utf-8"))
+                diag = wm_data.get("last_diagnostic")
+                if isinstance(diag, dict):
+                    self.diagnostic = diag
+                # Chat response polling
+                chat_resp = wm_data.get("chat_response")
+                if isinstance(chat_resp, dict):
+                    ts = str(chat_resp.get("ts", ""))
+                    if ts and ts != self._last_chat_resp_ts:
+                        self._last_chat_resp_ts = ts
+                        self.chat_history.append({
+                            "role": "assistant",
+                            "text": str(chat_resp.get("text", ""))[:500],
+                            "ts": ts,
+                        })
+                        if len(self.chat_history) > 50:
+                            self.chat_history = self.chat_history[-50:]
+        except Exception:
+            pass
+
+        # Cost log — last 10 lines
+        try:
+            if COST_LOG_FILE.exists():
+                raw_lines = COST_LOG_FILE.read_text(encoding="utf-8", errors="ignore").splitlines()
+                entries = []
+                for raw in raw_lines[-10:]:
+                    raw = raw.strip()
+                    if not raw:
+                        continue
+                    try:
+                        entries.append(json.loads(raw))
+                    except Exception:
+                        pass
+                self.cost_log = entries
+        except Exception:
+            self.cost_log = []
 
     @property
     def drive(self) -> float:
@@ -344,6 +404,17 @@ class HUDWindow(QWidget):
         self.anim.timeout.connect(self.tick)
         self.anim.start(16)
 
+        # Chat input widget (shown only when tab 1 is active)
+        self._chat_input = QLineEdit(self)
+        self._chat_input.setPlaceholderText("Type a message...")
+        self._chat_input.setStyleSheet(
+            "QLineEdit { background: rgba(4,10,20,220); color: rgb(200,230,250); "
+            "border: 1px solid rgba(0,200,160,120); border-radius: 6px; padding: 4px 8px; "
+            "font-size: 11px; }"
+        )
+        self._chat_input.hide()
+        self._chat_input.returnPressed.connect(self._send_chat)
+
     # ── Colors ────────────────────────────────────────────────────────────────
 
     def color(self) -> QColor:
@@ -386,6 +457,24 @@ class HUDWindow(QWidget):
     def _outer_rect(self) -> QRectF:
         return QRectF(10, 10, self.width() - 20, self.height() - 20)
 
+    def _sidebar_rect(self) -> QRectF:
+        outer = self._outer_rect()
+        return QRectF(outer.left(), outer.top(), _SIDEBAR_W, outer.height())
+
+    def _content_rect(self) -> QRectF:
+        outer = self._outer_rect()
+        return QRectF(outer.left() + _SIDEBAR_W + 1, outer.top(),
+                      outer.width() - _SIDEBAR_W - 1, outer.height())
+
+    def _sidebar_btn_rect(self, idx: int) -> QRectF:
+        sidebar = self._sidebar_rect()
+        btn_size = 40.0
+        start_y = sidebar.top() + 60.0
+        spacing = 52.0
+        x = sidebar.left() + (_SIDEBAR_W - btn_size) / 2
+        y = start_y + idx * spacing
+        return QRectF(x, y, btn_size, btn_size)
+
     def _tab_btn_rect(self, idx: int) -> QRectF:
         r      = self._outer_rect()
         bw, bh = 50, 26
@@ -409,7 +498,7 @@ class HUDWindow(QWidget):
     # ── Tab state ─────────────────────────────────────────────────────────────
 
     def _set_tab(self, tab: int) -> None:
-        self.store.active_tab = max(0, min(2, tab))
+        self.store.active_tab = max(0, min(6, tab))
         try:
             data: dict = {}
             if STATE_FILE.exists():
@@ -423,6 +512,12 @@ class HUDWindow(QWidget):
             os.replace(tmp, STATE_FILE)
         except Exception:
             pass
+        # Show chat input only on tab 1
+        if self.store.active_tab == 1 and not self.is_compact_mode():
+            self._chat_input.show()
+            self._position_chat_input()
+        else:
+            self._chat_input.hide()
         self.update()
 
     # ── Mouse handling ────────────────────────────────────────────────────────
@@ -430,10 +525,18 @@ class HUDWindow(QWidget):
     def mousePressEvent(self, event):
         pos = event.position()
         x, y = pos.x(), pos.y()
-        for i in range(3):
-            if self._tab_btn_rect(i).contains(x, y):
-                self._set_tab(i)
-                return
+        if self.is_compact_mode():
+            # Compact mode: old 3-tab header buttons
+            for i in range(3):
+                if self._tab_btn_rect(i).contains(x, y):
+                    self._set_tab(i)
+                    return
+        else:
+            # Full mode: sidebar tab buttons (7 tabs)
+            for idx, _icon, _label in _SIDEBAR_ICONS:
+                if self._sidebar_btn_rect(idx).contains(x, y):
+                    self._set_tab(idx)
+                    return
         if self._restart_btn_rect().contains(x, y):
             self._handle_restart_click()
             return
@@ -465,6 +568,52 @@ class HUDWindow(QWidget):
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
+
+    def _send_chat(self) -> None:
+        """Send the typed chat message to working_memory["chat_input"]."""
+        text = self._chat_input.text().strip()
+        if not text:
+            return
+        self._chat_input.clear()
+        self.store.chat_history.append({
+            "role": "user",
+            "text": text,
+            "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
+        })
+        if len(self.store.chat_history) > 50:
+            self.store.chat_history = self.store.chat_history[-50:]
+        try:
+            wm_file = WORKING_MEMORY_FILE
+            data: dict = {}
+            if wm_file.exists():
+                try:
+                    data = json.loads(wm_file.read_text(encoding="utf-8"))
+                except Exception:
+                    pass
+            data["chat_input"] = {
+                "text": text,
+                "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
+            }
+            wm_file.parent.mkdir(parents=True, exist_ok=True)
+            tmp = wm_file.with_suffix(".tmp")
+            tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
+            os.replace(tmp, wm_file)
+        except Exception:
+            pass
+        self.update()
+
+    def _position_chat_input(self) -> None:
+        """Position the chat input widget at the bottom of the chat content area."""
+        if self.is_compact_mode():
+            self._chat_input.hide()
+            return
+        content = self._content_rect()
+        input_h = 28
+        margin = 12
+        x = int(content.left() + margin)
+        y = int(self.height() - 10 - _HEADER_H - input_h - margin)
+        w = int(content.width() - margin * 2)
+        self._chat_input.setGeometry(x, y, w, input_h)
 
     def closeEvent(self, event) -> None:
         running_tasks = False
@@ -535,26 +684,76 @@ class HUDWindow(QWidget):
         p.setPen(QColor(0, 255, 200, 220))
         p.drawText(rbtn, Qt.AlignmentFlag.AlignCenter, "↺")
 
-        # Tab buttons
-        btn_font = QFont("Monospace")
-        btn_font.setPointSize(8)
-        btn_font.setBold(True)
-        p.setFont(btn_font)
+        # Tab buttons — only shown in compact mode (sidebar replaces in full mode)
+        if self.is_compact_mode():
+            btn_font = QFont("Monospace")
+            btn_font.setPointSize(8)
+            btn_font.setBold(True)
+            p.setFont(btn_font)
 
-        for i, label in enumerate(_TAB_LABELS):
-            btn = self._tab_btn_rect(i)
-            is_active = self.store.active_tab == i
-            path = QPainterPath()
-            path.addRoundedRect(btn, 5, 5)
+            for i, label in enumerate(_TAB_LABELS):
+                btn = self._tab_btn_rect(i)
+                is_active = self.store.active_tab == i
+                path = QPainterPath()
+                path.addRoundedRect(btn, 5, 5)
+                if is_active:
+                    p.fillPath(path, QColor(0, 180, 140, 80))
+                    p.setPen(QPen(QColor(0, 255, 200, 200), 1.2))
+                    p.drawRoundedRect(btn, 5, 5)
+                    p.setPen(QColor(0, 255, 200, 235))
+                else:
+                    p.fillPath(path, QColor(255, 255, 255, 12))
+                    p.setPen(QColor(155, 185, 205, 155))
+                p.drawText(btn, Qt.AlignmentFlag.AlignCenter, label)
+
+    # ── Sidebar ───────────────────────────────────────────────────────────────
+
+    def _draw_sidebar(self, p: QPainter) -> None:
+        sidebar = self._sidebar_rect()
+        # Sidebar background (darker than main)
+        sb_path = QPainterPath()
+        sb_path.addRoundedRect(
+            QRectF(sidebar.left(), sidebar.top(), sidebar.width(), sidebar.height()),
+            20, 20,
+        )
+        p.fillPath(sb_path, QColor(1, 3, 6, 250))
+        # Right separator line
+        p.setPen(QPen(QColor(40, 120, 180, 60), 1))
+        p.drawLine(
+            int(sidebar.right()), int(sidebar.top() + 20),
+            int(sidebar.right()), int(sidebar.bottom() - 20),
+        )
+
+        icon_font = QFont()
+        icon_font.setPointSize(14)
+        label_font = QFont("Monospace")
+        label_font.setPointSize(6)
+        label_font.setBold(True)
+
+        for idx, icon, label in _SIDEBAR_ICONS:
+            btn = self._sidebar_btn_rect(idx)
+            is_active = self.store.active_tab == idx
             if is_active:
-                p.fillPath(path, QColor(0, 180, 140, 80))
-                p.setPen(QPen(QColor(0, 255, 200, 200), 1.2))
-                p.drawRoundedRect(btn, 5, 5)
-                p.setPen(QColor(0, 255, 200, 235))
+                btn_path = QPainterPath()
+                btn_path.addRoundedRect(btn, 8, 8)
+                p.fillPath(btn_path, QColor(0, 180, 140, 60))
+                p.setPen(QPen(QColor(0, 255, 200, 140), 1))
+                p.drawRoundedRect(btn, 8, 8)
+                icon_color = QColor(0, 255, 200, 235)
+                label_color = QColor(0, 255, 200, 200)
             else:
-                p.fillPath(path, QColor(255, 255, 255, 12))
-                p.setPen(QColor(155, 185, 205, 155))
-            p.drawText(btn, Qt.AlignmentFlag.AlignCenter, label)
+                icon_color = QColor(160, 190, 210, 140)
+                label_color = QColor(120, 160, 190, 100)
+
+            p.setFont(icon_font)
+            p.setPen(icon_color)
+            icon_rect = QRectF(btn.left(), btn.top(), btn.width(), btn.height() * 0.65)
+            p.drawText(icon_rect, Qt.AlignmentFlag.AlignCenter, icon)
+
+            p.setFont(label_font)
+            p.setPen(label_color)
+            label_rect = QRectF(btn.left(), btn.top() + btn.height() * 0.60, btn.width(), btn.height() * 0.40)
+            p.drawText(label_rect, Qt.AlignmentFlag.AlignCenter, label)
 
     # ── Panel background ──────────────────────────────────────────────────────
 
@@ -981,6 +1180,416 @@ class HUDWindow(QWidget):
                            f"Last active: {last_short}")
             y += card_h + card_gap
 
+    # ── Tab 1: Chat ───────────────────────────────────────────────────────────
+
+    def _draw_chat_tab(self, p: QPainter, rect: QRectF) -> None:
+        self._panel(p, rect, "CHAT")
+        body = rect.adjusted(14, 34, -14, -12)
+        input_h = 36
+        msg_area = QRectF(body.left(), body.top(), body.width(), body.height() - input_h - 8)
+        clip = QPainterPath()
+        clip.addRoundedRect(msg_area, 8, 8)
+        p.setClipPath(clip)
+        p.fillRect(msg_area, QColor(3, 8, 14, 235))
+
+        msg_font = QFont("Monospace")
+        msg_font.setPointSize(9)
+        p.setFont(msg_font)
+        line_h = 18
+        max_vis = max(1, int((msg_area.height() - 8) / line_h))
+        messages = self.store.chat_history[-max_vis:]
+        y = msg_area.top() + 14
+        for msg in messages:
+            role = str(msg.get("role", "user"))
+            text = str(msg.get("text", ""))
+            ts = str(msg.get("ts", ""))[11:16]
+            if role == "user":
+                p.setPen(QColor(100, 200, 255, 200))
+                prefix = f"[{ts}] You: "
+            else:
+                p.setPen(QColor(0, 220, 160, 200))
+                prefix = f"[{ts}] Prometheus: "
+            full = prefix + text
+            p.drawText(
+                QRectF(msg_area.left() + 8, y - 12, msg_area.width() - 16, line_h + 4),
+                Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                full[:130],
+            )
+            y += line_h
+
+        p.setClipping(False)
+
+        # Draw input area outline (actual widget positioned by _position_chat_input)
+        input_rect = QRectF(body.left(), body.bottom() - input_h, body.width(), input_h)
+        ip = QPainterPath()
+        ip.addRoundedRect(input_rect, 6, 6)
+        p.fillPath(ip, QColor(4, 10, 20, 200))
+        p.setPen(QPen(QColor(0, 200, 160, 100), 1))
+        p.drawRoundedRect(input_rect, 6, 6)
+
+        # Ensure widget is positioned correctly
+        self._position_chat_input()
+
+    # ── Tab 2: Activity (full height) ─────────────────────────────────────────
+
+    def _draw_activity_tab(self, p: QPainter, rect: QRectF) -> None:
+        self._panel(p, rect, "ACTIVITY")
+        # Filter row at top
+        filter_h = 24.0
+        filter_y = rect.top() + 34.0
+        filters = ["ALL", "TOOLS", "VOICE", "ERRORS"]
+        fw = 52.0
+        fx = rect.left() + 14.0
+        btn_font = QFont("Monospace")
+        btn_font.setPointSize(7)
+        btn_font.setBold(True)
+        p.setFont(btn_font)
+        for fl in filters:
+            fr = QRectF(fx, filter_y, fw, filter_h)
+            is_active = self.store.activity_filter == fl
+            fp = QPainterPath()
+            fp.addRoundedRect(fr, 4, 4)
+            if is_active:
+                p.fillPath(fp, QColor(0, 180, 140, 70))
+                p.setPen(QPen(QColor(0, 255, 200, 160), 1))
+                p.drawRoundedRect(fr, 4, 4)
+                p.setPen(QColor(0, 255, 200, 220))
+            else:
+                p.fillPath(fp, QColor(255, 255, 255, 8))
+                p.setPen(QColor(140, 170, 190, 130))
+            p.drawText(fr, Qt.AlignmentFlag.AlignCenter, fl)
+            fx += fw + 6.0
+
+        # Log body below filters
+        log_body = QRectF(rect.left() + 14, filter_y + filter_h + 4,
+                          rect.width() - 28, rect.bottom() - filter_y - filter_h - 8)
+        clip = QPainterPath()
+        clip.addRoundedRect(log_body, 8, 8)
+        p.setClipPath(clip)
+        p.fillRect(log_body, QColor(3, 8, 14, 235))
+
+        font = QFont("Monospace")
+        font.setPointSize(9)
+        font.setStyleHint(QFont.StyleHint.Monospace)
+        p.setFont(font)
+
+        # Apply filter
+        lines = self.store.lines
+        fl = self.store.activity_filter
+        if fl == "TOOLS":
+            lines = [l for l in lines if "→" in l]
+        elif fl == "VOICE":
+            lines = [l for l in lines if "◆" in l or "◇" in l or "✓" in l]
+        elif fl == "ERRORS":
+            lines = [l for l in lines if "✗" in l]
+
+        line_h = 17
+        max_vis = max(1, int((log_body.height() - 8) / line_h))
+        visible = lines[-max_vis:]
+        y = log_body.top() + 16
+        for line in visible:
+            parts = line.split("  ", 2)
+            symbol = parts[1].strip() if len(parts) >= 2 else ""
+            p.setPen(_SYMBOL_COLORS.get(symbol, _DEFAULT_LINE_COLOR))
+            p.drawText(
+                QRectF(log_body.left() + 8, y - 11, log_body.width() - 16, line_h + 3),
+                Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                line[:260],
+            )
+            y += line_h
+
+        p.setClipping(False)
+
+    # ── Tab 4: Diagnostics ────────────────────────────────────────────────────
+
+    def _draw_diag_tab(self, p: QPainter, rect: QRectF) -> None:
+        self._panel(p, rect, "DIAGNOSTICS")
+        body = rect.adjusted(14, 34, -14, -12)
+        diag = self.store.diagnostic
+
+        if not diag:
+            p.setPen(_DIM)
+            nf = QFont()
+            nf.setPointSize(10)
+            p.setFont(nf)
+            p.drawText(body, Qt.AlignmentFlag.AlignCenter, "No diagnostic data\nSay 'run diagnostics' to check systems")
+            return
+
+        # Timestamp
+        ts = str(diag.get("ts", ""))
+        p.setPen(QColor(120, 160, 190, 150))
+        ts_font = QFont("Monospace")
+        ts_font.setPointSize(8)
+        p.setFont(ts_font)
+        p.drawText(QRectF(body.left(), body.top(), body.width(), 20),
+                   Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
+                   f"Last run: {ts[11:19] if len(ts) >= 19 else ts}")
+
+        # Summary line
+        spoken = str(diag.get("spoken_summary", ""))
+        if spoken:
+            sf = QFont()
+            sf.setPointSize(10)
+            sf.setBold(True)
+            p.setFont(sf)
+            if "critical" in spoken.lower():
+                p.setPen(_RED)
+            elif "warning" in spoken.lower():
+                p.setPen(_AMBER)
+            else:
+                p.setPen(_GREEN)
+            p.drawText(QRectF(body.left(), body.top() + 20, body.width(), 24),
+                       Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                       spoken[:120])
+
+        # Subsystem grid
+        subsystems = [
+            ("Voice",       diag.get("voice", {}),             lambda d: d.get("connected", True)),
+            ("Ollama",      diag.get("ollama", {}),            lambda d: d.get("available", False)),
+            ("Claude Code", diag.get("claude_code", {}),      lambda d: d.get("on_path", False)),
+            ("Vault",       diag.get("vault", {}),             lambda d: d.get("db_exists", False)),
+            ("Workers",     diag.get("background_workers", {}), lambda d: d.get("stuck_tasks", 0) == 0),
+            ("Watchdog",    diag.get("watchdog", {}),          lambda d: bool(d.get("last_check_ts"))),
+            ("System",      diag.get("system", {}),            lambda d: d.get("cpu_pct", 0) < 90),
+            ("Cost",        diag.get("cost", {}),              lambda d: d.get("pct_used", 0) < 80),
+        ]
+
+        row_h = 22.0
+        col_w = (body.width() - 8) / 2.0
+        y0 = body.top() + 50.0
+        label_font = QFont()
+        label_font.setPointSize(9)
+        val_font = QFont("Monospace")
+        val_font.setPointSize(8)
+
+        for i, (name, data, ok_fn) in enumerate(subsystems):
+            row = i // 2
+            col = i % 2
+            rx = body.left() + col * col_w
+            ry = y0 + row * (row_h + 4)
+            try:
+                ok = ok_fn(data)
+            except Exception:
+                ok = False
+            dot_color = _GREEN if ok else _RED
+
+            # Dot
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(dot_color)
+            p.drawEllipse(QRectF(rx + 4, ry + 6, 10, 10))
+            p.setBrush(Qt.BrushStyle.NoBrush)
+
+            # Name
+            p.setFont(label_font)
+            p.setPen(QColor(210, 230, 245, 200))
+            p.drawText(QRectF(rx + 20, ry, col_w - 24, row_h),
+                       Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                       name)
+
+            # Value detail
+            detail = ""
+            if name == "Ollama":
+                ms = data.get("latency_ms", -1)
+                detail = f"{ms}ms" if ms >= 0 else "offline"
+            elif name == "Vault":
+                detail = f"{data.get('chunk_count', 0)} chunks"
+            elif name == "Cost":
+                pct = data.get("pct_used", 0)
+                detail = f"{pct:.0f}%"
+            elif name == "Workers":
+                detail = f"{data.get('active_tasks', 0)} active"
+            elif name == "System":
+                detail = f"CPU {data.get('cpu_pct', 0):.0f}%"
+
+            if detail:
+                p.setFont(val_font)
+                p.setPen(QColor(140, 170, 200, 150))
+                p.drawText(QRectF(rx + col_w - 70, ry, 66, row_h),
+                           Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
+                           detail)
+
+    # ── Tab 5: System ─────────────────────────────────────────────────────────
+
+    def _draw_system_tab(self, p: QPainter, rect: QRectF) -> None:
+        self._panel(p, rect, "SYSTEM")
+        body = rect.adjusted(14, 34, -14, -12)
+
+        mono = QFont("Monospace")
+        mono.setPointSize(9)
+        label_font = QFont()
+        label_font.setPointSize(9)
+        label_font.setBold(True)
+
+        # Resource bars
+        bars = [
+            ("CPU", self.stats.cpu, f"{self.stats.cpu:.0f}%"),
+            ("MEM", self.stats.mem, f"{self.stats.mem:.0f}%"),
+            ("NET↓", min(100.0, self.stats.net_down_kbps / 10.0), f"{self.stats.net_down_kbps:.0f} KB/s"),
+            ("NET↑", min(100.0, self.stats.net_up_kbps / 4.0),   f"{self.stats.net_up_kbps:.0f} KB/s"),
+        ]
+
+        bar_h = 14.0
+        bar_gap = 10.0
+        label_w = 42.0
+        val_w = 72.0
+        bar_w = body.width() - label_w - val_w - 8
+
+        y = body.top() + 4.0
+        c = self.color()
+        for lbl, pct, val_str in bars:
+            # Label
+            p.setFont(label_font)
+            p.setPen(_DIM)
+            p.drawText(QRectF(body.left(), y, label_w, bar_h),
+                       Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, lbl)
+            # Bar background
+            bar_rect = QRectF(body.left() + label_w, y, bar_w, bar_h)
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(QColor(20, 40, 55, 200))
+            p.drawRoundedRect(bar_rect, 4, 4)
+            # Bar fill
+            fill_w = bar_rect.width() * max(0.0, min(1.0, pct / 100.0))
+            if fill_w > 0:
+                fill_rect = QRectF(bar_rect.left(), bar_rect.top(), fill_w, bar_rect.height())
+                p.setBrush(QColor(c.red(), c.green(), c.blue(), 180))
+                p.drawRoundedRect(fill_rect, 4, 4)
+            p.setBrush(Qt.BrushStyle.NoBrush)
+            # Value
+            p.setFont(mono)
+            p.setPen(QColor(c.red(), c.green(), c.blue(), 200))
+            p.drawText(QRectF(bar_rect.right() + 6, y, val_w, bar_h),
+                       Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, val_str)
+            y += bar_h + bar_gap
+
+        # Divider
+        y += 4.0
+        p.setPen(QPen(QColor(60, 120, 160, 50), 1))
+        p.drawLine(int(body.left()), int(y), int(body.right()), int(y))
+        y += 8.0
+
+        # Worker pool
+        p.setFont(label_font)
+        p.setPen(QColor(200, 225, 245, 200))
+        p.drawText(QRectF(body.left(), y, body.width(), 18),
+                   Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, "BACKGROUND WORKERS")
+        y += 20.0
+
+        tasks = [t for t in self.store.bg_tasks if isinstance(t, dict)]
+        if not tasks:
+            p.setFont(mono)
+            p.setPen(_DIM)
+            p.drawText(QRectF(body.left() + 8, y, body.width(), 18),
+                       Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, "No active tasks")
+            y += 20.0
+        else:
+            for task in tasks[:4]:
+                intent = str(task.get("intent", "Task"))[:40]
+                status = str(task.get("status", "running"))
+                elapsed = _elapsed(str(task.get("started_at", "")))
+                s_color = _GREEN if status == "complete" else (_RED if status in ("failed", "timeout") else _AMBER)
+                p.setFont(mono)
+                p.setPen(s_color)
+                p.drawText(QRectF(body.left() + 8, y, body.width() - 80, 18),
+                           Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                           f"• {intent}")
+                p.setPen(_DIM)
+                p.drawText(QRectF(body.right() - 70, y, 66, 18),
+                           Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
+                           elapsed or status)
+                y += 18.0
+
+    # ── Tab 6: Cost ───────────────────────────────────────────────────────────
+
+    def _draw_cost_tab(self, p: QPainter, rect: QRectF) -> None:
+        self._panel(p, rect, "COST")
+        body = rect.adjusted(14, 34, -14, -12)
+
+        diag = self.store.diagnostic
+        cost = diag.get("cost", {}) if diag else {}
+
+        mono = QFont("Monospace")
+        mono.setPointSize(10)
+        label_font = QFont()
+        label_font.setPointSize(9)
+        label_font.setBold(True)
+        small_font = QFont("Monospace")
+        small_font.setPointSize(8)
+
+        # Big numbers
+        session_usd = float(cost.get("session_usd", 0.0))
+        daily_usd   = float(cost.get("daily_usd", 0.0))
+        limit_usd   = float(cost.get("daily_limit_usd", 5.0))
+        pct_used    = float(cost.get("pct_used", 0.0))
+
+        p.setFont(label_font)
+        p.setPen(QColor(160, 190, 210, 180))
+        p.drawText(QRectF(body.left(), body.top(), body.width() / 2, 18),
+                   Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, "SESSION")
+        p.drawText(QRectF(body.left() + body.width() / 2, body.top(), body.width() / 2, 18),
+                   Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, "DAILY")
+
+        p.setFont(mono)
+        c = self.color()
+        p.setPen(QColor(c.red(), c.green(), c.blue(), 230))
+        p.drawText(QRectF(body.left(), body.top() + 18, body.width() / 2, 28),
+                   Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                   f"${session_usd:.4f}")
+        p.drawText(QRectF(body.left() + body.width() / 2, body.top() + 18, body.width() / 2, 28),
+                   Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                   f"${daily_usd:.4f} / ${limit_usd:.2f}")
+
+        # Daily usage bar
+        bar_y = body.top() + 54.0
+        bar_rect = QRectF(body.left(), bar_y, body.width(), 10.0)
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(QColor(20, 40, 55, 200))
+        p.drawRoundedRect(bar_rect, 4, 4)
+        fill_pct = max(0.0, min(1.0, pct_used / 100.0))
+        if fill_pct > 0:
+            bar_color = _RED if pct_used > 80 else (_AMBER if pct_used > 50 else c)
+            fill_rect = QRectF(bar_rect.left(), bar_rect.top(), bar_rect.width() * fill_pct, bar_rect.height())
+            p.setBrush(bar_color)
+            p.drawRoundedRect(fill_rect, 4, 4)
+        p.setBrush(Qt.BrushStyle.NoBrush)
+
+        p.setFont(small_font)
+        p.setPen(_DIM)
+        p.drawText(QRectF(body.left(), bar_y + 12, body.width(), 16),
+                   Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
+                   f"{pct_used:.1f}% of daily limit used")
+
+        # Cost log table
+        table_y = bar_y + 34.0
+        p.setFont(label_font)
+        p.setPen(QColor(180, 210, 230, 180))
+        p.drawText(QRectF(body.left(), table_y, body.width(), 18),
+                   Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                   "RECENT API CALLS")
+        table_y += 20.0
+
+        p.setFont(small_font)
+        if not self.store.cost_log:
+            p.setPen(_DIM)
+            p.drawText(QRectF(body.left() + 8, table_y, body.width(), 18),
+                       Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                       "No cost log data available")
+        else:
+            row_h = 16.0
+            for entry in reversed(self.store.cost_log):
+                if table_y + row_h > body.bottom():
+                    break
+                if not isinstance(entry, dict):
+                    continue
+                ts = str(entry.get("ts", ""))[11:16]
+                model = str(entry.get("model", ""))[:20]
+                cost_val = float(entry.get("cost_usd", 0.0))
+                line = f"{ts}  {model:<22}  ${cost_val:.5f}"
+                p.setPen(QColor(160, 190, 215, 160))
+                p.drawText(QRectF(body.left() + 8, table_y, body.width() - 16, row_h),
+                           Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                           line[:80])
+                table_y += row_h
+
     # ── Compact mode ──────────────────────────────────────────────────────────
 
     def _draw_compact_identity(self, p: QPainter, rect: QRectF):
@@ -1097,37 +1706,61 @@ class HUDWindow(QWidget):
             self._draw_compact_identity(p, id_rect)
             return
 
-        # Full mode layout
-        content  = rect.adjusted(16, _HEADER_H + 8, -16, -16)
-        top_h    = max(260, content.height() * 0.62)
-        bottom_h = content.height() - top_h - 18
-        gap      = 18
-        left_w   = content.width() * 0.68
-        right_w  = content.width() - left_w - gap
-
-        core_rect = QRectF(content.left(), content.top(), left_w, top_h - 10)
-        rx        = core_rect.right() + gap
-        graph_h   = (top_h - gap * 3) / 4.0
-
-        cpu_r  = QRectF(rx, content.top(),                right_w, graph_h)
-        mem_r  = QRectF(rx, cpu_r.bottom() + gap,         right_w, graph_h)
-        down_r = QRectF(rx, mem_r.bottom() + gap,         right_w, graph_h)
-        up_r   = QRectF(rx, down_r.bottom() + gap,        right_w, graph_h)
-        tab_r  = QRectF(content.left(), core_rect.bottom() + 18, content.width(), bottom_h)
-
-        self._draw_core(p, core_rect)
-        self._draw_graph(p, cpu_r,  self.stats.cpu_hist,  "CPU LOAD", f"{self.stats.cpu:.0f}%")
-        self._draw_graph(p, mem_r,  self.stats.mem_hist,  "MEMORY",   f"{self.stats.mem:.0f}%")
-        self._draw_graph(p, down_r, self.stats.down_hist, "NET DOWN",  f"{self.stats.net_down_kbps:.0f} KB/s")
-        self._draw_graph(p, up_r,   self.stats.up_hist,   "NET UP",    f"{self.stats.net_up_kbps:.0f} KB/s")
+        # Full mode layout — sidebar + content area
+        self._draw_sidebar(p)
+        content_rect = self._content_rect()
+        content = content_rect.adjusted(8, _HEADER_H + 8, -8, -8)
 
         tab = self.store.active_tab
-        if tab == 1:
-            self._draw_ops_panel(p, tab_r)
-        elif tab == 2:
-            self._draw_agents_panel(p, tab_r)
-        else:
+
+        if tab == 0:
+            # HOME: existing layout (core + graphs + logs)
+            top_h    = max(260, content.height() * 0.62)
+            bottom_h = content.height() - top_h - 18
+            gap      = 18
+            left_w   = content.width() * 0.68
+            right_w  = content.width() - left_w - gap
+
+            core_rect = QRectF(content.left(), content.top(), left_w, top_h - 10)
+            rx        = core_rect.right() + gap
+            graph_h   = (top_h - gap * 3) / 4.0
+
+            cpu_r  = QRectF(rx, content.top(),                right_w, graph_h)
+            mem_r  = QRectF(rx, cpu_r.bottom() + gap,         right_w, graph_h)
+            down_r = QRectF(rx, mem_r.bottom() + gap,         right_w, graph_h)
+            up_r   = QRectF(rx, down_r.bottom() + gap,        right_w, graph_h)
+            tab_r  = QRectF(content.left(), core_rect.bottom() + 18, content.width(), bottom_h)
+
+            self._draw_core(p, core_rect)
+            self._draw_graph(p, cpu_r,  self.stats.cpu_hist,  "CPU LOAD", f"{self.stats.cpu:.0f}%")
+            self._draw_graph(p, mem_r,  self.stats.mem_hist,  "MEMORY",   f"{self.stats.mem:.0f}%")
+            self._draw_graph(p, down_r, self.stats.down_hist, "NET DOWN",  f"{self.stats.net_down_kbps:.0f} KB/s")
+            self._draw_graph(p, up_r,   self.stats.up_hist,   "NET UP",    f"{self.stats.net_up_kbps:.0f} KB/s")
             self._draw_logs(p, tab_r)
+
+        elif tab == 1:
+            # CHAT
+            self._draw_chat_tab(p, content.adjusted(-8, -8, 8, 8))
+
+        elif tab == 2:
+            # ACTIVITY (full height with filter)
+            self._draw_activity_tab(p, content.adjusted(-8, -8, 8, 8))
+
+        elif tab == 3:
+            # AGENTS
+            self._draw_agents_panel(p, content.adjusted(-8, -8, 8, 8))
+
+        elif tab == 4:
+            # DIAG
+            self._draw_diag_tab(p, content.adjusted(-8, -8, 8, 8))
+
+        elif tab == 5:
+            # SYSTEM (resource bars + worker pool)
+            self._draw_system_tab(p, content.adjusted(-8, -8, 8, 8))
+
+        elif tab == 6:
+            # COST
+            self._draw_cost_tab(p, content.adjusted(-8, -8, 8, 8))
 
 
 # ── App ───────────────────────────────────────────────────────────────────────
