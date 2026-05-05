@@ -220,6 +220,14 @@ def _run_coding_task_background(goal: str, context: str) -> None:
     Entry point for the background thread. Runs CodingAgent and stores
     the result in WorkingMemory under "last_coding_result".
     """
+    # Write "running" status immediately so callers can see the task is live
+    WorkingMemory().write({
+        "last_coding_result": {
+            "status": "running",
+            "goal": goal[:120],
+            "started_at": time.strftime("%Y-%m-%dT%H:%M:%S"),
+        }
+    })
     try:
         engine = SuccessCriteriaEngine()
         criteria = engine.infer_from_goal(goal)

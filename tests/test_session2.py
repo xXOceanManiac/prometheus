@@ -286,18 +286,23 @@ def test_9_background_dispatch():
     assert "goal" in result, "result missing 'goal'"
     assert "criteria" in result, "result missing 'criteria'"
 
-    # Wait for background task to complete (it will run the real CodingAgent, which
-    # will attempt 'claude' CLI — likely fails quickly since claude may not be installed)
-    deadline = time.time() + 15.0
+    # The background thread writes "running" status immediately on start.
+    # Verify working_memory is populated within 2 seconds.
+    deadline = time.time() + 2.0
     status: dict = {}
     while time.time() < deadline:
-        time.sleep(0.5)
+        time.sleep(0.1)
         status = get_coding_status()
-        if isinstance(status, dict) and status.get("status") != "no task running" and "completed_at" in status:
+        if isinstance(status, dict) and status.get("status") not in ("no task running", None):
             break
 
-    assert "completed_at" in status or status.get("status") != "no task running", (
-        f"working_memory['last_coding_result'] not populated after 15s: {status}"
+    assert isinstance(status, dict), f"get_coding_status() returned non-dict: {status!r}"
+    assert status.get("status") not in ("no task running", None), (
+        f"working_memory['last_coding_result'] not populated after 2s: {status}"
+    )
+    # Must have goal set
+    assert status.get("goal") or status.get("started_at"), (
+        f"result missing goal/started_at: {status}"
     )
 
     print(f"{_PASS} Test 9 — coding task dispatched to background, result available")
