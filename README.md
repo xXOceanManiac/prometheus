@@ -8,19 +8,18 @@ It integrates voice, system control, screen awareness, and gesture-based input i
 ---
 
 ## 🖥️ Interface Preview
-
 ### Full HUD
-![Jarvis HUD Full](assets/hud_full.png)
+<img width="1376" height="1039" alt="hud_full" src="https://github.com/user-attachments/assets/34baa243-b995-43dd-b7bf-004a65720ca7" />
 
 ### Compact HUD
-![Jarvis HUD Compact](assets/hud_compact.png)
+<img width="861" height="616" alt="hud_compact" src="https://github.com/user-attachments/assets/ff1c924a-7b7d-470c-9066-5ddb5f915eb4" />
 
 ---
 
 ## ⚙️ Current Capabilities (v5.1)
 
 ### 🎤 Voice Assistant Core
-- Push-to-talk interaction (space bar)
+- Push-to-talk interaction (alt key)
 - Speech-to-text via OpenAI Realtime API
 - Natural language understanding
 - Spoken responses
@@ -129,7 +128,7 @@ source .venv/bin/activate
 
 ### 3. Install dependencies
 ```bash
-pip install requirements.txt
+pip install -r requirements.txt
 ```
 
 ### 4. Home Assistant Integration
@@ -154,9 +153,14 @@ Create a `.env` file in the root directory:
 
 ```env
 OPENAI_API_KEY=your_key_here
+<<<<<<< HEAD
 HOME_ASSISTANT_API_KEY=your_token
 HOME_ASSISTANT_URL=http://homeassistant.local:8123
 
+=======
+HOME_ASSISTANT_URL=your_url   # optional
+HOME_ASSISTANT_API_KEY=your_token   # optional
+>>>>>>> a3a6130d3ec887aaeb69bdeeb08950091b92272d
 ```
 
 ### 6. Add MediaPipe model for Gesture Control
