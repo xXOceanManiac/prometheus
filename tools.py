@@ -1331,7 +1331,106 @@ class ToolRegistry:
                 )
         return ToolResult(ok, message, {"results": [r.__dict__ for r in results]})
 
-    def execute(self, payload: dict[str, Any]) -> ToolResult:
+    def _format_result_for_chat(self, action: str, result: ToolResult) -> str:
+        """Format a tool result as readable text for the chat tab (not spoken form)."""
+        data = result.data or {}
+        if not result.ok:
+            return f"Error: {result.message}"
+
+        if action == "git_status":
+            status = str(data.get("status", "")).strip()
+            if data.get("clean"):
+                return "Git: clean — no uncommitted changes."
+            lines = [l for l in status.splitlines() if l.strip()]
+            formatted = "\n".join(f"  {l}" for l in lines[:25])
+            suffix = f"\n  ...({len(lines) - 25} more)" if len(lines) > 25 else ""
+            return f"Git status — {len(lines)} changed file(s):\n{formatted}{suffix}"
+
+        if action == "git_diff":
+            diff = str(data.get("diff", "")).strip()
+            if not diff:
+                return "Git diff: no staged or unstaged changes."
+            lines = diff.splitlines()
+            preview = "\n".join(lines[:30])
+            suffix = f"\n...({len(lines) - 30} more lines)" if len(lines) > 30 else ""
+            return f"Git diff:\n```\n{preview}{suffix}\n```"
+
+        if action == "run_diagnostics":
+            spoken = str(data.get("spoken_summary", result.message))
+            rows = [spoken, ""]
+            for key, label in [
+                ("voice", "Voice"), ("ollama", "Ollama"), ("claude_code", "Claude Code"),
+                ("vault", "Vault"), ("background_workers", "Workers"), ("git", "Git"),
+                ("cost", "Cost"), ("system", "System"), ("watchdog", "Watchdog"),
+                ("proactive_loop", "Proactive"),
+            ]:
+                d = data.get(key)
+                if not isinstance(d, dict):
+                    continue
+                if key == "ollama":
+                    val = f"{'✓' if d.get('available') else '✗'}  {d.get('latency_ms', '?')}ms  models: {', '.join(d.get('models', []))}"
+                elif key == "vault":
+                    val = f"{'✓' if d.get('db_exists') else '✗'}  {d.get('chunk_count', 0)} chunks  indexed: {str(d.get('last_indexed', '?'))[:10]}"
+                elif key == "cost":
+                    val = f"session ${d.get('session_usd', 0):.4f}  daily ${d.get('daily_usd', 0):.4f}  ({d.get('pct_used', 0):.0f}% of limit)"
+                elif key == "system":
+                    val = f"CPU {d.get('cpu_pct', 0):.0f}%  RAM {d.get('ram_pct', 0):.0f}%  Disk {d.get('disk_pct', 0):.0f}%"
+                elif key == "background_workers":
+                    val = f"active: {d.get('active_tasks', 0)}  stuck: {d.get('stuck_tasks', 0)}"
+                elif key == "git":
+                    val = f"checkpoint: {d.get('last_checkpoint', '?')}  uncommitted: {d.get('uncommitted_changes', 0)}"
+                elif key == "watchdog":
+                    val = d.get("status", "pending")
+                elif key == "proactive_loop":
+                    val = f"{d.get('cycles_this_session', 0)} cycles this session"
+                elif key == "voice":
+                    val = "connected" if d.get("connected", True) else "disconnected"
+                elif key == "claude_code":
+                    val = "on PATH" if d.get("on_path") else "not found"
+                else:
+                    val = str(d)[:60]
+                rows.append(f"  {label}: {val}")
+            return "\n".join(rows)
+
+        if action == "search_codebase":
+            count = data.get("count", 0)
+            output = str(data.get("output", "")).strip()
+            if count == 0:
+                return "No matches found."
+            return f"Found {count} match(es):\n{output[:1500]}"
+
+        if action == "query_vault":
+            results = data.get("results", [])
+            if not results:
+                return "No vault entries found."
+            lines = [f"Found {len(results)} vault result(s):"]
+            for r in results[:5]:
+                title = str(r.get("title", ""))[:60]
+                snippet = str(r.get("text", ""))[:120].replace("\n", " ")
+                lines.append(f"\n  [{title}]\n  {snippet}...")
+            return "\n".join(lines)
+
+        if action in ("run_python", "run_shell"):
+            output = str(data.get("output", "")).strip()
+            return f"```\n{output[:1500]}\n```" if output else result.message
+
+        if action == "system_status":
+            import json as _json
+            return f"System status:\n{_json.dumps(data, indent=2)[:1000]}"
+
+        if action == "get_priorities":
+            priorities = data.get("priorities", [])
+            if not priorities:
+                return "No priorities found in vault."
+            lines = ["Priorities:"]
+            for i, p in enumerate(priorities[:5], 1):
+                lines.append(f"  {i}. {str(p)[:120]}")
+            return "\n".join(lines)
+
+        # Generic: prefer message, trim raw data
+        return result.message
+
+    def execute(self, payload: dict[str, Any], chat_format: bool = False) -> ToolResult:
         log_event("tool_execute", {"payload": payload})
         self._remember_last_request(payload)
         action_name = str(payload.get("action", "")).strip()
@@ -1344,7 +1443,10 @@ class ToolRegistry:
         actions = payload.get("actions")
         if isinstance(actions, list) and actions:
             result = self._execute_many(actions)
-            return self._remember_tool_result(payload, result)
+            r = self._remember_tool_result(payload, result)
+            if chat_format:
+                return ToolResult(r.ok, self._format_result_for_chat("multi_action", r), r.data)
+            return r
         action = str(payload.get("action", "")).strip()
         if not action:
             return self._remember_tool_result(
@@ -1352,7 +1454,10 @@ class ToolRegistry:
                 ToolResult(False, "No action was provided."),
             )
         result = self._execute_one(payload)
-        return self._remember_tool_result(payload, result)
+        r = self._remember_tool_result(payload, result)
+        if chat_format:
+            return ToolResult(r.ok, self._format_result_for_chat(action, r), r.data)
+        return r
 
     def _execute_one(self, payload: dict[str, Any]) -> ToolResult:
         action = str(payload.get("action", "")).strip()

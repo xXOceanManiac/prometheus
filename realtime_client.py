@@ -1118,12 +1118,17 @@ class RealtimePrometheusClient:
     async def _chat_polling_loop(self) -> None:
         """
         Poll working_memory["chat_input"] every 500ms.
-        When a new message arrives, route it through the intent router and
-        write the response to working_memory["chat_response"].
+
+        Tool actions (direct intent overrides): execute and format as readable text.
+        Vault recall: run search and return formatted results.
+        Everything else: send to chat_completion() (Claude/Ollama text model).
+        Never touches the Realtime API — chat is text-only.
         """
         from working_memory import WorkingMemory
         wm = WorkingMemory()
         last_ts = ""
+        loop = asyncio.get_running_loop()
+
         while self.connected:
             try:
                 await asyncio.sleep(0.5)
@@ -1139,25 +1144,71 @@ class RealtimePrometheusClient:
                 if not text:
                     continue
 
-                # Route through intent router
+                history: list[dict] = []
+                try:
+                    history = list(data.get("chat_history") or [])
+                except Exception:
+                    pass
+
+                response_text = ""
+                path = "llm"
                 override = self._direct_intent_override(text)
+
                 if override and override.get("type") == "direct_tool":
-                    result = self.tools.execute(override["payload"])
+                    path = "tool"
+                    payload = override["payload"]
+                    result = await loop.run_in_executor(
+                        None, lambda p=payload: self.tools.execute(p, chat_format=True)
+                    )
                     response_text = result.message
-                    if result.data:
-                        response_text += " " + json.dumps(result.data)[:200]
+
                 elif override and override.get("type") == "vault_recall":
-                    response_text = "Vault search triggered — check activity log."
+                    path = "vault"
+                    query = str(override.get("query", text))
+                    try:
+                        from memory_core import query_vault
+                        results = await loop.run_in_executor(
+                            None, lambda q=query: query_vault(q, limit=5)
+                        )
+                        if results:
+                            lines = [f"Found {len(results)} vault result(s) for '{query[:40]}':"]
+                            for r in results[:5]:
+                                title = str(r.get("title", ""))[:60]
+                                snippet = str(r.get("text", ""))[:120].replace("\n", " ")
+                                lines.append(f"\n  [{title}]\n  {snippet}...")
+                            response_text = "\n".join(lines)
+                        else:
+                            response_text = f"No vault entries found for '{query[:60]}'."
+                    except Exception as exc:
+                        response_text = f"Vault search failed: {str(exc)[:80]}"
+
                 else:
-                    response_text = "Received. Routing to voice assistant."
+                    context = {
+                        "active_project": str(data.get("active_workspace", "")),
+                        "last_tool_result": data.get("last_tool_result", {}),
+                        "ollama_available": bool(data.get("ollama_available", True)),
+                    }
+                    from llm_router import chat_completion
+                    response_text = await loop.run_in_executor(
+                        None, lambda t=text, c=context, h=history: chat_completion(t, c, h)
+                    )
+
+                resp_ts = time.strftime("%Y-%m-%dT%H:%M:%S")
+
+                updated_history = list(history)
+                updated_history.append({"role": "user", "content": text, "ts": ts})
+                updated_history.append({"role": "assistant", "content": response_text, "ts": resp_ts})
+                updated_history = updated_history[-20:]
 
                 wm.write({
-                    "chat_response": {
-                        "text": response_text[:500],
-                        "ts": time.strftime("%Y-%m-%dT%H:%M:%S"),
-                    }
+                    "chat_response": {"text": response_text, "ts": resp_ts},
+                    "chat_history": updated_history,
                 })
-                log_event("chat_input_routed", {"text": text[:80], "response": response_text[:80]})
+                log_event("chat_input_routed", {
+                    "text": text[:80],
+                    "response": response_text[:80],
+                    "path": path,
+                })
             except asyncio.CancelledError:
                 break
             except Exception as exc:
