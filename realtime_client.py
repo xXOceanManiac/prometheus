@@ -1118,6 +1118,11 @@ class RealtimePrometheusClient:
             "get_coding_status",
             "run_diagnostics",
             "get_mission_status",
+            "read_file",
+            "show_logs",
+            "list_files",
+            "query_vault",
+            "get_build_status",
         }
 
         action = str(payload.get("action", "")).strip().lower()
@@ -1303,6 +1308,35 @@ class RealtimePrometheusClient:
                 response_instructions = (
                     f"Read the diagnostic summary: {summary}. "
                     "Report it clearly. Do not add preamble."
+                )
+            elif action == "read_file":
+                output = str((result.data or {}).get("content", ""))[:600]
+                response_instructions = (
+                    f"File contents: {output}. Summarize what's relevant to the current mission concisely."
+                )
+            elif action == "show_logs":
+                output = str((result.data or {}).get("output", ""))[:600]
+                count = (result.data or {}).get("count", 0)
+                if count == 0:
+                    response_instructions = (
+                        "No errors found in the logs for the requested time window. Tell the user clearly."
+                    )
+                else:
+                    response_instructions = (
+                        f"Found {count} log entries: {output}. Summarize the key errors concisely."
+                    )
+            elif action == "list_files":
+                items = (result.data or {}).get("items", [])
+                names = [f"{i['name']}{'/' if i.get('is_dir') else ''}" for i in items[:30]]
+                output = ", ".join(names)[:400]
+                response_instructions = f"Directory contents: {output}. Report what's there concisely."
+            elif action == "get_mission_status":
+                output = result.message[:500]
+                response_instructions = f"Status: {output}. Report the key points concisely."
+            elif action == "query_vault":
+                output = result.message[:500]
+                response_instructions = (
+                    f"Action 'query_vault' completed. {output}. Report the result concisely."
                 )
             else:
                 response_instructions = (
@@ -1607,6 +1641,11 @@ class RealtimePrometheusClient:
             "get_coding_status",
             "run_diagnostics",
             "get_mission_status",
+            "read_file",
+            "show_logs",
+            "list_files",
+            "query_vault",
+            "get_build_status",
         }
 
         tool_action = str(args.get("action", "")).strip().lower()
@@ -1772,6 +1811,35 @@ class RealtimePrometheusClient:
                 response_instructions = (
                     f"Read the diagnostic summary: {summary}. "
                     "Report it clearly. Do not add preamble."
+                )
+            elif tool_action == "read_file":
+                output = str((result.data or {}).get("content", ""))[:600]
+                response_instructions = (
+                    f"File contents: {output}. Summarize what's relevant to the current mission concisely."
+                )
+            elif tool_action == "show_logs":
+                output = str((result.data or {}).get("output", ""))[:600]
+                count = (result.data or {}).get("count", 0)
+                if count == 0:
+                    response_instructions = (
+                        "No errors found in the logs for the requested time window. Tell the user clearly."
+                    )
+                else:
+                    response_instructions = (
+                        f"Found {count} log entries: {output}. Summarize the key errors concisely."
+                    )
+            elif tool_action == "list_files":
+                items = (result.data or {}).get("items", [])
+                names = [f"{i['name']}{'/' if i.get('is_dir') else ''}" for i in items[:30]]
+                output = ", ".join(names)[:400]
+                response_instructions = f"Directory contents: {output}. Report what's there concisely."
+            elif tool_action == "get_mission_status":
+                output = result.message[:500]
+                response_instructions = f"Status: {output}. Report the key points concisely."
+            elif tool_action == "query_vault":
+                output = result.message[:500]
+                response_instructions = (
+                    f"Action 'query_vault' completed. {output}. Report the result concisely."
                 )
             else:
                 response_instructions = (

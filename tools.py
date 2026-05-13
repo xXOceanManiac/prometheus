@@ -2492,9 +2492,14 @@ class ToolRegistry:
                             formatted.append(ln)
                     output = "\n".join(formatted)[:3000]
                     log_event("show_logs_journalctl", {"source": source or "system", "count": len(formatted)})
+                    msg = (
+                        "No errors found in the last 10 minutes."
+                        if len(formatted) == 0
+                        else f"Found {len(formatted)} log entries."
+                    )
                     return ToolResult(
                         ok=True,
-                        message=f"Found {len(formatted)} log entries.",
+                        message=msg,
                         data={"output": output, "source": source or "system", "count": len(formatted)},
                     )
                 except subprocess.TimeoutExpired:
