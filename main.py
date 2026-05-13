@@ -27,6 +27,8 @@ from prometheus_identity import build_system_prompt
 from prometheus_profile import PrometheusProfile
 from session_briefing import SessionBriefing
 from proactive_loop import ProactiveLoop
+from event_bus import get_bus, EventType
+from sensor_manager import SensorManager
 
 
 _PID_FILE = Path.home() / ".jarvis" / "prometheus.pid"
@@ -81,6 +83,7 @@ class PrometheusCore:
         self.profile: Any = None
         self.briefing: SessionBriefing | None = None
         self.proactive_loop: ProactiveLoop | None = None
+        self._sensor_manager: SensorManager | None = None
 
     def _acquire_pid_lock(self) -> None:
         try:
@@ -178,6 +181,16 @@ class PrometheusCore:
         # Connect now — session.update uses the pre-loaded context.
         await self.client.connect()
 
+        # Start event bus and ambient sensor layer; subscribe to window changes
+        try:
+            await get_bus().start()
+            self._sensor_manager = SensorManager()
+            await self._sensor_manager.start()
+            get_bus().subscribe(EventType.WINDOW_CHANGED, self._on_window_changed)
+            log_event("sensor_manager_started", {})
+        except Exception as exc:
+            log_event("sensor_manager_start_error", {"error": str(exc)})
+
         # Start proactive loop and session briefing
         self.proactive_loop = ProactiveLoop(self.client, self.workspace)
         asyncio.create_task(self.proactive_loop.run())
@@ -213,6 +226,15 @@ class PrometheusCore:
         self.speaker.stop()
         self.wakeword.close()
         self.workspace.stop()
+        if self._sensor_manager:
+            try:
+                await self._sensor_manager.stop()
+            except Exception:
+                pass
+        try:
+            await get_bus().stop()
+        except Exception:
+            pass
         await self.client.close()
         self.visuals.set_state("idle")
 
@@ -367,6 +389,28 @@ class PrometheusCore:
             })
         except Exception as exc:
             log_event("workspace_context_update_error", {"error": str(exc)})
+
+    def _on_window_changed(self, event: Any) -> None:
+        """Called from the event bus when active window changes. Refreshes session context."""
+        if not self.loop or not self.loop.is_running():
+            return
+        try:
+            payload = event.payload or {}
+            current = self.workspace.current_project()
+            workspace = {
+                "project_name": current.get("project_name", ""),
+                "active_project_path": current.get("project_path", ""),
+                "active_window": {"title": payload.get("window_title", "")},
+                "xbox_state": current.get("xbox_state"),
+                "xbox_app": current.get("xbox_app"),
+                "xbox_media_title": current.get("xbox_media_title"),
+            }
+            self.client.inject_workspace_context(workspace)
+            self.loop.call_soon_threadsafe(
+                lambda: asyncio.create_task(self.client._update_session_instructions())
+            )
+        except Exception as exc:
+            log_event("window_changed_handler_error", {"error": str(exc)})
 
     def _set_idle_visual_state(self) -> None:
         if not self.speaker.is_speaking and not self.client.busy:

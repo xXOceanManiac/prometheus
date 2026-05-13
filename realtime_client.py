@@ -111,7 +111,13 @@ class RealtimePrometheusClient:
                 },
             })
             await self._guarded_response_create(
-                {"modalities": ["audio", "text"], "instructions": f"Say exactly: '{text}'"},
+                {
+                    "modalities": ["audio", "text"],
+                    "instructions": (
+                        f"Respond as Prometheus. Deliver this message naturally and concisely, "
+                        f"staying in character: {text}"
+                    ),
+                },
                 context="_speak_text",
             )
         except Exception:
@@ -208,13 +214,85 @@ class RealtimePrometheusClient:
             self._log_vault_warning(f"inject_workspace_context failed: {exc}")
 
     def _build_instructions(self) -> str:
-        """Combine dynamic system prompt with any stored vault/workspace context."""
+        """Combine system prompt with vault/workspace/working-memory context.
+        Always reads fresh working memory from disk so mid-session tool use is reflected."""
         parts = [self._system_prompt]
         if self._workspace_context:
             parts.append(self._workspace_context)
         if self._vault_context:
             parts.append(self._vault_context)
+        try:
+            from working_memory import WorkingMemory
+            wm = WorkingMemory().read()
+            wm_lines: list[str] = []
+            last_req = str(wm.get("last_user_request") or "").strip()
+            last_tool = str(wm.get("last_tool_action") or "").strip()
+            active_goal = str(wm.get("active_goal") or "").strip()
+            if last_req:
+                wm_lines.append(f"Last request: {last_req[:200]}")
+            if last_tool:
+                wm_lines.append(f"Last tool: {last_tool}")
+            if active_goal:
+                wm_lines.append(f"Active goal: {active_goal[:200]}")
+            if wm_lines:
+                parts.append("--- WORKING MEMORY ---\n" + "\n".join(wm_lines))
+        except Exception:
+            pass
         return "\n\n".join(parts)
+
+    def _build_live_state_block(self) -> str:
+        """Build a compact live world state block for injection before each LLM response."""
+        try:
+            from world_model import build_world_snapshot
+            snap = build_world_snapshot()
+
+            lines = [f"[LIVE STATE — {snap.get('timestamp', '')}]"]
+
+            win = snap.get("active_window_title", "")
+            app = snap.get("active_app", "")
+            if win or app:
+                lines.append(f"window: {win or 'unknown'}" + (f" ({app})" if app else ""))
+
+            mission = snap.get("current_mission", "")
+            if mission:
+                lines.append(f"mission: {mission[:80]}")
+
+            goal = snap.get("active_goal", "")
+            if goal:
+                lines.append(f"goal: {goal[:80]}")
+
+            nxt = snap.get("next_action", "")
+            if nxt:
+                lines.append(f"next: {nxt[:80]}")
+
+            branch = snap.get("git_branch", "")
+            git_status = snap.get("git_status_short", "")
+            if branch:
+                git_line = f"git: {branch}"
+                if git_status:
+                    changed_count = len([ln for ln in git_status.splitlines() if ln.strip()])
+                    git_line += f" — {changed_count} changed file{'s' if changed_count != 1 else ''}"
+                lines.append(git_line)
+
+            errors = snap.get("recent_errors", [])
+            if errors:
+                desc = str(errors[-1].get("description", ""))[:100]
+                if desc:
+                    lines.append(f"errors: {desc}")
+
+            selected = snap.get("selected_text", "")
+            if selected and selected.strip():
+                lines.append(f"selected: {selected.strip()[:200]}")
+
+            procs = snap.get("running_dev_processes", [])
+            if procs:
+                proc_names = ", ".join(p.get("name", "") for p in procs[:3] if p.get("name"))
+                if proc_names:
+                    lines.append(f"processes: {proc_names}")
+
+            return "\n".join(lines)
+        except Exception:
+            return ""
 
     async def _update_session_instructions(self) -> None:
         """Push updated instructions to an already-connected session via session.update."""
@@ -988,7 +1066,10 @@ class RealtimePrometheusClient:
         await self._guarded_response_create(
             {
                 "modalities": ["audio", "text"],
-                "instructions": f"Say exactly: {text}",
+                "instructions": (
+                    f"Respond as Prometheus. Deliver this message naturally and concisely, "
+                    f"staying in character: {text}"
+                ),
                 "input": [{"type": "message", "role": "user", "content": [{"type": "input_text", "text": "say it"}]}],
             },
             context="_speak_text",
@@ -1000,6 +1081,18 @@ class RealtimePrometheusClient:
 
         result = self.tools.execute(payload)
         self._override_handled = True
+
+        try:
+            from working_memory import WorkingMemory
+            WorkingMemory().set_tool_result(
+                action=str(payload.get("action", "")),
+                ok=result.ok,
+                message=result.message,
+                data=result.data or {},
+            )
+            asyncio.ensure_future(self._update_session_instructions())
+        except Exception:
+            pass
 
         followup_actions = {
             "list_windows",
@@ -1461,6 +1554,18 @@ class RealtimePrometheusClient:
 
         result = self.tools.execute(args)
 
+        try:
+            from working_memory import WorkingMemory
+            WorkingMemory().set_tool_result(
+                action=str(args.get("action", "")),
+                ok=result.ok,
+                message=result.message,
+                data=result.data or {},
+            )
+            asyncio.ensure_future(self._update_session_instructions())
+        except Exception:
+            pass
+
         await self.send(
             {
                 "type": "conversation.item.create",
@@ -1730,19 +1835,18 @@ class RealtimePrometheusClient:
                             continue
 
                     if not self._override_handled:
+                        state_block = self._build_live_state_block()
+                        if state_block:
+                            await self.send({
+                                "type": "conversation.item.create",
+                                "item": {
+                                    "type": "message",
+                                    "role": "system",
+                                    "content": [{"type": "input_text", "text": state_block}],
+                                },
+                            })
                         await self._guarded_response_create(
-                            {
-                                "modalities": ["audio", "text"],
-                                "instructions": (
-                                    "Respond as Prometheus. "
-                                    "Never invent Home Assistant script names. "
-                                    "For lights, Xbox, and smart-home requests, call desktop_action and let the deterministic tool layer choose the exact jarvis_* script. "
-                                    "For current screen or tab understanding, call desktop_action with summarize_screen. "
-                                    "For search and near-me lookups, call desktop_action with web_search. "
-                                    "For work/project switching, call desktop_action with smart_action. "
-                                    "If the user requested multiple actions, send a single desktop_action call using an actions array."
-                                ),
-                            },
+                            {"modalities": ["audio", "text"]},
                             context="transcript_no_override",
                         )
                     continue
