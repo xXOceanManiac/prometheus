@@ -187,6 +187,7 @@ ACTION_ENUM = [
     # Code / git tools
     "run_python",
     "run_shell",
+    "show_logs",
     "search_codebase",
     "git_status",
     "git_diff",
@@ -2357,13 +2358,21 @@ class ToolRegistry:
                 return ToolResult(ok=False, message="run_shell: no command provided")
             _SHELL_WHITELIST = {
                 "grep", "find", "ls", "cat", "python3", "pip",
-                "git", "wmctrl", "pgrep", "systemctl", "echo",
+                "git", "wmctrl", "pgrep", "echo",
+                "tail", "journalctl", "head", "less", "jq",
+                "docker", "npm", "systemctl",
             }
             try:
                 tokens = shlex.split(command)
             except Exception:
                 return ToolResult(ok=False, message="run_shell: could not parse command")
             first_token = tokens[0] if tokens else ""
+            if first_token not in _SHELL_WHITELIST:
+                return ToolResult(
+                    ok=False,
+                    message=f"run_shell: '{first_token}' not in whitelist. Allowed: {sorted(_SHELL_WHITELIST)}",
+                )
+            # Per-command sub-restrictions
             if first_token == "git":
                 git_sub = tokens[1] if len(tokens) > 1 else ""
                 _GIT_ALLOWED = {"status", "diff", "log", "add"}
@@ -2372,11 +2381,47 @@ class ToolRegistry:
                         ok=False,
                         message=f"run_shell: git {git_sub} not allowed. Allowed: {sorted(_GIT_ALLOWED)}",
                     )
-            elif first_token not in _SHELL_WHITELIST:
-                return ToolResult(
-                    ok=False,
-                    message=f"run_shell: '{first_token}' not in whitelist. Allowed: {sorted(_SHELL_WHITELIST)}",
-                )
+            elif first_token == "tail":
+                if "-f" in tokens or "--follow" in tokens:
+                    return ToolResult(ok=False, message="run_shell: tail -f is not allowed (no streaming)")
+                for tok in tokens[1:]:
+                    if tok.startswith("-") and not (tok == "-n" or tok.startswith("-n")):
+                        return ToolResult(ok=False, message=f"run_shell: tail flag '{tok}' not allowed. Only -n is permitted.")
+            elif first_token == "journalctl":
+                if "-f" in tokens or "--follow" in tokens:
+                    return ToolResult(ok=False, message="run_shell: journalctl -f is not allowed (no streaming)")
+                _JOURNALCTL_ALLOWED = {"-n", "-u", "--since", "--no-pager", "-p"}
+                for tok in tokens[1:]:
+                    if tok.startswith("-"):
+                        if not any(tok == f or tok.startswith(f) for f in _JOURNALCTL_ALLOWED):
+                            return ToolResult(
+                                ok=False,
+                                message=f"run_shell: journalctl flag '{tok}' not allowed. Allowed: {sorted(_JOURNALCTL_ALLOWED)}",
+                            )
+            elif first_token == "docker":
+                docker_sub = tokens[1] if len(tokens) > 1 else ""
+                _DOCKER_ALLOWED = {"status", "logs", "ps"}
+                if docker_sub not in _DOCKER_ALLOWED:
+                    return ToolResult(
+                        ok=False,
+                        message=f"run_shell: docker {docker_sub} not allowed. Allowed: {sorted(_DOCKER_ALLOWED)}",
+                    )
+            elif first_token == "npm":
+                npm_sub = tokens[1] if len(tokens) > 1 else ""
+                _NPM_ALLOWED = {"list", "run", "test"}
+                if npm_sub not in _NPM_ALLOWED:
+                    return ToolResult(
+                        ok=False,
+                        message=f"run_shell: npm {npm_sub} not allowed. Allowed: {sorted(_NPM_ALLOWED)}",
+                    )
+            elif first_token == "systemctl":
+                systemctl_sub = tokens[1] if len(tokens) > 1 else ""
+                _SYSTEMCTL_ALLOWED = {"status", "is-active"}
+                if systemctl_sub not in _SYSTEMCTL_ALLOWED:
+                    return ToolResult(
+                        ok=False,
+                        message=f"run_shell: systemctl {systemctl_sub} not allowed. Allowed: {sorted(_SYSTEMCTL_ALLOWED)}",
+                    )
             try:
                 result = subprocess.run(
                     command, shell=True, capture_output=True, text=True, timeout=15,
@@ -2398,6 +2443,64 @@ class ToolRegistry:
             except Exception as exc:
                 log_event("run_shell_error", {"error": str(exc)})
                 return ToolResult(ok=False, message=f"run_shell error: {exc}")
+
+        if action == "show_logs":
+            source = str(payload.get("source") or "").strip()
+            lines = max(1, min(500, int(payload.get("lines") or 50)))
+            since = str(payload.get("since") or "10 minutes ago").strip()
+            level = str(payload.get("level") or "error").strip().lower()
+            _LEVEL_MAP = {"error": "err", "warning": "warning", "info": "info"}
+            jctl_level = _LEVEL_MAP.get(level, "err")
+
+            is_file = (
+                source.startswith("/")
+                or source.startswith("~")
+                or source.startswith(".")
+                or ("/" in source and not source.startswith("-"))
+            )
+
+            if is_file:
+                p = Path(source).expanduser()
+                if not p.exists() or not p.is_file():
+                    return ToolResult(ok=False, message=f"show_logs: file not found: {source}")
+                try:
+                    text = p.read_text(encoding="utf-8", errors="ignore")
+                    tail_lines = text.splitlines()[-lines:]
+                    output = "\n".join(tail_lines)[:3000]
+                    log_event("show_logs_file", {"source": source, "lines": len(tail_lines)})
+                    return ToolResult(
+                        ok=True,
+                        message=f"Last {len(tail_lines)} lines of {p.name}.",
+                        data={"output": output, "source": source, "count": len(tail_lines)},
+                    )
+                except Exception as exc:
+                    return ToolResult(ok=False, message=f"show_logs: read error: {exc}")
+            else:
+                cmd = ["journalctl", f"-n{lines}", f"--since={since}", "--no-pager", f"-p{jctl_level}"]
+                if source:
+                    cmd.extend(["-u", source])
+                try:
+                    result = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
+                    raw_lines = result.stdout.strip().splitlines()
+                    formatted: list[str] = []
+                    for ln in raw_lines:
+                        parts = ln.split(None, 5)
+                        if len(parts) >= 6:
+                            # Strip date + hostname: "Mon DD HH:MM:SS host unit: msg" → "HH:MM:SS unit: msg"
+                            formatted.append(f"{parts[2]} {parts[4]} {parts[5]}")
+                        elif ln.strip():
+                            formatted.append(ln)
+                    output = "\n".join(formatted)[:3000]
+                    log_event("show_logs_journalctl", {"source": source or "system", "count": len(formatted)})
+                    return ToolResult(
+                        ok=True,
+                        message=f"Found {len(formatted)} log entries.",
+                        data={"output": output, "source": source or "system", "count": len(formatted)},
+                    )
+                except subprocess.TimeoutExpired:
+                    return ToolResult(ok=False, message="show_logs: journalctl timed out after 15s")
+                except Exception as exc:
+                    return ToolResult(ok=False, message=f"show_logs error: {exc}")
 
         if action == "search_codebase":
             query = str(payload.get("query") or "").strip()
