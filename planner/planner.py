@@ -136,12 +136,82 @@ class Planner:
                 clarification_question="What would you like me to do?",
             )
 
+        # WorkflowSelector runs first — before rule-based and LLM paths
+        workflow = self._workflow_select(intent, context)
+        if workflow is not None:
+            log_event("planner_workflow_match", {
+                "intent": intent[:80],
+                "workflow": workflow.voice_hint,
+                "confidence": workflow.confidence,
+            })
+            return workflow
+
         fast = self._rule_based(intent, context)
         if fast is not None:
             log_event("planner_fast_path", {"intent": intent[:80], "steps": len(fast.steps)})
             return fast
 
         return self._llm_plan(intent, context)
+
+    def _workflow_select(self, intent: str, context: dict[str, Any]) -> Plan | None:
+        """
+        Run WorkflowSelector. Returns a Plan if confidence ≥ 0.90, else None.
+        Attaches workflow context as voice_hint. High-risk workflows set clarification_needed.
+        """
+        try:
+            from prometheus.planning.workflow_selector import resolve_workflow
+            from prometheus.planning.workflow_registry import WORKFLOWS
+
+            snapshot = {
+                "active_project": context.get("active_project") or context.get("active_workspace"),
+                "active_project_path": context.get("project_path") or context.get("active_project_path"),
+                "recent_errors": context.get("recent_errors", []),
+                "open_windows": context.get("open_windows", []),
+                "active_window": context.get("active_window", {}),
+                "last_tool_action": context.get("last_tool_action", ""),
+            }
+            mission_summary = str(context.get("mission_summary", "") or "")
+
+            resolution = resolve_workflow(intent, snapshot, mission_summary)
+
+            if not resolution.matched or resolution.confidence < 0.90:
+                return None
+
+            if resolution.requires_clarification:
+                return Plan(
+                    intent=intent,
+                    confidence=resolution.confidence,
+                    reason=resolution.reasoning,
+                    clarification_needed=True,
+                    clarification_question=resolution.clarification_question or "Can you be more specific?",
+                    voice_hint=resolution.clarification_question or "",
+                )
+
+            wf_def = WORKFLOWS.get(resolution.workflow_name)
+            preferred = resolution.preferred_tools or (wf_def.preferred_tools if wf_def else [])
+            steps = [PlanStep(t, {}) for t in preferred[:3]]  # first 3 as starter steps
+
+            plan = Plan(
+                intent=intent,
+                confidence=resolution.confidence,
+                reason=resolution.reasoning,
+                steps=steps,
+                clarification_needed=resolution.requires_confirmation,
+                clarification_question=(
+                    f"This will {resolution.workflow_name.replace('_', ' ')}. Confirm?"
+                    if resolution.requires_confirmation else ""
+                ),
+                voice_hint=f"workflow:{resolution.workflow_name}",
+            )
+
+            # Attach workflow metadata for downstream use
+            plan.__dict__["_workflow"] = resolution
+
+            return plan
+
+        except Exception as exc:
+            log_event("planner_workflow_select_error", {"error": str(exc)[:120]})
+            return None
 
     # ------------------------------------------------------------------
     # Rule-based fast path — no LLM, no latency

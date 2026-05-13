@@ -1,0 +1,143 @@
+{"command": "fix that", "world": {"active_project": "prometheus", "active_project_path": "/home/tatel/Desktop/Jarvis.v5.1", "recent_errors": ["TypeError: cannot unpack"]}, "mission": "", "expected_workflow": "debug_current_error", "expected_matched": true}
+{"command": "fix the error", "world": {"active_project": "prometheus", "active_project_path": "/home/tatel/Desktop/Jarvis.v5.1", "recent_errors": ["KeyError: 'action'"]}, "mission": "", "expected_workflow": "debug_current_error", "expected_matched": true}
+{"command": "what's wrong", "world": {"active_project_path": "/home/tatel/Desktop/Jarvis.v5.1", "recent_errors": ["ImportError: no module named foo"]}, "mission": "", "expected_workflow": "debug_current_error", "expected_matched": true}
+{"command": "debug this", "world": {"active_project": "prometheus", "active_project_path": "/home/tatel/Desktop/Jarvis.v5.1", "recent_errors": ["AttributeError: NoneType"]}, "mission": "", "expected_workflow": "debug_current_error", "expected_matched": true}
+{"command": "something broke", "world": {"active_project": "prometheus", "active_project_path": "/home/tatel/Desktop/Jarvis.v5.1", "recent_errors": ["ConnectionRefusedError"]}, "mission": "", "expected_workflow": "debug_current_error", "expected_matched": true}
+{"command": "there's an error", "world": {"active_project": "prometheus", "active_project_path": "/home/tatel/Desktop/Jarvis.v5.1", "recent_errors": ["SyntaxError at line 12"]}, "mission": "", "expected_workflow": "debug_current_error", "expected_matched": true}
+{"command": "fix the bug", "world": {"active_project": "prometheus", "active_project_path": "/home/tatel/Desktop/Jarvis.v5.1", "recent_errors": ["AssertionError in test_tools.py"]}, "mission": "", "expected_workflow": "debug_current_error", "expected_matched": true}
+{"command": "why is it failing", "world": {"active_project": "prometheus", "active_project_path": "/home/tatel/Desktop/Jarvis.v5.1", "recent_errors": ["RuntimeError: event loop closed"]}, "mission": "", "expected_workflow": "debug_current_error", "expected_matched": true}
+{"command": "figure out what's wrong", "world": {"active_project": "prometheus", "active_project_path": "/home/tatel/Desktop/Jarvis.v5.1", "recent_errors": ["FileNotFoundError"]}, "mission": "", "expected_workflow": "debug_current_error", "expected_matched": true}
+{"command": "fix it", "world": {"active_project": "prometheus", "active_project_path": "/home/tatel/Desktop/Jarvis.v5.1", "recent_errors": ["MemoryError"]}, "mission": "", "expected_workflow": "debug_current_error", "expected_matched": true}
+{"command": "it broke", "world": {"active_project": "prometheus", "active_project_path": "/home/tatel/Desktop/Jarvis.v5.1", "recent_errors": ["OSError"]}, "mission": "", "expected_workflow": "debug_current_error", "expected_matched": true}
+{"command": "debug that", "world": {"active_project": "prometheus", "active_project_path": "/home/tatel/Desktop/Jarvis.v5.1", "recent_errors": ["ZeroDivisionError"]}, "mission": "", "expected_workflow": "debug_current_error", "expected_matched": true}
+{"command": "what broke", "world": {"active_project": "prometheus", "active_project_path": "/home/tatel/Desktop/Jarvis.v5.1", "recent_errors": ["JSONDecodeError"]}, "mission": "", "expected_workflow": "debug_current_error", "expected_matched": true}
+{"command": "it failed", "world": {"active_project": "prometheus", "active_project_path": "/home/tatel/Desktop/Jarvis.v5.1", "recent_errors": ["ValueError"]}, "mission": "", "expected_workflow": "debug_current_error", "expected_matched": true}
+{"command": "fix that", "world": {}, "mission": "", "expected_workflow": null, "expected_matched": false}
+{"command": "where were we", "world": {"active_project": "prometheus", "active_project_path": "/home/tatel/Desktop/Jarvis.v5.1"}, "mission": "Build workflow selector.", "expected_workflow": "resume_current_mission", "expected_matched": true}
+{"command": "what are we working on", "world": {"active_project": "prometheus"}, "mission": "Implement tool capability registry.", "expected_workflow": "resume_current_mission", "expected_matched": true}
+{"command": "resume the mission", "world": {"active_project": "prometheus"}, "mission": "Fix the audio routing bug.", "expected_workflow": "resume_current_mission", "expected_matched": true}
+{"command": "pick up where we left off", "world": {"active_project": "prometheus"}, "mission": "Ship session 12 features.", "expected_workflow": "resume_current_mission", "expected_matched": true}
+{"command": "what's our mission", "world": {"active_project": "prometheus"}, "mission": "Finish the verification layer.", "expected_workflow": "resume_current_mission", "expected_matched": true}
+{"command": "catch me up", "world": {"active_project": "prometheus"}, "mission": "Debug session wrapup.", "expected_workflow": "resume_current_mission", "expected_matched": true}
+{"command": "what were we doing", "world": {"active_project": "prometheus"}, "mission": "Write tests for planner.", "expected_workflow": "resume_current_mission", "expected_matched": true}
+{"command": "what's the mission", "world": {"active_project": "prometheus"}, "mission": "Reorganize codebase.", "expected_workflow": "resume_current_mission", "expected_matched": true}
+{"command": "resume", "world": {"active_project": "prometheus"}, "mission": "Write session report.", "expected_workflow": "resume_current_mission", "expected_matched": true}
+{"command": "where were we", "world": {}, "mission": "", "expected_workflow": null, "expected_matched": false}
+{"command": "what changed", "world": {"active_project": "prometheus", "active_project_path": "/home/tatel/Desktop/Jarvis.v5.1"}, "mission": "", "expected_workflow": "inspect_recent_changes", "expected_matched": true}
+{"command": "show me the diff", "world": {"active_project": "prometheus", "active_project_path": "/home/tatel/Desktop/Jarvis.v5.1"}, "mission": "", "expected_workflow": "inspect_recent_changes", "expected_matched": true}
+{"command": "what did I change", "world": {"active_project": "prometheus", "active_project_path": "/home/tatel/Desktop/Jarvis.v5.1"}, "mission": "", "expected_workflow": "inspect_recent_changes", "expected_matched": true}
+{"command": "show recent changes", "world": {"active_project": "prometheus", "active_project_path": "/home/tatel/Desktop/Jarvis.v5.1"}, "mission": "", "expected_workflow": "inspect_recent_changes", "expected_matched": true}
+{"command": "show the diff", "world": {"active_project": "prometheus", "active_project_path": "/home/tatel/Desktop/Jarvis.v5.1"}, "mission": "", "expected_workflow": "inspect_recent_changes", "expected_matched": true}
+{"command": "what have we done", "world": {"active_project": "prometheus", "active_project_path": "/home/tatel/Desktop/Jarvis.v5.1"}, "mission": "", "expected_workflow": "inspect_recent_changes", "expected_matched": true}
+{"command": "recent changes", "world": {"active_project": "prometheus", "active_project_path": "/home/tatel/Desktop/Jarvis.v5.1"}, "mission": "", "expected_workflow": "inspect_recent_changes", "expected_matched": true}
+{"command": "what changed", "world": {}, "mission": "", "expected_workflow": null, "expected_matched": false}
+{"command": "did it work", "world": {"last_tool_action": "run_python"}, "mission": "", "expected_workflow": "check_if_it_worked", "expected_matched": true}
+{"command": "check if it worked", "world": {"last_tool_action": "run_shell"}, "mission": "", "expected_workflow": "check_if_it_worked", "expected_matched": true}
+{"command": "did that work", "world": {"last_tool_action": "git_commit"}, "mission": "", "expected_workflow": "check_if_it_worked", "expected_matched": true}
+{"command": "is it working", "world": {"active_window": {"title": "Konsole"}}, "mission": "", "expected_workflow": "check_if_it_worked", "expected_matched": true}
+{"command": "verify it", "world": {"last_tool_action": "write_file"}, "mission": "", "expected_workflow": "check_if_it_worked", "expected_matched": true}
+{"command": "did the fix work", "world": {"last_tool_action": "run_python"}, "mission": "", "expected_workflow": "check_if_it_worked", "expected_matched": true}
+{"command": "does it work now", "world": {"last_tool_action": "run_shell"}, "mission": "", "expected_workflow": "check_if_it_worked", "expected_matched": true}
+{"command": "check the result", "world": {"last_tool_action": "start_build"}, "mission": "", "expected_workflow": "check_if_it_worked", "expected_matched": true}
+{"command": "did that fix it", "world": {"last_tool_action": "run_python"}, "mission": "", "expected_workflow": "check_if_it_worked", "expected_matched": true}
+{"command": "ship it", "world": {"active_project": "prometheus", "active_project_path": "/home/tatel/Desktop/Jarvis.v5.1"}, "mission": "", "expected_workflow": "ship_current_project", "expected_matched": true}
+{"command": "commit and push", "world": {"active_project": "prometheus", "active_project_path": "/home/tatel/Desktop/Jarvis.v5.1"}, "mission": "", "expected_workflow": "ship_current_project", "expected_matched": true}
+{"command": "let's ship", "world": {"active_project": "prometheus", "active_project_path": "/home/tatel/Desktop/Jarvis.v5.1"}, "mission": "", "expected_workflow": "ship_current_project", "expected_matched": true}
+{"command": "time to ship", "world": {"active_project": "prometheus", "active_project_path": "/home/tatel/Desktop/Jarvis.v5.1"}, "mission": "", "expected_workflow": "ship_current_project", "expected_matched": true}
+{"command": "ready to commit", "world": {"active_project": "prometheus", "active_project_path": "/home/tatel/Desktop/Jarvis.v5.1"}, "mission": "", "expected_workflow": "ship_current_project", "expected_matched": true}
+{"command": "finalize this", "world": {"active_project": "prometheus", "active_project_path": "/home/tatel/Desktop/Jarvis.v5.1"}, "mission": "", "expected_workflow": "ship_current_project", "expected_matched": true}
+{"command": "ship the code", "world": {"active_project": "prometheus", "active_project_path": "/home/tatel/Desktop/Jarvis.v5.1"}, "mission": "", "expected_workflow": "ship_current_project", "expected_matched": true}
+{"command": "ship it", "world": {}, "mission": "", "expected_workflow": null, "expected_matched": false}
+{"command": "open the project", "world": {"active_project": "prometheus", "active_project_path": "/home/tatel/Desktop/Jarvis.v5.1"}, "mission": "", "expected_workflow": "open_active_project", "expected_matched": true}
+{"command": "set up my workspace", "world": {"active_project": "prometheus"}, "mission": "Build session 12.", "expected_workflow": "prepare_current_workspace", "expected_matched": true}
+{"command": "let's code", "world": {"active_project": "prometheus", "active_project_path": "/home/tatel/Desktop/Jarvis.v5.1"}, "mission": "", "expected_workflow": "open_active_project", "expected_matched": true}
+{"command": "open the code", "world": {"active_project": "prometheus", "active_project_path": "/home/tatel/Desktop/Jarvis.v5.1"}, "mission": "", "expected_workflow": "open_active_project", "expected_matched": true}
+{"command": "set up for coding", "world": {"active_project": "prometheus", "active_project_path": "/home/tatel/Desktop/Jarvis.v5.1"}, "mission": "", "expected_workflow": "open_active_project", "expected_matched": true}
+{"command": "open the project", "world": {}, "mission": "", "expected_workflow": null, "expected_matched": false}
+{"command": "open firefox", "world": {"active_project": "prometheus"}, "mission": "", "expected_workflow": null, "expected_matched": false}
+{"command": "keep going", "world": {"active_project": "prometheus"}, "mission": "Build workflow selector.", "expected_workflow": "continue_next_action", "expected_matched": true}
+{"command": "do the next thing", "world": {"active_project": "prometheus"}, "mission": "Write the tests.", "expected_workflow": "continue_next_action", "expected_matched": true}
+{"command": "next step", "world": {"active_project": "prometheus"}, "mission": "Fix the bug.", "expected_workflow": "continue_next_action", "expected_matched": true}
+{"command": "what do I do next", "world": {"active_project": "prometheus"}, "mission": "Complete the verification layer.", "expected_workflow": "continue_next_action", "expected_matched": true}
+{"command": "proceed", "world": {"active_project": "prometheus"}, "mission": "Finish the planner integration.", "expected_workflow": "continue_next_action", "expected_matched": true}
+{"command": "move forward", "world": {"active_project": "prometheus"}, "mission": "Ship session 12.", "expected_workflow": "continue_next_action", "expected_matched": true}
+{"command": "carry on", "world": {"active_project": "prometheus"}, "mission": "Write the report.", "expected_workflow": "continue_next_action", "expected_matched": true}
+{"command": "keep going", "world": {"active_project": "prometheus"}, "mission": "", "expected_workflow": null, "expected_matched": false}
+{"command": "summarize the project", "world": {"active_project": "prometheus", "active_project_path": "/home/tatel/Desktop/Jarvis.v5.1"}, "mission": "", "expected_workflow": "summarize_current_project", "expected_matched": true}
+{"command": "give me an overview", "world": {"active_project": "prometheus", "active_project_path": "/home/tatel/Desktop/Jarvis.v5.1"}, "mission": "", "expected_workflow": "summarize_current_project", "expected_matched": true}
+{"command": "what is this codebase", "world": {"active_project": "prometheus", "active_project_path": "/home/tatel/Desktop/Jarvis.v5.1"}, "mission": "", "expected_workflow": "summarize_current_project", "expected_matched": true}
+{"command": "explain the project", "world": {"active_project": "prometheus", "active_project_path": "/home/tatel/Desktop/Jarvis.v5.1"}, "mission": "", "expected_workflow": "summarize_current_project", "expected_matched": true}
+{"command": "project overview", "world": {"active_project": "prometheus", "active_project_path": "/home/tatel/Desktop/Jarvis.v5.1"}, "mission": "", "expected_workflow": "summarize_current_project", "expected_matched": true}
+{"command": "what does this do", "world": {"active_project": "prometheus", "active_project_path": "/home/tatel/Desktop/Jarvis.v5.1"}, "mission": "", "expected_workflow": "summarize_current_project", "expected_matched": true}
+{"command": "summarize the project", "world": {}, "mission": "", "expected_workflow": null, "expected_matched": false}
+{"command": "we're stuck", "world": {"recent_errors": ["Connection refused"]}, "mission": "", "expected_workflow": "diagnose_blocker", "expected_matched": true}
+{"command": "it's not working", "world": {"active_project": "prometheus", "active_project_path": "/home/tatel/Desktop/Jarvis.v5.1"}, "mission": "", "expected_workflow": "diagnose_blocker", "expected_matched": true}
+{"command": "what's blocking us", "world": {"active_project": "prometheus"}, "mission": "blocked: waiting on HA API key", "expected_workflow": "diagnose_blocker", "expected_matched": true}
+{"command": "why is this broken", "world": {"active_project": "prometheus", "active_project_path": "/home/tatel/Desktop/Jarvis.v5.1"}, "mission": "", "expected_workflow": "diagnose_blocker", "expected_matched": true}
+{"command": "diagnose the problem", "world": {"active_project": "prometheus"}, "mission": "", "expected_workflow": "diagnose_blocker", "expected_matched": true}
+{"command": "i'm stuck", "world": {"active_project": "prometheus"}, "mission": "", "expected_workflow": "diagnose_blocker", "expected_matched": true}
+{"command": "run diagnostics", "world": {}, "mission": "", "expected_workflow": "diagnose_blocker", "expected_matched": true}
+{"command": "figure out the blocker", "world": {"active_project": "prometheus"}, "mission": "blocked: need vault access", "expected_workflow": "diagnose_blocker", "expected_matched": true}
+{"command": "diagnose", "world": {"active_project": "prometheus"}, "mission": "", "expected_workflow": "diagnose_blocker", "expected_matched": true}
+{"command": "prepare my workspace", "world": {"active_project": "prometheus"}, "mission": "", "expected_workflow": "prepare_current_workspace", "expected_matched": true}
+{"command": "get ready to work", "world": {"active_project": "prometheus"}, "mission": "", "expected_workflow": "prepare_current_workspace", "expected_matched": true}
+{"command": "let's get started", "world": {"active_project": "prometheus"}, "mission": "", "expected_workflow": "prepare_current_workspace", "expected_matched": true}
+{"command": "workspace setup", "world": {"active_project": "prometheus"}, "mission": "", "expected_workflow": "prepare_current_workspace", "expected_matched": true}
+{"command": "get me set up", "world": {"active_project": "prometheus"}, "mission": "", "expected_workflow": "prepare_current_workspace", "expected_matched": true}
+{"command": "morning setup", "world": {}, "mission": "", "expected_workflow": "prepare_current_workspace", "expected_matched": true}
+{"command": "start the session", "world": {}, "mission": "", "expected_workflow": "prepare_current_workspace", "expected_matched": true}
+{"command": "hello there", "world": {"active_project": "prometheus"}, "mission": "", "expected_workflow": null, "expected_matched": false}
+{"command": "play some music", "world": {"active_project": "prometheus"}, "mission": "", "expected_workflow": null, "expected_matched": false}
+{"command": "what time is it", "world": {}, "mission": "", "expected_workflow": null, "expected_matched": false}
+{"command": "turn on the lights", "world": {}, "mission": "", "expected_workflow": null, "expected_matched": false}
+{"command": "volume up", "world": {}, "mission": "", "expected_workflow": null, "expected_matched": false}
+{"command": "take a screenshot", "world": {}, "mission": "", "expected_workflow": null, "expected_matched": false}
+{"command": "open firefox", "world": {}, "mission": "", "expected_workflow": null, "expected_matched": false}
+{"command": "search for python docs", "world": {}, "mission": "", "expected_workflow": null, "expected_matched": false}
+{"command": "", "world": {}, "mission": "", "expected_workflow": null, "expected_matched": false}
+{"command": "wrap it up and commit", "world": {"active_project": "prometheus", "active_project_path": "/home/tatel/Desktop/Jarvis.v5.1"}, "mission": "", "expected_workflow": "ship_current_project", "expected_matched": true}
+{"command": "ship the changes", "world": {"active_project": "prometheus", "active_project_path": "/home/tatel/Desktop/Jarvis.v5.1"}, "mission": "", "expected_workflow": "ship_current_project", "expected_matched": true}
+{"command": "commit this", "world": {"active_project": "prometheus", "active_project_path": "/home/tatel/Desktop/Jarvis.v5.1"}, "mission": "", "expected_workflow": "ship_current_project", "expected_matched": true}
+{"command": "do the next action", "world": {"active_project": "prometheus"}, "mission": "Build the workflow registry.", "expected_workflow": "continue_next_action", "expected_matched": true}
+{"command": "what's stopping us", "world": {"active_project": "prometheus"}, "mission": "", "expected_workflow": "diagnose_blocker", "expected_matched": true}
+{"command": "why can't i proceed", "world": {"active_project": "prometheus"}, "mission": "", "expected_workflow": "diagnose_blocker", "expected_matched": true}
+{"command": "what's the problem", "world": {"active_project": "prometheus"}, "mission": "", "expected_workflow": "diagnose_blocker", "expected_matched": true}
+{"command": "is it fixed", "world": {"last_tool_action": "run_shell"}, "mission": "", "expected_workflow": "check_if_it_worked", "expected_matched": true}
+{"command": "describe what we've built", "world": {"active_project": "prometheus", "active_project_path": "/home/tatel/Desktop/Jarvis.v5.1"}, "mission": "", "expected_workflow": "summarize_current_project", "expected_matched": true}
+{"command": "what have I modified", "world": {"active_project": "prometheus", "active_project_path": "/home/tatel/Desktop/Jarvis.v5.1"}, "mission": "", "expected_workflow": "inspect_recent_changes", "expected_matched": true}
+{"command": "open my workspace", "world": {"active_project": "prometheus", "active_project_path": "/home/tatel/Desktop/Jarvis.v5.1"}, "mission": "", "expected_workflow": "open_active_project", "expected_matched": true}
+{"command": "show git diff", "world": {"active_project": "prometheus", "active_project_path": "/home/tatel/Desktop/Jarvis.v5.1"}, "mission": "", "expected_workflow": "inspect_recent_changes", "expected_matched": true}
+{"command": "what's new", "world": {"active_project": "prometheus", "active_project_path": "/home/tatel/Desktop/Jarvis.v5.1"}, "mission": "", "expected_workflow": "inspect_recent_changes", "expected_matched": true}
+{"command": "catch me up on the project", "world": {"active_project": "prometheus", "active_project_path": "/home/tatel/Desktop/Jarvis.v5.1"}, "mission": "", "expected_workflow": "summarize_current_project", "expected_matched": true}
+{"command": "get back to work", "world": {"active_project": "prometheus"}, "mission": "Implement planner integration.", "expected_workflow": "resume_current_mission", "expected_matched": true}
+{"command": "what are we building", "world": {"active_project": "prometheus"}, "mission": "Build the capability registry.", "expected_workflow": "resume_current_mission", "expected_matched": true}
+{"command": "what's our goal", "world": {"active_project": "prometheus"}, "mission": "Ship the workflow operator.", "expected_workflow": "resume_current_mission", "expected_matched": true}
+{"command": "start coding", "world": {"active_project": "prometheus", "active_project_path": "/home/tatel/Desktop/Jarvis.v5.1"}, "mission": "", "expected_workflow": "open_active_project", "expected_matched": true}
+{"command": "set everything up", "world": {"active_project": "prometheus"}, "mission": "", "expected_workflow": "prepare_current_workspace", "expected_matched": true}
+{"command": "open terminal", "world": {}, "mission": "", "expected_workflow": null, "expected_matched": false}
+{"command": "search for TODO", "world": {}, "mission": "", "expected_workflow": null, "expected_matched": false}
+{"command": "show logs", "world": {}, "mission": "", "expected_workflow": null, "expected_matched": false}
+{"command": "read the readme", "world": {}, "mission": "", "expected_workflow": null, "expected_matched": false}
+{"command": "save this context", "world": {}, "mission": "", "expected_workflow": null, "expected_matched": false}
+{"command": "query vault about microschool", "world": {}, "mission": "", "expected_workflow": null, "expected_matched": false}
+{"command": "git status", "world": {}, "mission": "", "expected_workflow": null, "expected_matched": false}
+{"command": "mute", "world": {}, "mission": "", "expected_workflow": null, "expected_matched": false}
+{"command": "go to sleep", "world": {}, "mission": "", "expected_workflow": null, "expected_matched": false}
+{"command": "shut down", "world": {}, "mission": "", "expected_workflow": null, "expected_matched": false}
+{"command": "open spotify", "world": {}, "mission": "", "expected_workflow": null, "expected_matched": false}
+{"command": "projector on", "world": {}, "mission": "", "expected_workflow": null, "expected_matched": false}
+{"command": "good night", "world": {}, "mission": "", "expected_workflow": null, "expected_matched": false}
+{"command": "movie mode", "world": {}, "mission": "", "expected_workflow": null, "expected_matched": false}
+{"command": "show me the diff", "world": {}, "mission": "", "expected_workflow": null, "expected_matched": false}
+{"command": "show changes", "world": {"active_project_path": "/home/tatel/Desktop/Jarvis.v5.1"}, "mission": "", "expected_workflow": "inspect_recent_changes", "expected_matched": true}
+{"command": "fix this", "world": {"active_project": "prometheus", "active_project_path": "/home/tatel/Desktop/Jarvis.v5.1", "recent_errors": ["NameError: name 'x' is not defined"]}, "mission": "", "expected_workflow": "debug_current_error", "expected_matched": true}
+{"command": "it's broken", "world": {"active_project": "prometheus", "active_project_path": "/home/tatel/Desktop/Jarvis.v5.1"}, "mission": "", "expected_workflow": "debug_current_error", "expected_matched": true}
+{"command": "broken", "world": {"active_project": "prometheus", "active_project_path": "/home/tatel/Desktop/Jarvis.v5.1", "recent_errors": ["crash"]}, "mission": "", "expected_workflow": "debug_current_error", "expected_matched": true}
+{"command": "traceback", "world": {"active_project": "prometheus", "active_project_path": "/home/tatel/Desktop/Jarvis.v5.1", "recent_errors": ["Traceback: ..."]}, "mission": "", "expected_workflow": "debug_current_error", "expected_matched": true}
+{"command": "what have we done", "world": {"active_project": "prometheus", "active_project_path": "/home/tatel/Desktop/Jarvis.v5.1"}, "mission": "", "expected_workflow": "inspect_recent_changes", "expected_matched": true}
+{"command": "open vs code here", "world": {"active_project": "prometheus", "active_project_path": "/home/tatel/Desktop/Jarvis.v5.1"}, "mission": "", "expected_workflow": "open_active_project", "expected_matched": true}
+{"command": "set up my workspace", "world": {"active_project": "prometheus", "active_project_path": "/home/tatel/Desktop/Jarvis.v5.1"}, "mission": "Build session 12.", "expected_workflow": "prepare_current_workspace", "expected_matched": true}
+{"command": "what's our goal", "world": {}, "mission": "", "expected_workflow": null, "expected_matched": false}
+{"command": "what are we building", "world": {}, "mission": "", "expected_workflow": null, "expected_matched": false}
+{"command": "continue", "world": {"active_project": "prometheus"}, "mission": "Build workflow selector.", "expected_workflow": "resume_current_mission", "expected_matched": true}
+{"command": "resume mission", "world": {"active_project": "prometheus"}, "mission": "Session 12 in progress.", "expected_workflow": "resume_current_mission", "expected_matched": true}
