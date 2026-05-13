@@ -232,14 +232,15 @@ def section_tools():
     r = reg._execute_one_inner({"action": "read_file", "path": "/tmp/nonexistent_prometheus_audit.txt"})
     record("tool:read_file:missing_file_gives_error", not r.ok, notes=r.message[:80], section=S)
 
-    # write_file — safe temp location
-    with tempfile.TemporaryDirectory() as td:
-        test_path = str(Path(td) / "prometheus_audit_test.txt")
-        r = reg._execute_one_inner({"action": "write_file", "path": test_path, "content": "audit test"})
-        record("tool:write_file", r.ok, notes=r.message[:80], section=S)
-        if r.ok:
-            content_ok = Path(test_path).read_text() == "audit test"
-            record("tool:write_file:content_correct", content_ok, section=S)
+    # write_file — relative path lands in workspace
+    from workspace_policy import WORKSPACE_ROOT
+    test_path = "audit_test/prometheus_audit_test.txt"
+    r = reg._execute_one_inner({"action": "write_file", "path": test_path, "content": "audit test"})
+    record("tool:write_file", r.ok, notes=r.message[:80], section=S)
+    if r.ok:
+        written = WORKSPACE_ROOT / "audit_test" / "prometheus_audit_test.txt"
+        content_ok = written.exists() and written.read_text() == "audit test"
+        record("tool:write_file:content_correct", content_ok, section=S)
 
     # screenshot — may fail without display tool but should not crash
     r = reg._execute_one_inner({"action": "screenshot"})
@@ -363,11 +364,11 @@ def section_sandbox():
 
     reg = _make_registry()
 
-    # 3.1 write_file inside temp (allowed)
-    with tempfile.TemporaryDirectory() as td:
-        safe_path = str(Path(td) / "safe_write.txt")
-        r = reg._execute_one_inner({"action": "write_file", "path": safe_path, "content": "safe"})
-        record("sandbox:write_inside_temp_allowed", r.ok, notes=r.message[:80], section=S)
+    # 3.1 write_file inside workspace (allowed), outside workspace (blocked)
+    r_ok = reg._execute_one_inner({"action": "write_file", "path": "sandbox_test.txt", "content": "safe"})
+    record("sandbox:write_inside_workspace_allowed", r_ok.ok, notes=r_ok.message[:80], section=S)
+    r_blocked = reg._execute_one_inner({"action": "write_file", "path": "/tmp/escape_attempt.txt", "content": "x"})
+    record("sandbox:write_outside_workspace_blocked", not r_blocked.ok, notes=r_blocked.message[:80], section=S)
 
     # 3.2 run_python blocked patterns
     blocked = [
@@ -1131,9 +1132,9 @@ def generate_report():
         ("6", "MEDIUM", "Planner: improve ambiguity detection",
          "Rule-based planner may assign high confidence to ambiguous intents instead of requesting clarification. LLM fallback depends on Ollama being online.",
          "`planner/planner.py:_rule_based()` — tighten regex patterns; add intent length / keyword entropy heuristic for confidence scoring"),
-        ("7", "MEDIUM", "Add `write_file` path safety check",
-         "write_file allows writing to any path the process can access. No path restriction to safe directories.",
-         "`tools.py:_execute_one_inner()` write_file block — add SAFE_WRITE_ROOTS check (home dir, project paths); return error for writes outside"),
+        ("7", "RESOLVED", "`write_file` path safety — restricted to ~/PROMETHEUS/workspace",
+         "write_file now enforces workspace_policy.resolve_workspace_path(); paths outside ~/PROMETHEUS/workspace are blocked with PermissionError.",
+         "Implemented in workspace_policy.py; tools.py write_file handler updated; 19 tests passing in test_workspace_policy.py"),
         ("8", "LOW", "Add `run_diagnostics` to ACTION_ENUM verification test",
          "run_diagnostics() exists and is in ACTION_ENUM but is not wired to a direct intent override for 'how are you' / 'system health'.",
          "`realtime_client.py:_direct_intent_override()` — add 'how are you doing' / 'system health' → run_diagnostics"),

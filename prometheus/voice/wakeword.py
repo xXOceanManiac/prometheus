@@ -1,0 +1,1 @@
+from wakeword import *  # noqa
