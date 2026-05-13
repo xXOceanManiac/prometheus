@@ -36,7 +36,8 @@ _ACTIVITY_KINDS = {
     "transcript", "direct_tool_override", "tool_action", "tool_error",
     "realtime_connected", "realtime_connection_closed", "web_search_result_direct",
     "background_task_submitted", "session_wrapup_triggered", "vault_recall_injected",
-    "planner_fast_path", "executor_step_failed", "verifier_fail",
+    "planner_fast_path", "planner_workflow_match", "executor_step_failed",
+    "executor_step_verified", "verifier_fail",
     "mission_set", "mission_subtask_added", "mission_subtask_completed",
     "response_guard_blocked", "voice_error",
 }

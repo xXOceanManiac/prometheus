@@ -71,6 +71,9 @@ class RealtimePrometheusClient:
         # Reset on response.done / response.cancelled / response.failed / errors.
         self._response_active = False
 
+        # Voice latency tracking — reset on each PTT press / begin_user_turn
+        self._turn_start_ts: float = 0.0  # monotonic time when user started speaking
+
         # Vault / workspace context injected before or during a session
         self._vault_context: str = ""
         self._workspace_context: str = ""
@@ -392,7 +395,15 @@ class RealtimePrometheusClient:
 
     async def _run_direct_tool(self, payload: dict[str, Any]) -> None:
         print("Direct tool override:", payload)
-        log_event("direct_tool_override", {"payload": payload})
+        ts_to_first_tool_ms = (
+            round((time.monotonic() - self._turn_start_ts) * 1000)
+            if self._turn_start_ts > 0
+            else None
+        )
+        log_event("direct_tool_override", {
+            "payload": payload,
+            "ts_to_first_tool_ms": ts_to_first_tool_ms,
+        })
 
         result = self.tools.execute(payload)
         self._override_handled = True
@@ -831,6 +842,7 @@ class RealtimePrometheusClient:
 
     async def begin_user_turn(self) -> None:
         self.awaiting_user_audio = True
+        self._turn_start_ts = time.monotonic()
         log_event("user_turn_started", {})
 
     async def send_audio(self, chunk: bytes) -> None:
@@ -1138,7 +1150,15 @@ class RealtimePrometheusClient:
                     transcript = event.get("transcript", "")
                     if transcript:
                         notify(f"Heard: {transcript}")
-                        log_event("transcript", {"transcript": transcript[:300]})
+                        ts_transcription_ms = (
+                            round((time.monotonic() - self._turn_start_ts) * 1000)
+                            if self._turn_start_ts > 0
+                            else None
+                        )
+                        log_event("transcript", {
+                            "transcript": transcript[:300],
+                            "ts_to_transcription_ms": ts_transcription_ms,
+                        })
 
                         override = self._direct_intent_override(transcript)
                         if override and override.get("type") == "direct_tool":

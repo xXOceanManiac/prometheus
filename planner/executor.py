@@ -16,6 +16,9 @@ class StepResult:
     message: str
     data: dict[str, Any] | None
     attempts: int
+    verified: bool | None = None          # None = not checked; True/False = outcome
+    verification_confidence: float = 0.0  # confidence of the verification check
+    verification_summary: str = ""        # one-liner from VerificationResult
 
 
 @dataclass
@@ -44,6 +47,8 @@ class ExecutionResult:
                     "ok": s.ok,
                     "message": s.message,
                     "attempts": s.attempts,
+                    "verified": s.verified,
+                    "verification_summary": s.verification_summary,
                 }
                 for s in self.steps
             ],
@@ -62,10 +67,33 @@ class ExecutionResult:
         return ctx
 
 
+def _try_verify(
+    action: str,
+    expected: str,
+    execution_result: dict[str, Any],
+    world_snapshot: dict[str, Any] | None,
+) -> "VerificationResult | None":
+    try:
+        from prometheus.execution.verification import verify_action_result
+        return verify_action_result(action, expected, execution_result, world_snapshot)
+    except Exception:
+        return None
+
+
+def _get_world_snapshot() -> dict[str, Any] | None:
+    try:
+        from world_model import build_world_snapshot
+        return build_world_snapshot()
+    except Exception:
+        return None
+
+
 class Executor:
     """
     Runs each PlanStep via ToolRegistry.execute(), with per-step retry and
     intermediate state written to WorkingMemory under background_task_state.
+    Uses verify_action_result() after each successful tool call — if verification
+    says the action failed despite ok=True, it retries when retry_recommended=True.
     """
 
     MAX_RETRIES = 3
@@ -123,6 +151,9 @@ class Executor:
 
         last_message = ""
         last_data: dict[str, Any] | None = None
+        last_verified: bool | None = None
+        last_vconf: float = 0.0
+        last_vsummary: str = ""
 
         for attempt in range(1, self.MAX_RETRIES + 1):
             try:
@@ -132,6 +163,40 @@ class Executor:
                 data = getattr(tool_result, "data", None) or {}
 
                 if ok:
+                    # Verification runs outside the main try/except so a verify crash
+                    # never masks a successful tool call as a failure.
+                    try:
+                        snap = _get_world_snapshot()
+                        vr = _try_verify(
+                            step.action, "", {"ok": True, "message": msg, "data": data}, snap
+                        )
+                    except Exception:
+                        vr = None
+
+                    if vr is not None:
+                        last_verified = vr.verified
+                        last_vconf = vr.confidence
+                        last_vsummary = vr.summary
+                        log_event("executor_step_verified", {
+                            "step": idx,
+                            "action": step.action,
+                            "verified": vr.verified,
+                            "confidence": round(vr.confidence, 2),
+                            "summary": vr.summary[:100],
+                        })
+
+                        # Verification says this didn't actually work — retry if recommended
+                        if not vr.verified and vr.retry_recommended and attempt < self.MAX_RETRIES:
+                            last_message = f"Verification failed: {vr.summary}"
+                            last_data = data
+                            log_event("executor_step_retry", {
+                                "step": idx, "action": step.action,
+                                "attempt": attempt, "message": last_message[:120],
+                                "reason": "verification",
+                            })
+                            time.sleep(self.RETRY_DELAY)
+                            continue
+
                     return StepResult(
                         step_index=idx,
                         action=step.action,
@@ -139,6 +204,9 @@ class Executor:
                         message=msg,
                         data=data,
                         attempts=attempt,
+                        verified=last_verified,
+                        verification_confidence=last_vconf,
+                        verification_summary=last_vsummary,
                     )
 
                 last_message = msg
@@ -150,6 +218,7 @@ class Executor:
                         "action": step.action,
                         "attempt": attempt,
                         "message": msg[:120],
+                        "reason": "tool_failure",
                     },
                 )
 
@@ -170,6 +239,9 @@ class Executor:
             message=last_message,
             data=last_data,
             attempts=self.MAX_RETRIES,
+            verified=last_verified,
+            verification_confidence=last_vconf,
+            verification_summary=last_vsummary,
         )
 
     def _write_intermediate(
