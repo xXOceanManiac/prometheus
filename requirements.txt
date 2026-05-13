@@ -13,4 +13,5 @@ mediapipe
 mss
 pyside6
 pyautogui
-
+xclip 
+inotify-tools
