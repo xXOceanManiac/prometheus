@@ -21,6 +21,7 @@ from working_memory import WorkingMemory
 from dream_manager import DreamManager
 from behavior_learning import BehaviorLearningEngine
 from utils import command_exists, ensure_dir, kill_existing, log_event, run_cmd
+from workspace_policy import resolve_workspace_path, ensure_workspace_root
 
 
 # Module-level voice error callback — set by realtime client at startup
@@ -2216,7 +2217,12 @@ class ToolRegistry:
             content = str(payload.get("content", ""))
             if not path:
                 return ToolResult(False, "No file path was provided.")
-            p = Path(path).expanduser()
+            try:
+                ensure_workspace_root()
+                p = resolve_workspace_path(path)
+            except (ValueError, PermissionError) as exc:
+                log_event("write_file_blocked", {"path": path, "reason": str(exc)})
+                return ToolResult(False, f"Write blocked: {exc}")
             p.parent.mkdir(parents=True, exist_ok=True)
             p.write_text(content, encoding="utf-8")
             return ToolResult(True, f"Wrote file: {p.name}", {"path": str(p)})

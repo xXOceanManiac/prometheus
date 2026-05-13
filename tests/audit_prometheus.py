@@ -344,7 +344,7 @@ def section_tools():
         "search_codebase", "git_status", "git_diff", "git_commit",
         "session_wrapup", "system_status", "get_priorities",
         "start_coding_task", "get_coding_status", "start_build", "get_build_status",
-        "query_vault", "run_diagnostics",
+        "query_vault", "run_diagnostics", "show_logs",
         "get_mission_status", "set_mission", "add_subtask", "complete_subtask",
     }
     unhandled = [a for a in ACTION_ENUM if a not in known_handled]
