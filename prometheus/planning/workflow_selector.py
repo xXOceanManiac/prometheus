@@ -51,7 +51,7 @@ _RESUME_TRIGGERS = [
     "where were we", "what are we working on", "what were we doing",
     "resume the mission", "resume mission", "pick up where we left off",
     "what's the mission", "what's our mission", "catch me up",
-    "what are we building", "what's our goal",
+    "what are we building", "what's our goal", "get back to work",
 ]
 
 _SUMMARIZE_TRIGGERS = [
@@ -62,9 +62,9 @@ _SUMMARIZE_TRIGGERS = [
 ]
 
 _INSPECT_TRIGGERS = [
-    "what changed", "show me the diff", "what did I change", "show recent changes",
+    "what changed", "show me the diff", "what did i change", "show recent changes",
     "what's new", "show the diff", "what have we done", "show changes",
-    "what have I modified", "show git diff", "recent changes",
+    "what have i modified", "show git diff", "recent changes",
 ]
 
 _VERIFY_TRIGGERS = [
@@ -74,14 +74,15 @@ _VERIFY_TRIGGERS = [
 ]
 
 _OPEN_PROJECT_TRIGGERS = [
-    "open the project", "set up my workspace", "let's code", "open the code",
+    "open the project", "let's code", "open the code",
     "set up for coding", "open my workspace", "open vs code here",
     "open code", "start coding",
 ]
 
 _NEXT_ACTION_TRIGGERS = [
-    "keep going", "do the next thing", "next step", "what do I do next",
+    "keep going", "do the next thing", "next step", "what do i do next",
     "proceed", "move forward", "carry on", "do the next action",
+    "what do i do next",
 ]
 
 _SHIP_TRIGGERS = [
@@ -186,7 +187,37 @@ def resolve_workflow(
     window_title = _active_window_title(snap)
     last_tool = _last_tool_action(snap)
 
-    # ── 1. Debug: vague "fix that" requires error or code context ──────────
+    # ── 1. Verify result (check before debug: "did that fix it" is verify, not debug) ──
+    if _contains_any(text, _VERIFY_TRIGGERS):
+        target = last_tool or project or None
+        return WorkflowResolution(
+            matched=True,
+            workflow_name="check_if_it_worked",
+            confidence=0.94,
+            reasoning=f"Verification request after '{last_tool or 'last action'}'",
+            inferred_target=target,
+            preferred_tools=WORKFLOWS["check_if_it_worked"].preferred_tools,
+            requires_confirmation=False,
+            requires_clarification=False,
+            clarification_question=None,
+        )
+
+    # ── 2. Diagnose blocker (check before debug: "why is this broken" = investigation) ──
+    if _contains_any(text, _DIAGNOSE_TRIGGERS):
+        target = (errors[0][:60] if errors else None) or (project or "current state")
+        return WorkflowResolution(
+            matched=True,
+            workflow_name="diagnose_blocker",
+            confidence=0.93,
+            reasoning="User requesting diagnosis / blocker investigation",
+            inferred_target=target,
+            preferred_tools=WORKFLOWS["diagnose_blocker"].preferred_tools,
+            requires_confirmation=False,
+            requires_clarification=False,
+            clarification_question=None,
+        )
+
+    # ── 3. Debug: "fix that", "fix the bug", "something broke" ─────────────
     if _contains_any(text, _DEBUG_TRIGGERS):
         if has_errors or project_path or window_title:
             target = errors[0][:80] if errors else (project or window_title or "current context")
@@ -201,43 +232,12 @@ def resolve_workflow(
                 requires_clarification=False,
                 clarification_question=None,
             )
-        # "fix that" with no context — clarify
         return WorkflowResolution(
             matched=False, workflow_name=None, confidence=0.3,
             reasoning="Debug intent but no error context available",
             inferred_target=None, preferred_tools=[],
             requires_confirmation=False, requires_clarification=True,
             clarification_question="What would you like me to fix? I don't see a recent error.",
-        )
-
-    # ── 2. Diagnose blocker ─────────────────────────────────────────────────
-    if _contains_any(text, _DIAGNOSE_TRIGGERS) or "run diagnostics" in text:
-        target = (errors[0][:60] if errors else None) or (project or "current state")
-        return WorkflowResolution(
-            matched=True,
-            workflow_name="diagnose_blocker",
-            confidence=0.93,
-            reasoning="User requesting diagnosis / blocker investigation",
-            inferred_target=target,
-            preferred_tools=WORKFLOWS["diagnose_blocker"].preferred_tools,
-            requires_confirmation=False,
-            requires_clarification=False,
-            clarification_question=None,
-        )
-
-    # ── 3. Verify result ────────────────────────────────────────────────────
-    if _contains_any(text, _VERIFY_TRIGGERS):
-        target = last_tool or project or None
-        return WorkflowResolution(
-            matched=True,
-            workflow_name="check_if_it_worked",
-            confidence=0.94,
-            reasoning=f"Verification request after '{last_tool or 'last action'}'",
-            inferred_target=target,
-            preferred_tools=WORKFLOWS["check_if_it_worked"].preferred_tools,
-            requires_confirmation=False,
-            requires_clarification=False,
-            clarification_question=None,
         )
 
     # ── 4. Inspect recent changes ───────────────────────────────────────────
@@ -284,7 +284,29 @@ def resolve_workflow(
             clarification_question=None,
         )
 
-    # ── 6. Resume mission ───────────────────────────────────────────────────
+    # ── 6. Summarize project (check before resume: "catch me up on the project") ──
+    if _contains_any(text, _SUMMARIZE_TRIGGERS):
+        if not project and not project_path:
+            return WorkflowResolution(
+                matched=False, workflow_name=None, confidence=0.4,
+                reasoning="Summarize intent but no active project",
+                inferred_target=None, preferred_tools=[],
+                requires_confirmation=False, requires_clarification=True,
+                clarification_question="Which project should I summarize?",
+            )
+        return WorkflowResolution(
+            matched=True,
+            workflow_name="summarize_current_project",
+            confidence=0.91,
+            reasoning=f"Summarize project: {project or project_path}",
+            inferred_target=project or project_path,
+            preferred_tools=WORKFLOWS["summarize_current_project"].preferred_tools,
+            requires_confirmation=False,
+            requires_clarification=False,
+            clarification_question=None,
+        )
+
+    # ── 7. Resume mission ───────────────────────────────────────────────────
     if _contains_any(text, _RESUME_TRIGGERS) or text in ("resume", "continue"):
         if not has_mission and not project:
             return WorkflowResolution(
@@ -307,7 +329,7 @@ def resolve_workflow(
             clarification_question=None,
         )
 
-    # ── 7. Continue next action ─────────────────────────────────────────────
+    # ── 8. Continue next action ─────────────────────────────────────────────
     if _contains_any(text, _NEXT_ACTION_TRIGGERS):
         if not has_mission:
             return WorkflowResolution(
@@ -329,31 +351,23 @@ def resolve_workflow(
             clarification_question=None,
         )
 
-    # ── 8. Summarize project ────────────────────────────────────────────────
-    if _contains_any(text, _SUMMARIZE_TRIGGERS):
-        if not project and not project_path:
-            return WorkflowResolution(
-                matched=False, workflow_name=None, confidence=0.4,
-                reasoning="Summarize intent but no active project",
-                inferred_target=None, preferred_tools=[],
-                requires_confirmation=False, requires_clarification=True,
-                clarification_question="Which project should I summarize?",
-            )
+    # ── 9. Prepare workspace (check before open_project: "set up my workspace") ──
+    if _contains_any(text, _PREPARE_TRIGGERS):
         return WorkflowResolution(
             matched=True,
-            workflow_name="summarize_current_project",
+            workflow_name="prepare_current_workspace",
             confidence=0.91,
-            reasoning=f"Summarize project: {project or project_path}",
-            inferred_target=project or project_path,
-            preferred_tools=WORKFLOWS["summarize_current_project"].preferred_tools,
+            reasoning="Workspace setup request",
+            inferred_target=project,
+            preferred_tools=WORKFLOWS["prepare_current_workspace"].preferred_tools,
             requires_confirmation=False,
             requires_clarification=False,
             clarification_question=None,
         )
 
-    # ── 9. Open project ─────────────────────────────────────────────────────
+    # ── 10. Open project ────────────────────────────────────────────────────
     if _contains_any(text, _OPEN_PROJECT_TRIGGERS):
-        # Check if the command names a specific app that isn't about code
+        # Skip single-word app opens — those go to open_app
         if "open firefox" in text or "open spotify" in text or "open terminal" in text:
             return WorkflowResolution(
                 matched=False, workflow_name=None, confidence=0.0,
@@ -378,20 +392,6 @@ def resolve_workflow(
             reasoning=f"Open project: {target}",
             inferred_target=target,
             preferred_tools=WORKFLOWS["open_active_project"].preferred_tools,
-            requires_confirmation=False,
-            requires_clarification=False,
-            clarification_question=None,
-        )
-
-    # ── 10. Prepare workspace ───────────────────────────────────────────────
-    if _contains_any(text, _PREPARE_TRIGGERS):
-        return WorkflowResolution(
-            matched=True,
-            workflow_name="prepare_current_workspace",
-            confidence=0.91,
-            reasoning="Workspace setup request",
-            inferred_target=project,
-            preferred_tools=WORKFLOWS["prepare_current_workspace"].preferred_tools,
             requires_confirmation=False,
             requires_clarification=False,
             clarification_question=None,
