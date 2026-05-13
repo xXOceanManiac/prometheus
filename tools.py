@@ -205,6 +205,11 @@ ACTION_ENUM = [
     "query_vault",
     # System diagnostics
     "run_diagnostics",
+    # Mission state
+    "get_mission_status",
+    "set_mission",
+    "add_subtask",
+    "complete_subtask",
 ]
 
 
@@ -2662,6 +2667,58 @@ class ToolRegistry:
                 diag.get("spoken_summary", "Diagnostics complete."),
                 diag,
             )
+
+        if action == "get_mission_status":
+            try:
+                from mission_state import MissionState
+                ms = MissionState()
+                data = ms.get_mission()
+                summary = ms.summary_text()
+                log_event("get_mission_status", {"has_mission": bool(data.get("current_mission"))})
+                return ToolResult(ok=True, message=summary, data=data)
+            except Exception as exc:
+                log_event("get_mission_status_error", {"error": str(exc)})
+                return ToolResult(ok=False, message=f"get_mission_status error: {exc}")
+
+        if action == "set_mission":
+            try:
+                from mission_state import MissionState
+                mission = str(payload.get("mission") or payload.get("description") or "").strip()
+                goal = str(payload.get("goal") or "").strip()
+                if not mission:
+                    return ToolResult(ok=False, message="set_mission: 'mission' is required")
+                MissionState().set_mission(mission, goal=goal)
+                log_event("mission_set_tool", {"mission": mission[:80]})
+                return ToolResult(ok=True, message=f"Mission set: {mission[:60]}")
+            except Exception as exc:
+                log_event("set_mission_error", {"error": str(exc)})
+                return ToolResult(ok=False, message=f"set_mission error: {exc}")
+
+        if action == "add_subtask":
+            try:
+                from mission_state import MissionState
+                description = str(payload.get("description") or payload.get("task") or "").strip()
+                if not description:
+                    return ToolResult(ok=False, message="add_subtask: 'description' is required")
+                task_id = MissionState().add_subtask(description)
+                return ToolResult(ok=True, message=f"Subtask added: {description[:60]}", data={"id": task_id})
+            except Exception as exc:
+                log_event("add_subtask_error", {"error": str(exc)})
+                return ToolResult(ok=False, message=f"add_subtask error: {exc}")
+
+        if action == "complete_subtask":
+            try:
+                from mission_state import MissionState
+                ref = str(payload.get("id") or payload.get("description") or "").strip()
+                if not ref:
+                    return ToolResult(ok=False, message="complete_subtask: 'id' or 'description' is required")
+                ok = MissionState().complete_subtask(ref)
+                if ok:
+                    return ToolResult(ok=True, message=f"Subtask completed: {ref[:60]}")
+                return ToolResult(ok=False, message=f"No matching subtask found for: {ref[:60]}")
+            except Exception as exc:
+                log_event("complete_subtask_error", {"error": str(exc)})
+                return ToolResult(ok=False, message=f"complete_subtask error: {exc}")
 
         if action == "start_coding_task":
             try:

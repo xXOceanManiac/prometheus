@@ -64,6 +64,9 @@ class RealtimePrometheusClient:
         self.last_cycle_end_at = 0.0
         self._override_handled = False
         self._drop_audio_until = 0.0
+        # Guard against duplicate response.create while one is already in flight.
+        # Reset on response.done / response.cancelled / response.failed / errors.
+        self._response_active = False
 
         # Vault / workspace context injected before or during a session
         self._vault_context: str = ""
@@ -107,13 +110,10 @@ class RealtimePrometheusClient:
                     "content": [{"type": "input_text", "text": text}],
                 },
             })
-            await self.send({
-                "type": "response.create",
-                "response": {
-                    "modalities": ["audio", "text"],
-                    "instructions": f"Say exactly: '{text}'",
-                },
-            })
+            await self._guarded_response_create(
+                {"modalities": ["audio", "text"], "instructions": f"Say exactly: '{text}'"},
+                context="_speak_text",
+            )
         except Exception:
             pass
 
@@ -271,9 +271,8 @@ class RealtimePrometheusClient:
             self._log_vault_warning(f"_handle_vault_recall failed: {exc}")
             log_event("vault_recall_error", {"error": str(exc)})
 
-        await self.send({
-            "type": "response.create",
-            "response": {
+        await self._guarded_response_create(
+            {
                 "modalities": ["audio", "text"],
                 "instructions": (
                     "Answer the user's question using the personal memory context "
@@ -282,7 +281,8 @@ class RealtimePrometheusClient:
                     "If you cannot find the information, say so briefly."
                 ),
             },
-        })
+            context="_handle_vault_recall",
+        )
 
     def _project_resume_override(
         self, transcript: str, text: str
@@ -343,6 +343,90 @@ class RealtimePrometheusClient:
 
         if not text:
             return None
+
+        # Mission state queries → read MissionState directly (no LLM)
+        if any(
+            p in text
+            for p in [
+                "what are we working on",
+                "what am i working on",
+                "what's the current mission",
+                "whats the current mission",
+                "what is the current mission",
+                "what's the current objective",
+                "whats the current objective",
+                "what is the current objective",
+                "current mission",
+                "mission status",
+                "show mission status",
+                "what's my mission",
+                "whats my mission",
+                "what's next",
+                "whats next",
+                "what is next",
+                "what's blocked",
+                "whats blocked",
+                "what is blocked",
+                "any blockers",
+                "show blockers",
+            ]
+        ):
+            return {
+                "type": "direct_tool",
+                "payload": {"action": "get_mission_status", "request_text": transcript},
+            }
+
+        # tell_time — zero-ambiguity, zero-latency
+        if any(
+            p in text
+            for p in [
+                "what time is it",
+                "what's the time",
+                "whats the time",
+                "current time",
+                "tell me the time",
+                "time please",
+            ]
+        ):
+            return {
+                "type": "direct_tool",
+                "payload": {"action": "tell_time", "request_text": transcript},
+            }
+
+        # screenshot — deterministic
+        if any(
+            p in text
+            for p in [
+                "take a screenshot",
+                "grab a screenshot",
+                "screenshot",
+                "capture the screen",
+                "capture screenshot",
+            ]
+        ):
+            return {
+                "type": "direct_tool",
+                "payload": {"action": "screenshot", "request_text": transcript},
+            }
+
+        # open_app — extend to all config.apps keys beyond the existing variant table
+        _DIRECT_APPS = {
+            "firefox": "firefox",
+            "chrome": "chrome",
+            "browser": "chrome",
+            "google chrome": "chrome",
+            "terminal": "terminal",
+            "konsole": "terminal",
+            "spotify": "spotify",
+            "discord": "discord",
+            "obsidian": "obsidian",
+        }
+        for alias, app_key in _DIRECT_APPS.items():
+            if f"open {alias}" in text or text == f"launch {alias}" or text.startswith(f"open {alias} "):
+                return {
+                    "type": "direct_tool",
+                    "payload": {"action": "open_app", "app": app_key, "request_text": transcript},
+                }
 
         # Wrap-up phrases → session_wrapup action
         if any(
@@ -828,6 +912,88 @@ class RealtimePrometheusClient:
 
         return None
 
+    async def _contextual_override(self, transcript: str) -> bool:
+        """
+        Contextual intent resolver for vague commands ("fix that", "continue", etc.).
+        Rule-based only on the voice path (< 50ms, no LLM).
+        Returns True if the command was handled, False to fall through to Realtime API.
+        """
+        try:
+            from contextual_intent import ContextualIntentResolver, _is_vague
+            from world_model import build_world_snapshot
+
+            if not _is_vague(transcript):
+                return False
+
+            snap = build_world_snapshot()
+            resolver = ContextualIntentResolver()
+            result = resolver.resolve(transcript, snap, mode="fast")
+
+            if result is None:
+                return False
+
+            self.awaiting_user_audio = False
+            self.busy = True
+
+            assumption = result.get("user_facing_assumption", "")
+            intent = result.get("intent", "")
+            slots = result.get("slots", {})
+            risk = result.get("risk", "safe")
+
+            log_event("contextual_intent_override", {
+                "command": transcript[:80],
+                "intent": intent,
+                "confidence": result.get("confidence", 0),
+                "risk": risk,
+            })
+
+            if result.get("requires_clarification"):
+                question = result.get("clarifying_question") or "Can you be more specific?"
+                await self._speak_text(question)
+                self.busy = False
+                return True
+
+            if result.get("requires_confirmation") or risk in ("high", "dangerous"):
+                msg = (assumption or f"I'm planning to: {intent}.") + " Confirm?"
+                await self._speak_text(msg)
+                # Set pending confirmation — user must say "yes" to proceed
+                self.tools._pending_action = {
+                    "intent": intent,
+                    "slots": slots,
+                    "assumption": assumption,
+                }
+                self.busy = False
+                return True
+
+            if result.get("should_execute") and slots.get("action"):
+                if assumption:
+                    await self._speak_text(assumption)
+                payload = {"action": slots["action"], **{k: v for k, v in slots.items() if k != "action"}}
+                await self._run_direct_tool(payload)
+                return True
+
+            if result.get("should_execute") and intent in ("get_mission_status", "run_diagnostics", "summarize_screen"):
+                if assumption:
+                    await self._speak_text(assumption)
+                await self._run_direct_tool({"action": intent})
+                return True
+
+        except Exception as exc:
+            log_event("contextual_override_error", {"error": str(exc)[:200]})
+
+        return False
+
+    async def _speak_text(self, text: str) -> None:
+        """Speak a short text response via the Realtime API."""
+        await self._guarded_response_create(
+            {
+                "modalities": ["audio", "text"],
+                "instructions": f"Say exactly: {text}",
+                "input": [{"type": "message", "role": "user", "content": [{"type": "input_text", "text": "say it"}]}],
+            },
+            context="_speak_text",
+        )
+
     async def _run_direct_tool(self, payload: dict[str, Any]) -> None:
         print("Direct tool override:", payload)
         log_event("direct_tool_override", {"payload": payload})
@@ -858,6 +1024,7 @@ class RealtimePrometheusClient:
             "start_coding_task",
             "get_coding_status",
             "run_diagnostics",
+            "get_mission_status",
         }
 
         action = str(payload.get("action", "")).strip().lower()
@@ -1050,14 +1217,9 @@ class RealtimePrometheusClient:
                     "Be precise and do not claim an app or project was already open unless the tool result explicitly shows that."
                 )
 
-            await self.send(
-                {
-                    "type": "response.create",
-                    "response": {
-                        "modalities": ["audio", "text"],
-                        "instructions": response_instructions,
-                    },
-                }
+            await self._guarded_response_create(
+                {"modalities": ["audio", "text"], "instructions": response_instructions},
+                context="_run_direct_tool_followup",
             )
         else:
             self.busy = False
@@ -1240,6 +1402,20 @@ class RealtimePrometheusClient:
             raise RuntimeError("Realtime websocket is not connected.")
         await self.ws.send(orjson.dumps(data).decode())
 
+    async def _guarded_response_create(self, response_payload: dict[str, Any], context: str = "") -> bool:
+        """Send response.create only if no response is currently active.
+
+        Returns True if the request was sent, False if it was blocked (duplicate).
+        Caller must set self._response_active = True immediately before calling this
+        or rely on this method to set it (which it does on success).
+        """
+        if self._response_active:
+            log_event("response_guard_blocked", {"context": context[:80]})
+            return False
+        self._response_active = True
+        await self.send({"type": "response.create", "response": response_payload})
+        return True
+
     async def begin_user_turn(self) -> None:
         self.awaiting_user_audio = True
         log_event("user_turn_started", {})
@@ -1325,6 +1501,7 @@ class RealtimePrometheusClient:
             "start_coding_task",
             "get_coding_status",
             "run_diagnostics",
+            "get_mission_status",
         }
 
         tool_action = str(args.get("action", "")).strip().lower()
@@ -1497,14 +1674,9 @@ class RealtimePrometheusClient:
                     "Do not add filler. "
                     "Do not claim something is already open unless the tool result explicitly says so."
                 )
-            await self.send(
-                {
-                    "type": "response.create",
-                    "response": {
-                        "modalities": ["audio", "text"],
-                        "instructions": response_instructions,
-                    },
-                }
+            await self._guarded_response_create(
+                {"modalities": ["audio", "text"], "instructions": response_instructions},
+                context="_handle_tool_call_followup",
             )
         else:
             self.waiting_for_tool_followup = False
@@ -1524,6 +1696,7 @@ class RealtimePrometheusClient:
                 if event_type == "error":
                     notify(f"Realtime error: {event}")
                     self.busy = False
+                    self._response_active = False
                     self.speaker.finish_realtime()
                     self.last_cycle_end_at = time.time()
                     continue
@@ -1549,23 +1722,28 @@ class RealtimePrometheusClient:
                             await self._handle_vault_recall(override["query"])
                             continue
 
+                        # Contextual intent resolution — handles vague commands
+                        # like "fix that", "continue", "what's wrong", etc.
+                        # Rule-based only (mode="fast"); no LLM on the voice path.
+                        ctx_handled = await self._contextual_override(transcript)
+                        if ctx_handled:
+                            continue
+
                     if not self._override_handled:
-                        await self.send(
+                        await self._guarded_response_create(
                             {
-                                "type": "response.create",
-                                "response": {
-                                    "modalities": ["audio", "text"],
-                                    "instructions": (
-                                        "Respond as Prometheus. "
-                                        "Never invent Home Assistant script names. "
-                                        "For lights, Xbox, and smart-home requests, call desktop_action and let the deterministic tool layer choose the exact jarvis_* script. "
-                                        "For current screen or tab understanding, call desktop_action with summarize_screen. "
-                                        "For search and near-me lookups, call desktop_action with web_search. "
-                                        "For work/project switching, call desktop_action with smart_action. "
-                                        "If the user requested multiple actions, send a single desktop_action call using an actions array."
-                                    ),
-                                },
-                            }
+                                "modalities": ["audio", "text"],
+                                "instructions": (
+                                    "Respond as Prometheus. "
+                                    "Never invent Home Assistant script names. "
+                                    "For lights, Xbox, and smart-home requests, call desktop_action and let the deterministic tool layer choose the exact jarvis_* script. "
+                                    "For current screen or tab understanding, call desktop_action with summarize_screen. "
+                                    "For search and near-me lookups, call desktop_action with web_search. "
+                                    "For work/project switching, call desktop_action with smart_action. "
+                                    "If the user requested multiple actions, send a single desktop_action call using an actions array."
+                                ),
+                            },
+                            context="transcript_no_override",
                         )
                     continue
 
@@ -1595,16 +1773,24 @@ class RealtimePrometheusClient:
                 if event_type == "response.done":
                     self.waiting_for_tool_followup = False
                     self.busy = False
+                    self._response_active = False
                     self._drop_audio_until = 0.0
                     self.last_cycle_end_at = time.time()
                     continue
 
+                if event_type in {"response.cancelled", "response.failed"}:
+                    self._response_active = False
+                    self.busy = False
+                    self.last_cycle_end_at = time.time()
+                    continue
+
         except asyncio.CancelledError:
-            pass
+            self._response_active = False
         except ConnectionClosed as e:
             notify(f"Realtime connection closed: {e}")
             log_event("realtime_connection_closed", {"error": str(e)})
             self.busy = False
+            self._response_active = False
             self.speaker.finish_realtime()
             self.last_cycle_end_at = time.time()
         except Exception as e:
@@ -1612,5 +1798,6 @@ class RealtimePrometheusClient:
             log_event("realtime_receiver_error", {"error": str(e)})
             print("Receiver exception:", repr(e))
             self.busy = False
+            self._response_active = False
             self.speaker.finish_realtime()
             self.last_cycle_end_at = time.time()

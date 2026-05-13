@@ -17,10 +17,11 @@ _SAFE_ACTIONS = [
     "run_python", "run_shell", "search_codebase", "git_status", "git_diff", "git_commit",
 ]
 
-_SYSTEM_PROMPT = f"""You are a task planner for a desktop AI assistant named Prometheus.
-Given a user intent and context, produce a concrete JSON execution plan.
+# Base system prompt — operational_state block is prepended at call time
+_BASE_SYSTEM_PROMPT = f"""You are a task planner for a desktop AI assistant named Prometheus.
+Given a user intent and operational context, produce a typed JSON decision.
 
-Available actions: {", ".join(_SAFE_ACTIONS)}
+Available tool actions: {", ".join(_SAFE_ACTIONS)}
 
 Step argument shapes:
 - open_app:         {{"app": "appname"}}
@@ -39,25 +40,49 @@ Step argument shapes:
 - git_diff:         {{"project_path": "/path", "file": "optional specific file"}}
 - git_commit:       {{"project_path": "/path", "message": "commit message"}}
 
-Output ONLY valid JSON matching this schema exactly:
+Respond with ONLY valid JSON matching this exact schema:
+{{
+  "decision_type": "tool_call" | "user_response" | "status_update" | "alert" | "clarification",
+  "reasoning": "<one sentence max>",
+  "voice_response": "<text for TTS — required when decision_type is user_response or alert>",
+  "action": {{
+    // For tool_call: intent, confidence (0.0-1.0), reason, clarification_needed, clarification_question, steps[]
+    // For other types: empty object {{}}
+  }},
+  "state_updates": {{
+    // Optional — any subset of:
+    // "task_completed": "task description or id",
+    // "new_blocker": "description",
+    // "next_action": "what to do next",
+    // "blocker_cleared": "description fragment",
+    // "mission": "new mission string"
+  }}
+}}
+
+Decision type rules:
+- "tool_call": Execute one or more tool actions (steps in action.steps)
+- "user_response": Answer the user directly without tool execution (answer in voice_response)
+- "status_update": Apply state changes only, no tool execution, no spoken response needed
+- "alert": Something the user should know right now (message in voice_response)
+- "clarification": Intent is unclear — ask a specific question (question in voice_response)
+
+For tool_call, action must include:
 {{
   "intent": "<original intent>",
-  "confidence": 0.0,
-  "reason": "<why this plan>",
+  "confidence": 0.85,
+  "reason": "<one sentence>",
   "clarification_needed": false,
   "clarification_question": "",
-  "steps": [
-    {{"action": "action_name", "argname": "value"}}
-  ]
+  "steps": [{{"action": "action_name", "arg_key": "value"}}]
 }}
 
 Rules:
-- If confidence < 0.6, set clarification_needed=true, steps=[], write clarification_question.
-- Only use action names from the allowed list above.
-- Provide absolute paths when project_path is in context.
-- Use run_shell for tasks that do not map to built-in actions (first token must be whitelisted).
-- Produce the minimal steps needed — do not pad.
-- git_commit always requires confirmed=true in args."""
+- If confidence < 0.6, use decision_type="clarification" instead of tool_call
+- Only use action names from the available list above
+- Provide absolute paths when project_path is in context
+- Use run_shell for tasks that do not map to built-in actions (first token must be whitelisted)
+- Produce the minimal steps needed — do not pad
+- git_commit always requires confirmed=true in args"""
 
 
 @dataclass
@@ -77,6 +102,7 @@ class Plan:
     steps: list[PlanStep] = field(default_factory=list)
     clarification_needed: bool = False
     clarification_question: str = ""
+    voice_hint: str = ""  # TTS suggestion from decision router; empty = let downstream decide
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -85,6 +111,7 @@ class Plan:
             "reason": self.reason,
             "clarification_needed": self.clarification_needed,
             "clarification_question": self.clarification_question,
+            "voice_hint": self.voice_hint,
             "steps": [s.to_payload() for s in self.steps],
         }
 
@@ -93,7 +120,7 @@ class Planner:
     """
     Builds execution plans from natural-language intent.
     Fast-path: rule-based matching for common patterns.
-    Fallback: LLM via llm_router.get_llm("planning").
+    LLM path: GPT-4o with operational context injection and typed Decision output.
     """
 
     def build(self, intent: str, context: dict[str, Any] | None = None) -> Plan:
@@ -117,11 +144,48 @@ class Planner:
         return self._llm_plan(intent, context)
 
     # ------------------------------------------------------------------
-    # Rule-based fast path
+    # Rule-based fast path — no LLM, no latency
     # ------------------------------------------------------------------
+
+    # Words that indicate an intent has no actionable referent
+    _GENERIC_WORDS = frozenset({
+        "thing", "things", "it", "this", "that", "those", "these",
+        "them", "stuff", "something", "anything", "whatever",
+    })
+    _FILLER_WORDS = frozenset({
+        "do", "the", "a", "an", "some", "any", "my", "your", "with",
+        "and", "or", "about", "for", "on", "in", "of",
+    })
+
+    def _is_ambiguous(self, text: str) -> bool:
+        """
+        Return True for intents that are clearly too vague to action without clarification.
+        These are caught before the LLM call to avoid wasting a round-trip.
+        """
+        words = text.lower().split()
+        if not words:
+            return True
+        combined = self._GENERIC_WORDS | self._FILLER_WORDS
+        generic_count = sum(1 for w in words if w in self._GENERIC_WORDS)
+        all_generic = all(w in combined for w in words)
+        if all_generic:
+            return True
+        if len(words) <= 6 and generic_count >= 2:
+            return True
+        return False
 
     def _rule_based(self, intent: str, context: dict[str, Any]) -> Plan | None:
         text = intent.lower().strip()
+
+        if self._is_ambiguous(text):
+            return Plan(
+                intent=intent,
+                confidence=0.2,
+                reason="Intent is too vague to action without clarification",
+                clarification_needed=True,
+                clarification_question="Can you be more specific about what you'd like me to do?",
+            )
+
         project_path = str(
             context.get("project_path")
             or context.get("active_project_path")
@@ -175,14 +239,16 @@ class Planner:
         return None
 
     # ------------------------------------------------------------------
-    # LLM-based planning
+    # GPT-4o planning — structured decision output with operational context
     # ------------------------------------------------------------------
 
     def _llm_plan(self, intent: str, context: dict[str, Any]) -> Plan:
         try:
-            from llm_router import get_llm
+            from llm_router import get_planning_llm
+            from cognition import build_safe_snapshot, format_operational_state_block
+            from planner.decision_router import DecisionRouter
 
-            llm = get_llm("planning")
+            llm = get_planning_llm()
             if llm is None:
                 return Plan(
                     intent=intent,
@@ -191,6 +257,12 @@ class Planner:
                     clarification_needed=True,
                     clarification_question="I need more detail to plan this task.",
                 )
+
+            # Assemble operational context (< 100ms, no caches)
+            snapshot = build_safe_snapshot()
+            op_block = format_operational_state_block(snapshot)
+
+            system_prompt = f"{op_block}\n\n{_BASE_SYSTEM_PROMPT}"
 
             ctx_summary = json.dumps(
                 {
@@ -216,11 +288,20 @@ class Planner:
                 },
                 indent=2,
             )
+
             raw = llm.complete(
                 f"Intent: {intent}\n\nContext:\n{ctx_summary}",
-                system=_SYSTEM_PROMPT,
+                system=system_prompt,
             )
-            return self._parse_llm_response(raw, intent)
+
+            router = DecisionRouter()
+            decision = router.parse(raw, intent)
+            log_event("planner_decision", {
+                "intent": intent[:80],
+                "decision_type": decision.decision_type,
+                "reasoning": decision.reasoning[:80],
+            })
+            return router.to_plan(decision, intent)
 
         except Exception as exc:
             log_event("planner_llm_error", {"error": str(exc)[:200], "intent": intent[:80]})
@@ -230,54 +311,4 @@ class Planner:
                 reason=f"Planning error: {exc}",
                 clarification_needed=True,
                 clarification_question="I hit an error planning this. Can you be more specific?",
-            )
-
-    def _parse_llm_response(self, raw: str, intent: str) -> Plan:
-        try:
-            m = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", raw, re.DOTALL)
-            json_str = m.group(1) if m else raw.strip()
-
-            start = json_str.find("{")
-            end = json_str.rfind("}") + 1
-            if start >= 0 and end > start:
-                json_str = json_str[start:end]
-
-            data = json.loads(json_str)
-            confidence = float(data.get("confidence", 0.5))
-            clarification_needed = (
-                bool(data.get("clarification_needed", False)) or confidence < 0.6
-            )
-
-            steps: list[PlanStep] = []
-            if not clarification_needed:
-                for raw_step in data.get("steps") or []:
-                    if not isinstance(raw_step, dict):
-                        continue
-                    action = str(raw_step.get("action", "")).strip()
-                    if not action:
-                        continue
-                    steps.append(
-                        PlanStep(
-                            action=action,
-                            args={k: v for k, v in raw_step.items() if k != "action"},
-                        )
-                    )
-
-            return Plan(
-                intent=str(data.get("intent", intent)),
-                confidence=confidence,
-                reason=str(data.get("reason", "")),
-                steps=steps,
-                clarification_needed=clarification_needed,
-                clarification_question=str(data.get("clarification_question", "")),
-            )
-
-        except Exception as exc:
-            log_event("planner_parse_error", {"error": str(exc)[:200], "raw": raw[:300]})
-            return Plan(
-                intent=intent,
-                confidence=0.3,
-                reason="Failed to parse LLM response",
-                clarification_needed=True,
-                clarification_question="Couldn't generate a clear plan. Can you be more specific?",
             )

@@ -121,9 +121,9 @@ class SessionSummarizer:
         project: str,
     ) -> str:
         try:
-            from llm_router import get_llm
+            from llm_router import get_planning_llm
 
-            llm = get_llm("summarize")
+            llm = get_planning_llm()
             if llm is None:
                 return self._template_summary(wm, episodes)
 

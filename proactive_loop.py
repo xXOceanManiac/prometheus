@@ -212,10 +212,10 @@ class ProactiveLoop:
         Returns parsed JSON dict or None on any failure.
         """
         try:
-            from llm_router import get_llm
+            from llm_router import get_planning_llm
             import json as _json
 
-            llm = get_llm("planning")
+            llm = get_planning_llm()
             if llm is None:
                 return None
 

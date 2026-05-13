@@ -36,6 +36,7 @@ TASKS_FILE          = Path.home() / ".jarvis" / "background_tasks.json"
 AGENTS_FILE         = Path.home() / ".jarvis" / "agents.json"
 HEARTBEAT_FILE      = Path.home() / ".jarvis" / "heartbeat.json"
 WORKING_MEMORY_FILE = Path.home() / ".jarvis" / "memory_v2" / "working_memory.json"
+MISSION_FILE        = Path.home() / ".jarvis" / "memory_v2" / "mission_state.json"
 COST_LOG_FILE       = Path.home() / ".prometheus" / "cost_log.jsonl"
 
 # ── Layout constants ─────────────────────────────────────────────────────────
@@ -214,6 +215,8 @@ class Store:
         self.diagnostic:         dict       = {}
         self.cost_log:           list[dict] = []
         self._last_chat_resp_ts: str        = ""
+        self.mission:            dict       = {}  # MissionState data
+        self.snapshot:           dict       = {}  # Operational snapshot from cognition.py
 
     def refresh(self) -> None:
         # Visual state + active tab
@@ -298,6 +301,21 @@ class Store:
                         })
                         if len(self.chat_history) > 50:
                             self.chat_history = self.chat_history[-50:]
+        except Exception:
+            pass
+
+        # Mission state + operational snapshot
+        try:
+            if MISSION_FILE.exists():
+                ms = json.loads(MISSION_FILE.read_text(encoding="utf-8"))
+                if isinstance(ms, dict):
+                    self.mission = ms
+        except Exception:
+            pass
+
+        try:
+            from cognition import build_operational_snapshot
+            self.snapshot = build_operational_snapshot()
         except Exception:
             pass
 
@@ -966,6 +984,59 @@ class HUDWindow(QWidget):
         tw, th = s * 0.10, s * 0.030
         for text, dx, dy in [("SYS", 0, -s * 0.255), ("LINK", s * 0.245, 0), ("CORE", 0, s * 0.225), ("AUX", -s * 0.245, 0)]:
             p.drawText(QRectF(cx + dx - tw / 2, cy + dy - th / 2, tw, th), Qt.AlignmentFlag.AlignCenter, text)
+
+    # ── Mission state strip (MAIN tab) ───────────────────────────────────────
+
+    def _draw_mission_strip(self, p: QPainter, rect: QRectF) -> None:
+        ms = self.store.mission
+        mission  = str(ms.get("current_mission") or ms.get("active_goal") or "").strip()
+        goal     = str(ms.get("active_goal") or "").strip()
+        subtasks = ms.get("subtasks", [])
+        done     = ms.get("completed_subtasks", [])
+        blocked  = ms.get("blocked_items", [])
+        nxt      = str(ms.get("next_action") or "").strip()
+
+        # Panel background
+        bg = QPainterPath()
+        bg.addRoundedRect(rect, 8, 8)
+        p.fillPath(bg, QColor(4, 10, 20, 220))
+        p.setPen(QPen(QColor(60, 120, 200, 60), 1))
+        p.drawRoundedRect(rect, 8, 8)
+
+        mono = QFont("Monospace")
+        mono.setPointSize(9)
+        bold = QFont("Monospace")
+        bold.setPointSize(9)
+        bold.setBold(True)
+
+        pad  = 10.0
+        lh   = 18.0
+        x    = rect.left() + pad
+        y    = rect.top() + 8.0
+        w    = rect.width() - pad * 2
+
+        # Row 1: label + mission text
+        p.setFont(bold)
+        p.setPen(QColor(80, 160, 255, 200))
+        p.drawText(QRectF(x, y, 60, lh), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, "MISSION")
+        p.setFont(mono)
+        p.setPen(QColor(200, 230, 255, 220))
+        display = mission[:72] + ("…" if len(mission) > 72 else "")
+        p.drawText(QRectF(x + 64, y, w - 64, lh), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, display)
+
+        # Row 2: tasks progress + next action + blockers
+        y += lh + 2
+        parts: list[str] = []
+        if subtasks or done:
+            parts.append(f"tasks {len(done)}/{len(subtasks)+len(done)}")
+        if nxt:
+            parts.append(f"next: {nxt[:40]}")
+        if blocked:
+            parts.append(f"blocked: {blocked[0].get('description','')[:30]}")
+        if parts:
+            p.setFont(mono)
+            p.setPen(QColor(120, 180, 220, 160))
+            p.drawText(QRectF(x, y, w, lh), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, "  ".join(parts))
 
     # ── Tab 0: Activity stream ────────────────────────────────────────────────
 
@@ -1719,9 +1790,10 @@ class HUDWindow(QWidget):
         tab = self.store.active_tab
 
         if tab == 0:
-            # HOME: existing layout (core + graphs + logs)
+            # HOME: core + graphs + mission strip + logs
+            mission_h = 54 if self.store.mission.get("current_mission") or self.store.mission.get("active_goal") else 0
             top_h    = max(260, content.height() * 0.62)
-            bottom_h = content.height() - top_h - 18
+            bottom_h = content.height() - top_h - 18 - mission_h - (8 if mission_h else 0)
             gap      = 18
             left_w   = content.width() * 0.68
             right_w  = content.width() - left_w - gap
@@ -1734,13 +1806,19 @@ class HUDWindow(QWidget):
             mem_r  = QRectF(rx, cpu_r.bottom() + gap,         right_w, graph_h)
             down_r = QRectF(rx, mem_r.bottom() + gap,         right_w, graph_h)
             up_r   = QRectF(rx, down_r.bottom() + gap,        right_w, graph_h)
-            tab_r  = QRectF(content.left(), core_rect.bottom() + 18, content.width(), bottom_h)
+
+            mission_y = core_rect.bottom() + 18
+            tab_y     = mission_y + mission_h + (8 if mission_h else 0)
+            tab_r     = QRectF(content.left(), tab_y, content.width(), bottom_h)
 
             self._draw_core(p, core_rect)
             self._draw_graph(p, cpu_r,  self.stats.cpu_hist,  "CPU LOAD", f"{self.stats.cpu:.0f}%")
             self._draw_graph(p, mem_r,  self.stats.mem_hist,  "MEMORY",   f"{self.stats.mem:.0f}%")
             self._draw_graph(p, down_r, self.stats.down_hist, "NET DOWN",  f"{self.stats.net_down_kbps:.0f} KB/s")
             self._draw_graph(p, up_r,   self.stats.up_hist,   "NET UP",    f"{self.stats.net_up_kbps:.0f} KB/s")
+            if mission_h:
+                mission_r = QRectF(content.left(), mission_y, content.width(), mission_h)
+                self._draw_mission_strip(p, mission_r)
             self._draw_logs(p, tab_r)
 
         elif tab == 1:
