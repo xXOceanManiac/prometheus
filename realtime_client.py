@@ -20,7 +20,7 @@ from utils import log_event, notify
 from prometheus.core.intent_overrides import resolve_direct_intent
 from prometheus.core.session_context import build_instructions, build_live_state_block
 from prometheus.core.tool_followups import FOLLOWUP_ACTIONS
-from prometheus.execution.response_synthesizer import synthesize_tool_response, is_calendar_action
+from prometheus.execution.response_synthesizer import synthesize_tool_response, is_calendar_action, is_synthesized_action
 
 
 SYSTEM_PROMPT = """
@@ -612,17 +612,6 @@ class RealtimePrometheusClient:
                 response_instructions = (
                     f"File contents: {output}. Summarize what's relevant to the current mission concisely."
                 )
-            elif action == "show_logs":
-                output = str((result.data or {}).get("output", ""))[:600]
-                count = (result.data or {}).get("count", 0)
-                if count == 0:
-                    response_instructions = (
-                        "No errors found in the logs for the requested time window. Tell the user clearly."
-                    )
-                else:
-                    response_instructions = (
-                        f"Found {count} log entries: {output}. Summarize the key errors concisely."
-                    )
             elif action == "list_files":
                 items = (result.data or {}).get("items", [])
                 names = [f"{i['name']}{'/' if i.get('is_dir') else ''}" for i in items[:30]]
@@ -636,7 +625,7 @@ class RealtimePrometheusClient:
                 response_instructions = (
                     f"Action 'query_vault' completed. {output}. Report the result concisely."
                 )
-            elif is_calendar_action(action):
+            elif is_synthesized_action(action):
                 response_instructions = synthesize_tool_response(action, result)
             else:
                 response_instructions = (
@@ -1089,17 +1078,6 @@ class RealtimePrometheusClient:
                 response_instructions = (
                     f"File contents: {output}. Summarize what's relevant to the current mission concisely."
                 )
-            elif tool_action == "show_logs":
-                output = str((result.data or {}).get("output", ""))[:600]
-                count = (result.data or {}).get("count", 0)
-                if count == 0:
-                    response_instructions = (
-                        "No errors found in the logs for the requested time window. Tell the user clearly."
-                    )
-                else:
-                    response_instructions = (
-                        f"Found {count} log entries: {output}. Summarize the key errors concisely."
-                    )
             elif tool_action == "list_files":
                 items = (result.data or {}).get("items", [])
                 names = [f"{i['name']}{'/' if i.get('is_dir') else ''}" for i in items[:30]]
@@ -1113,7 +1091,7 @@ class RealtimePrometheusClient:
                 response_instructions = (
                     f"Action 'query_vault' completed. {output}. Report the result concisely."
                 )
-            elif is_calendar_action(tool_action):
+            elif is_synthesized_action(tool_action):
                 response_instructions = synthesize_tool_response(tool_action, result)
             else:
                 response_instructions = (

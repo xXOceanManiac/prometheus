@@ -57,6 +57,9 @@ class TestRegistryStructure:
             "calendar_list_upcoming", "calendar_get_today", "calendar_get_tomorrow",
             "calendar_get_date", "calendar_next_event", "calendar_summarize_day",
             "calendar_find_free_blocks",
+            # Calendar write execution
+            "calendar_list_reviewed_requests", "calendar_approve_request",
+            "calendar_execute_approved_request",
         }
         missing = required - set(TOOL_CAPABILITIES.keys())
         assert not missing, f"Missing from registry: {missing}"

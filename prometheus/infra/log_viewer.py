@@ -107,3 +107,54 @@ def _format_jsonl(lines: list[str]) -> str:
 def _iso(mtime: float) -> str:
     import time
     return time.strftime("%Y-%m-%dT%H:%M:%S", time.localtime(mtime))
+
+
+# ── CLI entry point ───────────────────────────────────────────────────────────
+
+def _main(argv: list[str] | None = None) -> None:
+    import sys
+    import json as _json
+    args = argv if argv is not None else sys.argv[1:]
+    cmd = args[0] if args else "--latest"
+
+    if cmd in ("--latest", "latest"):
+        fname, text = read_latest_log_tail(tail_lines=50)
+        if not fname:
+            print(_json.dumps({"ok": True, "files_found": 0, "message": f"No log files in {JARVIS_LOGS_DIR}"}))
+        else:
+            lines = [ln for ln in text.splitlines() if ln.strip()]
+            print(_json.dumps({
+                "ok": True,
+                "logs_dir": str(JARVIS_LOGS_DIR),
+                "latest_file": fname,
+                "lines_returned": len(lines),
+                "entries": lines,
+            }, indent=2))
+
+    elif cmd in ("--list", "list"):
+        files = list_log_files()
+        print(_json.dumps({"ok": True, "files": files}, indent=2))
+
+    elif cmd in ("--tail", "tail") and len(args) >= 2:
+        filename = args[1]
+        n = int(args[2]) if len(args) >= 3 else 50
+        try:
+            text = read_log_tail(filename, tail_lines=n)
+            lines = [ln for ln in text.splitlines() if ln.strip()]
+            print(_json.dumps({"ok": True, "file": filename, "entries": lines}, indent=2))
+        except ValueError as exc:
+            print(_json.dumps({"ok": False, "error": str(exc)}))
+            sys.exit(1)
+
+    else:
+        print(
+            "Usage:\n"
+            "  python -m prometheus.infra.log_viewer --latest\n"
+            "  python -m prometheus.infra.log_viewer --list\n"
+            "  python -m prometheus.infra.log_viewer --tail FILENAME [N]"
+        )
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    _main()

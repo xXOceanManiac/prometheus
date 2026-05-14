@@ -21,6 +21,12 @@ _CALENDAR_ACTIONS: frozenset[str] = frozenset({
     "calendar_find_free_blocks",
 })
 
+_EXECUTOR_ACTIONS: frozenset[str] = frozenset({
+    "calendar_list_reviewed_requests",
+    "calendar_approve_request",
+    "calendar_execute_approved_request",
+})
+
 
 def synthesize_tool_response(
     action: str,
@@ -63,6 +69,12 @@ def synthesize_tool_response(
     if action == "calendar_find_free_blocks":
         return _free_blocks(data)
 
+    if action == "show_logs":
+        return _show_logs(data)
+
+    if action in _EXECUTOR_ACTIONS:
+        return _calendar_executor(action, data)
+
     return (
         "Briefly report the result in one or two sentences. Do not add preamble."
     )
@@ -70,6 +82,11 @@ def synthesize_tool_response(
 
 def is_calendar_action(action: str) -> bool:
     return action in _CALENDAR_ACTIONS
+
+
+def is_synthesized_action(action: str) -> bool:
+    """Return True for any action handled by this synthesizer."""
+    return action in _CALENDAR_ACTIONS or action in _EXECUTOR_ACTIONS or action == "show_logs"
 
 
 # ── Private formatters ────────────────────────────────────────────────────────
@@ -175,3 +192,74 @@ def _free_blocks(data: dict) -> str:
         "\n".join(lines) +
         "\nRead them naturally. No filler."
     )
+
+
+def _show_logs(data: dict) -> str:
+    entries = data.get("entries", [])
+    latest_file = str(data.get("latest_file") or data.get("source") or "")
+    logs_dir = str(data.get("logs_dir", ""))
+    count = int(data.get("lines_returned") or data.get("count") or len(entries))
+
+    if not entries or count == 0:
+        if logs_dir:
+            return f"Tell the user: 'No logs found in {logs_dir}.'"
+        return "Tell the user there are no logs available right now."
+
+    recent = entries[-15:] if len(entries) > 15 else entries
+    entry_text = "\n".join(str(e) for e in recent)[:800]
+    return (
+        f"Here are the latest {len(recent)} Prometheus log entries from {latest_file}:\n"
+        f"{entry_text}\n"
+        "Read the most recent entries naturally. Highlight any errors or warnings. "
+        "Be concise — summarize patterns rather than reading every line verbatim. No filler."
+    )
+
+
+def _calendar_executor(action: str, data: dict) -> str:
+    if action == "calendar_list_reviewed_requests":
+        requests = data.get("requests", [])
+        if not requests:
+            return "Tell the user there are no reviewed calendar requests waiting for approval."
+        count = len(requests)
+        ids = [str(r.get("request_id", "?"))[-12:] for r in requests[:5]]
+        return (
+            f"There are {count} reviewed calendar request(s) waiting for approval. "
+            f"Request IDs: {', '.join(ids)}. "
+            "Tell the user they can approve one with 'approve calendar request' followed by the ID. "
+            "Do not approve automatically."
+        )
+
+    if action == "calendar_approve_request":
+        request_id = str(data.get("request_id", ""))
+        op_count = int(data.get("operation_count", 0))
+        approved_by = str(data.get("approved_by", "user"))
+        if data.get("approved"):
+            return (
+                f"Calendar request {request_id} has been approved by {approved_by}. "
+                f"It contains {op_count} operation(s). "
+                "To execute the write, say 'execute approved calendar request' followed by the ID. "
+                "No calendar changes have been made yet."
+            )
+        return (
+            f"Approval for calendar request {request_id} failed: "
+            f"{str(data.get('reason', 'unknown reason'))}. "
+            "Tell the user what went wrong."
+        )
+
+    if action == "calendar_execute_approved_request":
+        request_id = str(data.get("request_id", ""))
+        success = bool(data.get("success"))
+        op_count = int(data.get("operation_count", 0))
+        if success:
+            return (
+                f"Calendar request {request_id} executed successfully. "
+                f"{op_count} operation(s) completed on Google Calendar. "
+                "Speak this concisely. No filler."
+            )
+        reason = str(data.get("reason") or data.get("message", "unknown error"))
+        return (
+            f"Calendar execution for request {request_id} failed: {reason}. "
+            "Tell the user what went wrong clearly."
+        )
+
+    return "Briefly report the calendar operation result. No filler."

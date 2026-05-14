@@ -352,6 +352,9 @@ def section_tools():
         "calendar_list_upcoming", "calendar_get_today", "calendar_get_tomorrow",
         "calendar_get_date", "calendar_next_event", "calendar_summarize_day",
         "calendar_find_free_blocks",
+        # Calendar write execution
+        "calendar_list_reviewed_requests", "calendar_approve_request",
+        "calendar_execute_approved_request",
     }
     unhandled = [a for a in ACTION_ENUM if a not in known_handled]
     record(f"ACTION_ENUM all actions known ({len(ACTION_ENUM)} total)",
@@ -1398,6 +1401,200 @@ def generate_report():
 
 
 # ═════════════════════════════════════════════════════════════════════════════
+# SECTION — Response Synthesis, Vault Diagnostics, Log Viewer
+# ═════════════════════════════════════════════════════════════════════════════
+
+def section_response_vault_logs():
+    S = "response_vault_logs"
+    print(f"\n=== SECTION: Response Synthesizer / Vault Diagnostics / Log Viewer ===")
+
+    # ── response_synthesizer imports ──
+    try:
+        from prometheus.execution.response_synthesizer import (
+            synthesize_tool_response,
+            is_calendar_action,
+            _CALENDAR_ACTIONS,
+        )
+        record(f"{S}:response_synthesizer_imports", True, section=S)
+    except Exception as exc:
+        record(f"{S}:response_synthesizer_imports", False, error=str(exc), section=S)
+        return
+
+    # ── is_calendar_action for all 7 ──
+    try:
+        expected = {
+            "calendar_get_today", "calendar_get_tomorrow", "calendar_get_date",
+            "calendar_list_upcoming", "calendar_next_event",
+            "calendar_summarize_day", "calendar_find_free_blocks",
+        }
+        missing = expected - _CALENDAR_ACTIONS
+        record(f"{S}:all_7_calendar_actions_in_set",
+               not missing, notes=f"missing={missing}", section=S)
+    except Exception as exc:
+        record(f"{S}:all_7_calendar_actions_in_set", False, error=str(exc), section=S)
+
+    # ── synthesize_tool_response returns str for all 7 ──
+    try:
+        ns = type("R", (), {"ok": True, "message": "ok", "data": {}})()
+        all_str = all(
+            isinstance(synthesize_tool_response(act, ns), str)
+            for act in _CALENDAR_ACTIONS
+        )
+        record(f"{S}:all_actions_return_str", all_str, section=S)
+    except Exception as exc:
+        record(f"{S}:all_actions_return_str", False, error=str(exc), section=S)
+
+    # ── failed result path ──
+    try:
+        ns_fail = type("R", (), {"ok": False, "message": "auth error", "data": {}})()
+        out = synthesize_tool_response("calendar_get_today", ns_fail)
+        record(f"{S}:failed_result_returns_string", isinstance(out, str) and len(out) > 0, section=S)
+    except Exception as exc:
+        record(f"{S}:failed_result_returns_string", False, error=str(exc), section=S)
+
+    # ── unknown action fallback ──
+    try:
+        ns_ok = type("R", (), {"ok": True, "message": "ok", "data": {}})()
+        out = synthesize_tool_response("some_unknown_action", ns_ok)
+        record(f"{S}:unknown_action_fallback_str", isinstance(out, str), section=S)
+    except Exception as exc:
+        record(f"{S}:unknown_action_fallback_str", False, error=str(exc), section=S)
+
+    # ── calendar_get_today no events ──
+    try:
+        ns_empty = type("R", (), {"ok": True, "message": "ok", "data": {"events": []}})()
+        out = synthesize_tool_response("calendar_get_today", ns_empty)
+        record(f"{S}:today_no_events_says_nothing", "nothing" in out.lower(), section=S)
+    except Exception as exc:
+        record(f"{S}:today_no_events_says_nothing", False, error=str(exc), section=S)
+
+    # ── calendar_next_event no events ──
+    try:
+        ns_empty = type("R", (), {"ok": True, "message": "ok", "data": {}})()
+        out = synthesize_tool_response("calendar_next_event", ns_empty)
+        record(f"{S}:next_event_no_events_says_nothing", "no upcoming" in out.lower(), section=S)
+    except Exception as exc:
+        record(f"{S}:next_event_no_events_says_nothing", False, error=str(exc), section=S)
+
+    # ── FOLLOWUP_ACTIONS contains all 7 ──
+    try:
+        from prometheus.core.tool_followups import FOLLOWUP_ACTIONS
+        missing_followup = expected - FOLLOWUP_ACTIONS
+        record(f"{S}:all_7_in_followup_actions",
+               not missing_followup, notes=f"missing={missing_followup}", section=S)
+    except Exception as exc:
+        record(f"{S}:all_7_in_followup_actions", False, error=str(exc), section=S)
+
+    # ── realtime_client imports synthesizer ──
+    try:
+        src = (Path(_ROOT) / "realtime_client.py").read_text(encoding="utf-8")
+        has_import = "from prometheus.execution.response_synthesizer import" in src
+        has_calendar_elif = "is_calendar_action" in src
+        record(f"{S}:realtime_client_imports_synthesizer",
+               has_import and has_calendar_elif, section=S)
+    except Exception as exc:
+        record(f"{S}:realtime_client_imports_synthesizer", False, error=str(exc), section=S)
+
+    # ── log_viewer imports ──
+    try:
+        from prometheus.infra.log_viewer import (
+            list_log_files,
+            read_latest_log_tail,
+            read_log_tail,
+        )
+        record(f"{S}:log_viewer_imports", True, section=S)
+    except Exception as exc:
+        record(f"{S}:log_viewer_imports", False, error=str(exc), section=S)
+        return
+
+    # ── log_viewer returns list for empty dir ──
+    try:
+        import tempfile
+        with tempfile.TemporaryDirectory() as td:
+            _td = Path(td) / "nonexistent"
+            with patch("prometheus.infra.log_viewer.JARVIS_LOGS_DIR", _td):
+                from prometheus.infra import log_viewer as _lv
+                files = _lv.list_log_files()
+        record(f"{S}:log_viewer_list_empty_dir", files == [], section=S)
+    except Exception as exc:
+        record(f"{S}:log_viewer_list_empty_dir", False, error=str(exc), section=S)
+
+    # ── log_viewer path traversal blocked ──
+    try:
+        import tempfile
+        with tempfile.TemporaryDirectory() as td:
+            _td = Path(td)
+            with patch("prometheus.infra.log_viewer.JARVIS_LOGS_DIR", _td):
+                from prometheus.infra import log_viewer as _lv
+                blocked = False
+                try:
+                    _lv.read_log_tail("../../../etc/passwd")
+                except ValueError:
+                    blocked = True
+        record(f"{S}:log_viewer_blocks_path_traversal", blocked, section=S)
+    except Exception as exc:
+        record(f"{S}:log_viewer_blocks_path_traversal", False, error=str(exc), section=S)
+
+    # ── log_viewer no subprocess ──
+    try:
+        src = (Path(_ROOT) / "prometheus" / "infra" / "log_viewer.py").read_text(encoding="utf-8")
+        no_sub = "import subprocess" not in src and "os.system(" not in src
+        record(f"{S}:log_viewer_no_subprocess", no_sub, section=S)
+    except Exception as exc:
+        record(f"{S}:log_viewer_no_subprocess", False, error=str(exc), section=S)
+
+    # ── show_logs handler no journalctl ──
+    try:
+        src = (Path(_ROOT) / "tools.py").read_text(encoding="utf-8")
+        # Find the show_logs block and check it doesn't call journalctl
+        start = src.find('if action == "show_logs":')
+        end = src.find('\n        if action ==', start + 1)
+        block = src[start:end] if end > start else src[start:start + 2000]
+        no_jctl = "journalctl" not in block
+        record(f"{S}:show_logs_no_journalctl", no_jctl, section=S)
+    except Exception as exc:
+        record(f"{S}:show_logs_no_journalctl", False, error=str(exc), section=S)
+
+    # ── JARVIS_LOGS_DIR in paths.py ──
+    try:
+        from prometheus.infra.paths import JARVIS_LOGS_DIR
+        record(f"{S}:jarvis_logs_dir_in_paths", True, notes=str(JARVIS_LOGS_DIR), section=S)
+    except Exception as exc:
+        record(f"{S}:jarvis_logs_dir_in_paths", False, error=str(exc), section=S)
+
+    # ── vault diagnostic candidate scan ──
+    try:
+        src = (Path(_ROOT) / "tools.py").read_text(encoding="utf-8")
+        has_tates_brain = "Tates Brain" in src
+        has_candidates = "_candidates" in src
+        record(f"{S}:vault_diag_multi_candidate_scan",
+               has_tates_brain and has_candidates, section=S)
+    except Exception as exc:
+        record(f"{S}:vault_diag_multi_candidate_scan", False, error=str(exc), section=S)
+
+    # ── vault diagnostic new fields ──
+    try:
+        src = (Path(_ROOT) / "tools.py").read_text(encoding="utf-8")
+        has_active = '"active"' in src
+        has_path_field = '"path"' in src
+        has_checked_at = '"checked_at"' in src
+        has_readable = '"readable"' in src
+        record(f"{S}:vault_diag_has_required_fields",
+               has_active and has_path_field and has_checked_at and has_readable,
+               section=S)
+    except Exception as exc:
+        record(f"{S}:vault_diag_has_required_fields", False, error=str(exc), section=S)
+
+    # ── HUD lambda uses active with db_exists fallback ──
+    try:
+        hud_src = (Path(_ROOT) / "jarvis_desktop_hud.py").read_text(encoding="utf-8")
+        has_active_key = 'd.get("active", d.get("db_exists"' in hud_src
+        record(f"{S}:hud_vault_lambda_uses_active_field", has_active_key, section=S)
+    except Exception as exc:
+        record(f"{S}:hud_vault_lambda_uses_active_field", False, error=str(exc), section=S)
+
+
+# ═════════════════════════════════════════════════════════════════════════════
 # MAIN
 # ═════════════════════════════════════════════════════════════════════════════
 def section_google_calendar():
@@ -1759,6 +1956,7 @@ def main():
     section_lumen_calendar_context()
     section_lumen_calendar_router()
     section_calendar_read_tools()
+    section_response_vault_logs()
 
     print("\n" + "=" * 60)
     total = len(results)

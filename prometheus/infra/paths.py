@@ -27,6 +27,9 @@ LUMEN_REJECTED_DIR = LUMEN_ROOT / "runtime" / "rejected"
 LUMEN_ARCHIVE_DIR = LUMEN_ROOT / "runtime" / "archive"
 PENDING_LUMEN_DIR = RUNTIME_ROOT / "pending" / "lumen_calendar"
 REVIEWED_LUMEN_DIR = RUNTIME_ROOT / "reviewed" / "lumen_calendar"
+APPROVED_LUMEN_DIR = RUNTIME_ROOT / "approved" / "lumen_calendar"
+COMPLETED_LUMEN_DIR = RUNTIME_ROOT / "completed" / "lumen_calendar"
+FAILED_LUMEN_DIR = RUNTIME_ROOT / "failed" / "lumen_calendar"
 SECRETS_DIR = RUNTIME_ROOT / "secrets"
 
 
@@ -42,4 +45,9 @@ def ensure_lumen_ingestion_dirs() -> None:
 
 def ensure_lumen_router_dirs() -> None:
     for path in (REVIEWED_LUMEN_DIR,):
+        path.mkdir(parents=True, exist_ok=True)
+
+
+def ensure_lumen_executor_dirs() -> None:
+    for path in (APPROVED_LUMEN_DIR, COMPLETED_LUMEN_DIR, FAILED_LUMEN_DIR):
         path.mkdir(parents=True, exist_ok=True)

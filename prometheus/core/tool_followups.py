@@ -43,4 +43,8 @@ FOLLOWUP_ACTIONS: frozenset[str] = frozenset({
     "calendar_next_event",
     "calendar_summarize_day",
     "calendar_find_free_blocks",
+    # Calendar write execution — always produce spoken result
+    "calendar_list_reviewed_requests",
+    "calendar_approve_request",
+    "calendar_execute_approved_request",
 })

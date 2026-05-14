@@ -1,7 +1,7 @@
 # Prometheus Capability Audit
 
-**Generated:** 2026-05-14 15:08:20
-**Tests run:** 204  **Passed:** 204  **Failed:** 0  (100.0% pass rate)
+**Generated:** 2026-05-14 15:27:02
+**Tests run:** 222  **Passed:** 222  **Failed:** 0  (100.0% pass rate)
 
 ---
 
@@ -21,6 +21,7 @@ Key findings:
 - **HUD**: ✓ 11/11 passing
 - **OTHER**: ✓ 39/39 passing
 - **CALENDAR**: ✓ 45/45 passing
+- **RESPONSE_VAULT_LOGS**: ✓ 18/18 passing
 
 ---
 
@@ -36,7 +37,7 @@ Key findings:
 | startup | ~/.jarvis/logs dir exists | PASS |  |  |
 | startup | ~/.jarvis/audio dir exists | PASS |  |  |
 | startup | ~/.jarvis/memory_v2 dir exists | PASS |  |  |
-| startup | tools.py imports cleanly | PASS | 124ms |  |
+| startup | tools.py imports cleanly | PASS | 129ms |  |
 | startup | memory.py imports cleanly | PASS | 0ms |  |
 | startup | working_memory.py imports cleanly | PASS | 0ms |  |
 | startup | planner.planner imports cleanly | PASS | 2ms |  |
@@ -112,7 +113,7 @@ Key findings:
 | planning | planning:plan_is_serializable | PASS |  |  |
 | planning | planning:low_confidence:triggers_clarification | PASS | 0ms | conf=0.20 q='Can you be more specific about what you'd like me to do?' |
 | planning | planning:multi_step:two_or_more_steps | PASS |  | steps=2 conf=0.82 |
-| planning | planning:executor:runs_safe_plan | PASS | 56ms | 2/2 steps succeeded. |
+| planning | planning:executor:runs_safe_plan | PASS | 59ms | 2/2 steps succeeded. |
 | planning | planning:executor:steps_in_order | PASS |  | first step: list_files |
 | planning | planning:executor:first_step_failure_recorded | PASS |  | 1/2 steps succeeded. |
 | planning | planning:verifier:passes_on_success | PASS |  | 2/2 steps succeeded. |
@@ -132,7 +133,7 @@ Key findings:
 | voice | voice:response_in_progress_guard_exists | PASS |  | Checked source for duplicate-response guard |
 | voice | voice:error_callback:fires | PASS |  |  |
 | logging | logging:log_file_created_today | PASS |  |  |
-| logging | logging:jsonl_lines_valid | PASS |  | Checked last 20 of 4766 lines |
+| logging | logging:jsonl_lines_valid | PASS |  | Checked last 20 of 6273 lines |
 | logging | logging:entries_have_ts | PASS |  |  |
 | logging | logging:entries_have_kind | PASS |  |  |
 | logging | logging:activity.jsonl_exists | PASS |  |  |
@@ -232,6 +233,24 @@ Key findings:
 | calendar | calendar:intent_override:'do i have a free hour' | PASS |  | got=calendar_find_free_blocks, expected=calendar_find_free_blocks |
 | calendar | calendar:tool_registry:calendar_get_today:no_crash | PASS |  | ok=True msg=0 event(s) today (2026-05-14). |
 | calendar | calendar:tool_registry:disabled_returns_graceful_error | PASS |  | Google Calendar is disabled. Set GOOGLE_CALENDAR_ENABLED=true to enable. |
+| response_vault_logs | response_vault_logs:response_synthesizer_imports | PASS |  |  |
+| response_vault_logs | response_vault_logs:all_7_calendar_actions_in_set | PASS |  | missing=set() |
+| response_vault_logs | response_vault_logs:all_actions_return_str | PASS |  |  |
+| response_vault_logs | response_vault_logs:failed_result_returns_string | PASS |  |  |
+| response_vault_logs | response_vault_logs:unknown_action_fallback_str | PASS |  |  |
+| response_vault_logs | response_vault_logs:today_no_events_says_nothing | PASS |  |  |
+| response_vault_logs | response_vault_logs:next_event_no_events_says_nothing | PASS |  |  |
+| response_vault_logs | response_vault_logs:all_7_in_followup_actions | PASS |  | missing=set() |
+| response_vault_logs | response_vault_logs:realtime_client_imports_synthesizer | PASS |  |  |
+| response_vault_logs | response_vault_logs:log_viewer_imports | PASS |  |  |
+| response_vault_logs | response_vault_logs:log_viewer_list_empty_dir | PASS |  |  |
+| response_vault_logs | response_vault_logs:log_viewer_blocks_path_traversal | PASS |  |  |
+| response_vault_logs | response_vault_logs:log_viewer_no_subprocess | PASS |  |  |
+| response_vault_logs | response_vault_logs:show_logs_no_journalctl | PASS |  |  |
+| response_vault_logs | response_vault_logs:jarvis_logs_dir_in_paths | PASS |  | /home/tatel/.jarvis/logs |
+| response_vault_logs | response_vault_logs:vault_diag_multi_candidate_scan | PASS |  |  |
+| response_vault_logs | response_vault_logs:vault_diag_has_required_fields | PASS |  |  |
+| response_vault_logs | response_vault_logs:hud_vault_lambda_uses_active_field | PASS |  |  |
 
 ---
 

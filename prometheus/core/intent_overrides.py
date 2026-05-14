@@ -440,6 +440,29 @@ _CALENDAR_FREE_BLOCK_PHRASES = (
     "when's my first meeting",
 )
 
+_SHOW_LOGS_PHRASES = (
+    "show logs",
+    "show me the logs",
+    "show the logs",
+    "check the logs",
+    "check logs",
+    "view logs",
+    "view the logs",
+    "recent logs",
+    "latest logs",
+    "what's in the logs",
+    "whats in the logs",
+    "any errors in the logs",
+    "what are the logs saying",
+    "show recent logs",
+    "pull up the logs",
+    "read the logs",
+    "show me recent activity",
+    "what happened recently",
+    "show activity",
+    "activity log",
+)
+
 
 # ── Standalone intent resolvers ───────────────────────────────────────────────
 
@@ -672,6 +695,12 @@ def resolve_direct_intent(transcript: str) -> dict[str, Any] | None:
                 "minimum_minutes": 60,
                 "request_text": transcript,
             },
+        }
+
+    if any(p in text for p in _SHOW_LOGS_PHRASES):
+        return {
+            "type": "direct_tool",
+            "payload": {"action": "show_logs", "request_text": transcript},
         }
 
     if any(k in text for k in _WEB_SEARCH_KEYWORDS):

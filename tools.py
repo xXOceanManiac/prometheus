@@ -220,6 +220,10 @@ ACTION_ENUM = [
     "calendar_next_event",
     "calendar_summarize_day",
     "calendar_find_free_blocks",
+    # Calendar write execution (requires approval + env gates)
+    "calendar_list_reviewed_requests",
+    "calendar_approve_request",
+    "calendar_execute_approved_request",
 ]
 
 
@@ -1621,6 +1625,61 @@ class ToolRegistry:
         self.working.write({"last_tool_action": action})
         return ToolResult(True, summary, result)
 
+    def _execute_calendar_write(self, action: str, payload: dict[str, Any]) -> ToolResult:
+        try:
+            from prometheus.agents.lumen_calendar_executor import (
+                list_reviewed_calendar_requests,
+                approve_calendar_request,
+                execute_approved_calendar_request,
+            )
+
+            if action == "calendar_list_reviewed_requests":
+                requests = list_reviewed_calendar_requests()
+                log_event("calendar_list_reviewed", {"count": len(requests)})
+                return ToolResult(
+                    True,
+                    f"{len(requests)} reviewed calendar request(s).",
+                    {"requests": requests},
+                )
+
+            if action == "calendar_approve_request":
+                request_id = str(payload.get("request_id") or "").strip()
+                if not request_id:
+                    return ToolResult(False, "calendar_approve_request: request_id is required.")
+                approved_by = str(payload.get("approved_by") or "user").strip()
+                result = approve_calendar_request(request_id, approved_by=approved_by)
+                ok = bool(result.get("ok") or result.get("approved"))
+                msg = (
+                    f"Approved calendar request {request_id}."
+                    if ok
+                    else f"Approval failed: {result.get('reason', 'unknown')}"
+                )
+                log_event("calendar_approve_request", {"request_id": request_id, "ok": ok})
+                return ToolResult(ok, msg, result)
+
+            if action == "calendar_execute_approved_request":
+                # Require explicit confirmation to prevent accidental writes
+                confirmed = payload.get("confirmed", False)
+                if not confirmed:
+                    return ToolResult(
+                        False,
+                        "calendar_execute_approved_request requires confirmed=true in payload.",
+                    )
+                request_id = str(payload.get("request_id") or "").strip()
+                if not request_id:
+                    return ToolResult(False, "calendar_execute_approved_request: request_id is required.")
+                result = execute_approved_calendar_request(request_id)
+                ok = bool(result.get("success"))
+                msg = result.get("message", "Execution complete.")
+                log_event("calendar_execute_approved", {"request_id": request_id, "ok": ok})
+                return ToolResult(ok, msg, result)
+
+        except Exception as exc:
+            log_event("calendar_write_error", {"action": action, "error": str(exc)[:120]})
+            return ToolResult(False, f"calendar_write error: {exc}")
+
+        return ToolResult(False, f"Unknown calendar write action: {action}")
+
     def _execute_one_inner(self, payload: dict[str, Any]) -> ToolResult:
         action = str(payload.get("action", "")).strip()
         if action == "confirm_pending":
@@ -2588,7 +2647,10 @@ class ToolRegistry:
                     list_log_files,
                     read_latest_log_tail,
                     read_log_tail,
+                    JARVIS_LOGS_DIR as _LOGS_DIR,
                 )
+                all_files = list_log_files()
+                files_found = len(all_files)
                 if source:
                     try:
                         output = read_log_tail(source, tail_lines=lines)
@@ -2601,8 +2663,18 @@ class ToolRegistry:
                         log_event("show_logs_empty", {})
                         return ToolResult(
                             ok=True,
-                            message="No log files found.",
-                            data={"output": "", "source": "none", "count": 0},
+                            message=f"No log files found in {_LOGS_DIR}.",
+                            data={
+                                "output": "",
+                                "source": "none",
+                                "count": 0,
+                                "logs_dir": str(_LOGS_DIR),
+                                "files_found": 0,
+                                "latest_file": None,
+                                "lines_returned": 0,
+                                "entries": [],
+                                "message": f"No log files found in {_LOGS_DIR}.",
+                            },
                         )
                 out_lines = [ln for ln in output.splitlines() if ln.strip()]
                 count = len(out_lines)
@@ -2616,7 +2688,17 @@ class ToolRegistry:
                 return ToolResult(
                     ok=True,
                     message=msg,
-                    data={"output": output_clipped, "source": file_label, "count": count},
+                    data={
+                        "output": output_clipped,
+                        "source": file_label,
+                        "count": count,
+                        "logs_dir": str(_LOGS_DIR),
+                        "files_found": files_found,
+                        "latest_file": file_label,
+                        "lines_returned": count,
+                        "entries": out_lines[-20:],
+                        "message": msg,
+                    },
                 )
             except Exception as exc:
                 return ToolResult(ok=False, message=f"show_logs error: {exc}")
@@ -3029,5 +3111,12 @@ class ToolRegistry:
             "calendar_find_free_blocks",
         }:
             return self._execute_calendar_read(action, payload)
+
+        if action in {
+            "calendar_list_reviewed_requests",
+            "calendar_approve_request",
+            "calendar_execute_approved_request",
+        }:
+            return self._execute_calendar_write(action, payload)
 
         return ToolResult(False, f"Unknown action: {action}")
