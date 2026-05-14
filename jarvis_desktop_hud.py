@@ -1418,7 +1418,7 @@ class HUDWindow(QWidget):
             ("Voice",       diag.get("voice", {}),             lambda d: d.get("connected", True)),
             ("Ollama",      diag.get("ollama", {}),            lambda d: d.get("available", False)),
             ("Claude Code", diag.get("claude_code", {}),      lambda d: d.get("on_path", False)),
-            ("Vault",       diag.get("vault", {}),             lambda d: d.get("db_exists", False)),
+            ("Vault",       diag.get("vault", {}),             lambda d: d.get("active", d.get("db_exists", False))),
             ("Workers",     diag.get("background_workers", {}), lambda d: d.get("stuck_tasks", 0) == 0),
             ("Watchdog",    diag.get("watchdog", {}),          lambda d: None if d.get("status", "pending") == "pending" else d.get("status") == "healthy"),
             ("System",      diag.get("system", {}),            lambda d: d.get("cpu_pct", 0) < 90),

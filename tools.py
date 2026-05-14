@@ -345,34 +345,77 @@ def run_diagnostics() -> dict:
 
     # vault
     try:
+        import os as _os
+        import sqlite3 as _sqlite3
         from config import CONFIG
+        _checked_at = _dt.datetime.now().strftime("%Y-%m-%dT%H:%M:%S")
+        # Resolve vault path: config → env → candidate scan
         vault_path = str(CONFIG.get("vault_path", "") or "").strip()
         if not vault_path:
-            vault_path = str(Path.home() / "Tates_Brain")
-        db_path = Path(vault_path) / "data" / "memory.db"
-        db_exists = db_path.exists()
+            vault_path = _os.environ.get("VAULT_PATH", "").strip()
+        _candidates = [
+            vault_path,
+            str(Path.home() / "Desktop" / "Tates Brain"),
+            str(Path.home() / "Desktop" / "Tates_Brain"),
+            str(Path.home() / "Tates_Brain"),
+            str(Path.home() / "Tates Brain"),
+        ]
+        resolved_path = ""
+        db_path: Path | None = None
+        for _cand in _candidates:
+            if not _cand:
+                continue
+            _db = Path(_cand) / "data" / "memory.db"
+            if _db.exists():
+                resolved_path = _cand
+                db_path = _db
+                break
+        db_exists = db_path is not None and db_path.exists()
+        active = db_exists
+        readable = False
         chunk_count = 0
         last_indexed = ""
-        if db_exists:
-            import sqlite3 as _sqlite3
+        reason = ""
+        if db_exists and db_path is not None:
             try:
                 with _sqlite3.connect(str(db_path)) as conn:
                     row = conn.execute("SELECT COUNT(*) FROM chunks").fetchone()
                     chunk_count = int(row[0]) if row else 0
-            except Exception:
-                pass
+                readable = True
+            except Exception as _ve:
+                readable = False
+                reason = str(_ve)[:80]
             try:
                 mtime = db_path.stat().st_mtime
                 last_indexed = _dt.datetime.fromtimestamp(mtime).strftime("%Y-%m-%dT%H:%M:%S")
             except Exception:
                 pass
+        else:
+            reason = (
+                f"Not found in candidates: {[c for c in _candidates if c]}"[:120]
+            )
         result["vault"] = {
+            "active": active,
             "db_exists": db_exists,
+            "path": resolved_path or "(not found)",
+            "exists": db_exists,
+            "readable": readable,
             "chunk_count": chunk_count,
             "last_indexed": last_indexed,
+            "reason": reason,
+            "checked_at": _checked_at,
         }
     except Exception as e:
-        result["vault"] = {"db_exists": False, "chunk_count": 0, "error": str(e)[:80]}
+        result["vault"] = {
+            "active": False,
+            "db_exists": False,
+            "path": "",
+            "exists": False,
+            "readable": False,
+            "chunk_count": 0,
+            "reason": str(e)[:80],
+            "checked_at": "",
+        }
 
     # background_workers
     try:
@@ -2540,65 +2583,43 @@ class ToolRegistry:
         if action == "show_logs":
             source = str(payload.get("source") or "").strip()
             lines = max(1, min(500, int(payload.get("lines") or 50)))
-            since = str(payload.get("since") or "10 minutes ago").strip()
-            level = str(payload.get("level") or "error").strip().lower()
-            _LEVEL_MAP = {"error": "err", "warning": "warning", "info": "info"}
-            jctl_level = _LEVEL_MAP.get(level, "err")
-
-            is_file = (
-                source.startswith("/")
-                or source.startswith("~")
-                or source.startswith(".")
-                or ("/" in source and not source.startswith("-"))
-            )
-
-            if is_file:
-                p = Path(source).expanduser()
-                if not p.exists() or not p.is_file():
-                    return ToolResult(ok=False, message=f"show_logs: file not found: {source}")
-                try:
-                    text = p.read_text(encoding="utf-8", errors="ignore")
-                    tail_lines = text.splitlines()[-lines:]
-                    output = "\n".join(tail_lines)[:3000]
-                    log_event("show_logs_file", {"source": source, "lines": len(tail_lines)})
-                    return ToolResult(
-                        ok=True,
-                        message=f"Last {len(tail_lines)} lines of {p.name}.",
-                        data={"output": output, "source": source, "count": len(tail_lines)},
-                    )
-                except Exception as exc:
-                    return ToolResult(ok=False, message=f"show_logs: read error: {exc}")
-            else:
-                cmd = ["journalctl", f"-n{lines}", f"--since={since}", "--no-pager", f"-p{jctl_level}"]
+            try:
+                from prometheus.infra.log_viewer import (
+                    list_log_files,
+                    read_latest_log_tail,
+                    read_log_tail,
+                )
                 if source:
-                    cmd.extend(["-u", source])
-                try:
-                    result = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
-                    raw_lines = result.stdout.strip().splitlines()
-                    formatted: list[str] = []
-                    for ln in raw_lines:
-                        parts = ln.split(None, 5)
-                        if len(parts) >= 6:
-                            # Strip date + hostname: "Mon DD HH:MM:SS host unit: msg" → "HH:MM:SS unit: msg"
-                            formatted.append(f"{parts[2]} {parts[4]} {parts[5]}")
-                        elif ln.strip():
-                            formatted.append(ln)
-                    output = "\n".join(formatted)[:3000]
-                    log_event("show_logs_journalctl", {"source": source or "system", "count": len(formatted)})
-                    msg = (
-                        "No errors found in the last 10 minutes."
-                        if len(formatted) == 0
-                        else f"Found {len(formatted)} log entries."
-                    )
-                    return ToolResult(
-                        ok=True,
-                        message=msg,
-                        data={"output": output, "source": source or "system", "count": len(formatted)},
-                    )
-                except subprocess.TimeoutExpired:
-                    return ToolResult(ok=False, message="show_logs: journalctl timed out after 15s")
-                except Exception as exc:
-                    return ToolResult(ok=False, message=f"show_logs error: {exc}")
+                    try:
+                        output = read_log_tail(source, tail_lines=lines)
+                    except ValueError:
+                        return ToolResult(ok=False, message=f"show_logs: invalid filename: {source!r}")
+                    file_label = source
+                else:
+                    file_label, output = read_latest_log_tail(tail_lines=lines)
+                    if not file_label:
+                        log_event("show_logs_empty", {})
+                        return ToolResult(
+                            ok=True,
+                            message="No log files found.",
+                            data={"output": "", "source": "none", "count": 0},
+                        )
+                out_lines = [ln for ln in output.splitlines() if ln.strip()]
+                count = len(out_lines)
+                output_clipped = "\n".join(out_lines)[:3000]
+                msg = (
+                    f"No entries in {file_label}."
+                    if count == 0
+                    else f"Last {count} log entries from {file_label}."
+                )
+                log_event("show_logs_file", {"source": file_label, "lines": count})
+                return ToolResult(
+                    ok=True,
+                    message=msg,
+                    data={"output": output_clipped, "source": file_label, "count": count},
+                )
+            except Exception as exc:
+                return ToolResult(ok=False, message=f"show_logs error: {exc}")
 
         if action == "search_codebase":
             query = str(payload.get("query") or "").strip()

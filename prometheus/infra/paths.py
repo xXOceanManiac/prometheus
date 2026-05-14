@@ -16,6 +16,7 @@ WORKSPACE_ROOT = RUNTIME_ROOT / "workspace"
 LOGS_DIR = RUNTIME_ROOT / "logs"
 
 JARVIS_STATE_DIR = Path.home() / ".jarvis"
+JARVIS_LOGS_DIR = JARVIS_STATE_DIR / "logs"
 
 # Ecosystem — sibling projects live alongside Prometheus_Main
 PROMETHEUS_ECOSYSTEM_ROOT = PROJECT_ROOT.parent

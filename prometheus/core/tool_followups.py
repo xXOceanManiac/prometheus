@@ -35,4 +35,12 @@ FOLLOWUP_ACTIONS: frozenset[str] = frozenset({
     "list_files",
     "query_vault",
     "get_build_status",
+    # Calendar reads — always need spoken synthesis after execution
+    "calendar_list_upcoming",
+    "calendar_get_today",
+    "calendar_get_tomorrow",
+    "calendar_get_date",
+    "calendar_next_event",
+    "calendar_summarize_day",
+    "calendar_find_free_blocks",
 })

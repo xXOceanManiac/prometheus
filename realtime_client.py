@@ -20,6 +20,7 @@ from utils import log_event, notify
 from prometheus.core.intent_overrides import resolve_direct_intent
 from prometheus.core.session_context import build_instructions, build_live_state_block
 from prometheus.core.tool_followups import FOLLOWUP_ACTIONS
+from prometheus.execution.response_synthesizer import synthesize_tool_response, is_calendar_action
 
 
 SYSTEM_PROMPT = """
@@ -635,6 +636,8 @@ class RealtimePrometheusClient:
                 response_instructions = (
                     f"Action 'query_vault' completed. {output}. Report the result concisely."
                 )
+            elif is_calendar_action(action):
+                response_instructions = synthesize_tool_response(action, result)
             else:
                 response_instructions = (
                     "Briefly report the result in polished British butler style. "
@@ -1110,6 +1113,8 @@ class RealtimePrometheusClient:
                 response_instructions = (
                     f"Action 'query_vault' completed. {output}. Report the result concisely."
                 )
+            elif is_calendar_action(tool_action):
+                response_instructions = synthesize_tool_response(tool_action, result)
             else:
                 response_instructions = (
                     "Briefly report the result in polished British butler style. "

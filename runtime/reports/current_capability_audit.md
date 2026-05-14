@@ -1,6 +1,6 @@
 # Prometheus Capability Audit
 
-**Generated:** 2026-05-14 15:06:38
+**Generated:** 2026-05-14 15:08:20
 **Tests run:** 204  **Passed:** 204  **Failed:** 0  (100.0% pass rate)
 
 ---
@@ -36,10 +36,10 @@ Key findings:
 | startup | ~/.jarvis/logs dir exists | PASS |  |  |
 | startup | ~/.jarvis/audio dir exists | PASS |  |  |
 | startup | ~/.jarvis/memory_v2 dir exists | PASS |  |  |
-| startup | tools.py imports cleanly | PASS | 106ms |  |
+| startup | tools.py imports cleanly | PASS | 124ms |  |
 | startup | memory.py imports cleanly | PASS | 0ms |  |
 | startup | working_memory.py imports cleanly | PASS | 0ms |  |
-| startup | planner.planner imports cleanly | PASS | 1ms |  |
+| startup | planner.planner imports cleanly | PASS | 2ms |  |
 | startup | Missing OPENAI_API_KEY surfaced in CONFIG (not silently blank) | PASS |  | If key is absent it should be detectable — config reads env correctly |
 | startup | visual_state.json writable | PASS |  |  |
 | startup | heartbeat.json writable | PASS |  |  |
@@ -59,7 +59,7 @@ Key findings:
 | tools | tool:get_active_window:no_crash | PASS |  | ok=True |
 | tools | tool:system_status | PASS |  | System status retrieved. |
 | tools | tool:system_status:has_active_project_key | PASS |  |  |
-| tools | tool:get_priorities:no_crash | PASS |  | ok=True Found 0 priorities. |
+| tools | tool:get_priorities:no_crash | PASS |  | ok=True Found 1 priorities. |
 | tools | tool:query_vault:vault_not_configured | PASS |  | vault_path not set — skipped; returns gracefully |
 | tools | tool:run_python:safe_snippet | PASS |  | prometheus_audit_ok |
 | tools | tool:run_python:blocks_os_system | PASS |  | run_python: blocked — command contains restricted patterns |
@@ -132,13 +132,13 @@ Key findings:
 | voice | voice:response_in_progress_guard_exists | PASS |  | Checked source for duplicate-response guard |
 | voice | voice:error_callback:fires | PASS |  |  |
 | logging | logging:log_file_created_today | PASS |  |  |
-| logging | logging:jsonl_lines_valid | PASS |  | Checked last 20 of 4329 lines |
+| logging | logging:jsonl_lines_valid | PASS |  | Checked last 20 of 4766 lines |
 | logging | logging:entries_have_ts | PASS |  |  |
 | logging | logging:entries_have_kind | PASS |  |  |
 | logging | logging:activity.jsonl_exists | PASS |  |  |
 | logging | logging:tool_errors_logged | PASS |  |  |
 | hud | hud:jarvis_desktop_hud.py_exists | PASS |  |  |
-| hud | hud:imports_cleanly | PASS | 36ms |  |
+| hud | hud:imports_cleanly | PASS | 41ms |  |
 | hud | hud:Store:instantiates | PASS |  |  |
 | hud | hud:Store:has_chat_history | PASS |  |  |
 | hud | hud:Store:has_active_tab | PASS |  |  |
