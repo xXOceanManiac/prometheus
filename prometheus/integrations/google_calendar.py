@@ -211,12 +211,33 @@ def build_google_calendar_service(
     if token_path.exists():
         creds = _Credentials.from_authorized_user_file(str(token_path), config.scopes)
 
-    if creds and creds.valid:
-        pass
-    elif creds and creds.expired and creds.refresh_token:
-        creds.refresh(_Request())
-        _write_token(token_path, creds)
-    else:
+    # Attempt refresh whenever credentials are not valid but a refresh_token exists.
+    # Deliberately does NOT check creds.expired — google-auth can return expired=False
+    # with expiry=None on a freshly-issued token that still needs its first refresh.
+    if creds and not creds.valid and creds.refresh_token:
+        try:
+            creds.refresh(_Request())
+            _write_token(token_path, creds)
+        except Exception as exc:
+            if not allow_interactive_auth:
+                raise ValueError(
+                    f"Token exists but could not be refreshed: {exc}. "
+                    "Run --auth to re-authorize."
+                ) from exc
+            creds = None  # refresh failed — fall through to OAuth below
+
+        if creds and not creds.valid:
+            # Refresh call succeeded but credentials are still invalid
+            if not allow_interactive_auth:
+                raise ValueError(
+                    "Token exists but is invalid and could not be refreshed. "
+                    "Run --auth to re-authorize."
+                )
+            creds = None  # fall through to OAuth below
+
+    # If credentials are still not valid (no token, no refresh_token, or refresh failed)
+    # attempt interactive OAuth when permitted, otherwise raise clearly.
+    if not (creds and creds.valid):
         if not allow_interactive_auth:
             raise ValueError(
                 f"No valid token found at {token_path}. "

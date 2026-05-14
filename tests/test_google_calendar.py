@@ -139,6 +139,208 @@ class TestBuildGoogleCalendarService:
             build_google_calendar_service(cfg)
 
 
+# ── Token refresh handling tests ──────────────────────────────────────────────
+
+def _make_refresh_config(tmp_path) -> GoogleCalendarConfig:
+    secrets = tmp_path / "secrets" / "google"
+    secrets.mkdir(parents=True)
+    creds_file = secrets / "credentials.json"
+    creds_file.write_text('{"installed": {}}', encoding="utf-8")
+    return GoogleCalendarConfig(
+        enabled=True,
+        dry_run=True,
+        credentials_path=str(creds_file),
+        token_path=str(secrets / "calendar_token.json"),
+    )
+
+
+def _mock_creds(valid=False, expired=False, refresh_token="ref-tok", expiry=None):
+    """Build a mock Credentials object with the given state."""
+    creds = MagicMock()
+    creds.valid = valid
+    creds.expired = expired
+    creds.refresh_token = refresh_token
+    creds.expiry = expiry
+    creds.to_json.return_value = json.dumps({
+        "token": "access-tok", "refresh_token": refresh_token,
+        "token_uri": "https://oauth2.googleapis.com/token",
+        "client_id": "cid", "client_secret": "csec",
+    })
+
+    def _do_refresh(request):
+        creds.valid = True
+        creds.expired = False
+
+    creds.refresh.side_effect = _do_refresh
+    return creds
+
+
+class TestTokenRefreshHandling:
+    """Tests for the refresh-on-not-valid logic in build_google_calendar_service."""
+
+    def _build(self, config, creds, fake_service=None, *, allow_interactive=False):
+        if fake_service is None:
+            fake_service = MagicMock()
+        with patch("prometheus.integrations.google_calendar._GOOGLE_AVAILABLE", True), \
+             patch("prometheus.integrations.google_calendar._Credentials") as mock_creds_cls, \
+             patch("prometheus.integrations.google_calendar._Request", return_value=MagicMock()), \
+             patch("prometheus.integrations.google_calendar._google_build", create=True, return_value=fake_service):
+            mock_creds_cls.from_authorized_user_file.return_value = creds
+            # Write a placeholder token file so from_authorized_user_file is called
+            Path(config.token_path).parent.mkdir(parents=True, exist_ok=True)
+            Path(config.token_path).write_text('{}', encoding="utf-8")
+            result = build_google_calendar_service(config, allow_interactive_auth=allow_interactive)
+        return result, creds
+
+    def test_valid_false_expired_false_with_refresh_token_triggers_refresh(self, tmp_path):
+        """The main regression: valid=False, expired=False, refresh_token set → refresh called."""
+        config = _make_refresh_config(tmp_path)
+        creds = _mock_creds(valid=False, expired=False, refresh_token="ref")
+
+        self._build(config, creds)
+
+        creds.refresh.assert_called_once()
+
+    def test_valid_false_expired_true_with_refresh_token_triggers_refresh(self, tmp_path):
+        """Existing behaviour: valid=False, expired=True also calls refresh."""
+        config = _make_refresh_config(tmp_path)
+        creds = _mock_creds(valid=False, expired=True, refresh_token="ref")
+
+        self._build(config, creds)
+
+        creds.refresh.assert_called_once()
+
+    def test_valid_true_does_not_trigger_refresh(self, tmp_path):
+        """Already-valid credentials are used as-is; no refresh."""
+        config = _make_refresh_config(tmp_path)
+        creds = _mock_creds(valid=True)
+
+        self._build(config, creds)
+
+        creds.refresh.assert_not_called()
+
+    def test_refresh_success_saves_token_file(self, tmp_path):
+        """After a successful refresh, the token file is updated."""
+        config = _make_refresh_config(tmp_path)
+        creds = _mock_creds(valid=False, expired=False, refresh_token="ref")
+        token_path = Path(config.token_path)
+
+        # Remove token so we know _write_token recreated it
+        self._build(config, creds)
+
+        assert token_path.exists()
+        saved = json.loads(token_path.read_text())
+        assert isinstance(saved, dict)
+
+    def test_refresh_success_builds_service(self, tmp_path):
+        """build_google_calendar_service returns a service object after refresh."""
+        config = _make_refresh_config(tmp_path)
+        fake_svc = MagicMock()
+        creds = _mock_creds(valid=False, expired=False, refresh_token="ref")
+
+        service, _ = self._build(config, creds, fake_service=fake_svc)
+
+        assert service is fake_svc
+
+    def test_refresh_failure_raises_clear_error(self, tmp_path):
+        """If refresh() raises, a clear ValueError is raised (not the raw google error)."""
+        config = _make_refresh_config(tmp_path)
+        creds = _mock_creds(valid=False, expired=False, refresh_token="ref")
+        creds.refresh.side_effect = Exception("transport error")
+
+        with patch("prometheus.integrations.google_calendar._GOOGLE_AVAILABLE", True), \
+             patch("prometheus.integrations.google_calendar._Credentials") as mock_cls, \
+             patch("prometheus.integrations.google_calendar._Request", return_value=MagicMock()), \
+             patch("prometheus.integrations.google_calendar._google_build", create=True, return_value=MagicMock()):
+            mock_cls.from_authorized_user_file.return_value = creds
+            Path(config.token_path).parent.mkdir(parents=True, exist_ok=True)
+            Path(config.token_path).write_text('{}', encoding="utf-8")
+
+            with pytest.raises(ValueError, match="could not be refreshed"):
+                build_google_calendar_service(config, allow_interactive_auth=False)
+
+    def test_refresh_still_invalid_after_success_raises_clear_error(self, tmp_path):
+        """If refresh() doesn't raise but creds.valid stays False, raise clear error."""
+        config = _make_refresh_config(tmp_path)
+        creds = _mock_creds(valid=False, expired=False, refresh_token="ref")
+        creds.refresh.side_effect = None   # refresh succeeds but valid stays False
+        creds.refresh.return_value = None
+
+        with patch("prometheus.integrations.google_calendar._GOOGLE_AVAILABLE", True), \
+             patch("prometheus.integrations.google_calendar._Credentials") as mock_cls, \
+             patch("prometheus.integrations.google_calendar._Request", return_value=MagicMock()), \
+             patch("prometheus.integrations.google_calendar._google_build", create=True, return_value=MagicMock()):
+            mock_cls.from_authorized_user_file.return_value = creds
+            Path(config.token_path).parent.mkdir(parents=True, exist_ok=True)
+            Path(config.token_path).write_text('{}', encoding="utf-8")
+
+            with pytest.raises(ValueError, match="could not be refreshed"):
+                build_google_calendar_service(config, allow_interactive_auth=False)
+
+    def test_no_refresh_token_raises_no_valid_token_error(self, tmp_path):
+        """Token with no refresh_token raises 'No valid token found' (not refresh error)."""
+        config = _make_refresh_config(tmp_path)
+        creds = _mock_creds(valid=False, expired=False, refresh_token=None)
+        creds.refresh_token = None
+
+        with patch("prometheus.integrations.google_calendar._GOOGLE_AVAILABLE", True), \
+             patch("prometheus.integrations.google_calendar._Credentials") as mock_cls, \
+             patch("prometheus.integrations.google_calendar._Request", return_value=MagicMock()), \
+             patch("prometheus.integrations.google_calendar._google_build", create=True, return_value=MagicMock()):
+            mock_cls.from_authorized_user_file.return_value = creds
+            Path(config.token_path).parent.mkdir(parents=True, exist_ok=True)
+            Path(config.token_path).write_text('{}', encoding="utf-8")
+
+            with pytest.raises(ValueError, match="No valid token"):
+                build_google_calendar_service(config, allow_interactive_auth=False)
+
+    def test_list_upcoming_does_not_run_oauth(self, tmp_path):
+        """list_upcoming_calendar_events uses allow_interactive_auth=False (default)."""
+        config = _make_refresh_config(tmp_path)
+        creds = _mock_creds(valid=False, expired=False, refresh_token="ref")
+
+        from prometheus.integrations.google_calendar import list_upcoming_calendar_events
+
+        with patch("prometheus.integrations.google_calendar._GOOGLE_AVAILABLE", True), \
+             patch("prometheus.integrations.google_calendar._Credentials") as mock_cls, \
+             patch("prometheus.integrations.google_calendar._Request", return_value=MagicMock()), \
+             patch("prometheus.integrations.google_calendar._google_build", create=True) as mock_build, \
+             patch("prometheus.integrations.google_calendar._InstalledAppFlow", create=True) as mock_flow_cls:
+            mock_cls.from_authorized_user_file.return_value = creds
+            fake_svc = MagicMock()
+            fake_svc.events.return_value.list.return_value.execute.return_value = {"items": []}
+            mock_build.return_value = fake_svc
+            Path(config.token_path).parent.mkdir(parents=True, exist_ok=True)
+            Path(config.token_path).write_text('{}', encoding="utf-8")
+
+            service = build_google_calendar_service(config, allow_interactive_auth=False)
+            events = list_upcoming_calendar_events(service, config)
+
+        # OAuth flow must never have been invoked
+        mock_flow_cls.from_client_secrets_file.assert_not_called()
+        assert isinstance(events, list)
+
+    def test_no_calendar_writes_during_refresh(self, tmp_path):
+        """During token refresh, no calendar create/update/delete calls are made."""
+        config = _make_refresh_config(tmp_path)
+        creds = _mock_creds(valid=False, expired=False, refresh_token="ref")
+        fake_svc = MagicMock()
+
+        with patch("prometheus.integrations.google_calendar._GOOGLE_AVAILABLE", True), \
+             patch("prometheus.integrations.google_calendar._Credentials") as mock_cls, \
+             patch("prometheus.integrations.google_calendar._Request", return_value=MagicMock()), \
+             patch("prometheus.integrations.google_calendar._google_build", create=True, return_value=fake_svc):
+            mock_cls.from_authorized_user_file.return_value = creds
+            Path(config.token_path).parent.mkdir(parents=True, exist_ok=True)
+            Path(config.token_path).write_text('{}', encoding="utf-8")
+            build_google_calendar_service(config, allow_interactive_auth=False)
+
+        # The service's write methods must not have been called
+        fake_svc.events.return_value.insert.assert_not_called()
+        fake_svc.events.return_value.patch.assert_not_called()
+        fake_svc.events.return_value.delete.assert_not_called()
+
+
 # ── List events tests ─────────────────────────────────────────────────────────
 
 def _fake_service(items: list[dict]) -> MagicMock:
