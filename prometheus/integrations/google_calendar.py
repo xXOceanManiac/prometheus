@@ -1,0 +1,530 @@
+"""
+prometheus/integrations/google_calendar.py — Google Calendar adapter.
+
+Narrow interface for calendar reads and writes. Writes are disabled and
+dry_run by default; Prometheus_Main is the authority for enabling them.
+
+No auth flow runs at import time. Google packages are optional at import.
+"""
+from __future__ import annotations
+
+import dataclasses
+import json
+import os
+import sys
+from dataclasses import dataclass, field
+from typing import Any, Optional
+
+# ── Optional Google library detection ─────────────────────────────────────────
+_GOOGLE_AVAILABLE = False
+try:
+    from google.oauth2.credentials import Credentials as _Credentials
+    from google.auth.transport.requests import Request as _Request
+    from googleapiclient.discovery import build as _google_build
+    _GOOGLE_AVAILABLE = True
+except ImportError:
+    pass
+
+_OAUTHLIB_AVAILABLE = False
+try:
+    from google_auth_oauthlib.flow import InstalledAppFlow as _InstalledAppFlow
+    _OAUTHLIB_AVAILABLE = True
+except ImportError:
+    pass
+
+
+# ── Config ────────────────────────────────────────────────────────────────────
+
+@dataclass
+class GoogleCalendarConfig:
+    enabled: bool = False
+    dry_run: bool = True
+    default_calendar_id: str = "primary"
+    credentials_path: Optional[str] = None
+    token_path: Optional[str] = None
+    scopes: list = field(default_factory=lambda: ["https://www.googleapis.com/auth/calendar"])
+    timezone: str = "America/New_York"
+
+
+def load_google_calendar_config() -> GoogleCalendarConfig:
+    def _bool(key: str, default: bool) -> bool:
+        val = os.getenv(key, "").strip().lower()
+        if val in ("1", "true", "yes"):
+            return True
+        if val in ("0", "false", "no"):
+            return False
+        return default
+
+    return GoogleCalendarConfig(
+        enabled=_bool("GOOGLE_CALENDAR_ENABLED", False),
+        dry_run=_bool("GOOGLE_CALENDAR_DRY_RUN", True),
+        default_calendar_id=os.getenv("GOOGLE_CALENDAR_ID", "primary").strip() or "primary",
+        credentials_path=os.getenv("GOOGLE_CALENDAR_CREDENTIALS_PATH") or None,
+        token_path=os.getenv("GOOGLE_CALENDAR_TOKEN_PATH") or None,
+        timezone=os.getenv("GOOGLE_CALENDAR_TIMEZONE", "America/New_York").strip() or "America/New_York",
+    )
+
+
+# ── Event / result models ─────────────────────────────────────────────────────
+
+@dataclass
+class GoogleCalendarEvent:
+    event_id: Optional[str]
+    calendar_id: str
+    title: str
+    start_time: str
+    end_time: Optional[str]
+    location: Optional[str]
+    description: Optional[str]
+    html_link: Optional[str]
+    raw: Optional[dict]
+
+
+@dataclass
+class GoogleCalendarResult:
+    success: bool
+    dry_run: bool
+    operation_type: str
+    calendar_id: str
+    event_id: Optional[str]
+    message: str
+    event: Optional[GoogleCalendarEvent]
+    raw: Optional[dict]
+
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
+def _calendar_id(config: GoogleCalendarConfig, override: Optional[str]) -> str:
+    return override or config.default_calendar_id
+
+
+def _event_from_google(raw: dict, calendar_id: str) -> GoogleCalendarEvent:
+    start = raw.get("start", {})
+    end = raw.get("end", {})
+    start_time = start.get("dateTime") or start.get("date") or ""
+    end_time = end.get("dateTime") or end.get("date") or None
+    return GoogleCalendarEvent(
+        event_id=raw.get("id"),
+        calendar_id=calendar_id,
+        title=raw.get("summary", ""),
+        start_time=start_time,
+        end_time=end_time,
+        location=raw.get("location"),
+        description=raw.get("description"),
+        html_link=raw.get("htmlLink"),
+        raw=raw,
+    )
+
+
+def _disabled_result(operation_type: str, calendar_id: str) -> GoogleCalendarResult:
+    return GoogleCalendarResult(
+        success=False,
+        dry_run=False,
+        operation_type=operation_type,
+        calendar_id=calendar_id,
+        event_id=None,
+        message="Google Calendar adapter is disabled. Set GOOGLE_CALENDAR_ENABLED=true to enable.",
+        event=None,
+        raw=None,
+    )
+
+
+# ── Service builder ───────────────────────────────────────────────────────────
+
+def build_google_calendar_service(
+    config: GoogleCalendarConfig,
+    allow_interactive_auth: bool = False,
+):
+    if not config.enabled:
+        raise ValueError(
+            "Google Calendar adapter is disabled. "
+            "Set GOOGLE_CALENDAR_ENABLED=true in environment to enable."
+        )
+    if not _GOOGLE_AVAILABLE:
+        raise ImportError(
+            "Google Calendar API libraries are not installed. "
+            "Run: pip install google-api-python-client google-auth google-auth-oauthlib"
+        )
+    if not config.credentials_path:
+        raise ValueError(
+            "GOOGLE_CALENDAR_CREDENTIALS_PATH is not set. "
+            "Download credentials.json from Google Cloud Console."
+        )
+    if not config.token_path:
+        raise ValueError(
+            "GOOGLE_CALENDAR_TOKEN_PATH is not set. "
+            "Specify a path where the OAuth token will be stored."
+        )
+
+    from pathlib import Path as _Path
+    token_path = _Path(config.token_path)
+    creds = None
+
+    if token_path.exists():
+        creds = _Credentials.from_authorized_user_file(str(token_path), config.scopes)
+
+    if creds and creds.valid:
+        pass
+    elif creds and creds.expired and creds.refresh_token:
+        creds.refresh(_Request())
+        token_path.write_text(creds.to_json())
+    else:
+        if not allow_interactive_auth:
+            raise ValueError(
+                f"No valid token found at {token_path}. "
+                "Run with allow_interactive_auth=True once to authenticate, "
+                "or use the OAuth flow to generate a token."
+            )
+        if not _OAUTHLIB_AVAILABLE:
+            raise ImportError(
+                "google-auth-oauthlib is required for interactive OAuth. "
+                "Run: pip install google-auth-oauthlib"
+            )
+        flow = _InstalledAppFlow.from_client_secrets_file(config.credentials_path, config.scopes)
+        creds = flow.run_local_server(port=0)
+        token_path.write_text(creds.to_json())
+
+    return _google_build("calendar", "v3", credentials=creds)
+
+
+# ── Calendar operations ───────────────────────────────────────────────────────
+
+def list_calendar_events(
+    service,
+    config: GoogleCalendarConfig,
+    time_min: str,
+    time_max: str,
+    calendar_id: Optional[str] = None,
+    max_results: int = 20,
+) -> list[GoogleCalendarEvent]:
+    cal_id = _calendar_id(config, calendar_id)
+    result = (
+        service.events()
+        .list(
+            calendarId=cal_id,
+            timeMin=time_min,
+            timeMax=time_max,
+            maxResults=max_results,
+            singleEvents=True,
+            orderBy="startTime",
+        )
+        .execute()
+    )
+    items = result.get("items", [])
+    return [_event_from_google(item, cal_id) for item in items]
+
+
+def create_calendar_event(
+    service,
+    config: GoogleCalendarConfig,
+    title: str,
+    start_time: str,
+    end_time: str,
+    calendar_id: Optional[str] = None,
+    location: Optional[str] = None,
+    description: Optional[str] = None,
+    timezone: Optional[str] = None,
+) -> GoogleCalendarResult:
+    if not title or not title.strip():
+        raise ValueError("title is required for create_calendar_event")
+    if not start_time:
+        raise ValueError("start_time is required for create_calendar_event")
+    if not end_time:
+        raise ValueError("end_time is required for create_calendar_event")
+
+    cal_id = _calendar_id(config, calendar_id)
+    tz = timezone or config.timezone
+
+    if not config.enabled:
+        return _disabled_result("create_event", cal_id)
+
+    body: dict[str, Any] = {
+        "summary": title,
+        "start": {"dateTime": start_time, "timeZone": tz},
+        "end": {"dateTime": end_time, "timeZone": tz},
+    }
+    if location:
+        body["location"] = location
+    if description:
+        body["description"] = description
+
+    if config.dry_run:
+        proposed_event = GoogleCalendarEvent(
+            event_id=None,
+            calendar_id=cal_id,
+            title=title,
+            start_time=start_time,
+            end_time=end_time,
+            location=location,
+            description=description,
+            html_link=None,
+            raw=body,
+        )
+        return GoogleCalendarResult(
+            success=True,
+            dry_run=True,
+            operation_type="create_event",
+            calendar_id=cal_id,
+            event_id=None,
+            message=f"[DRY RUN] Would create event '{title}' at {start_time}.",
+            event=proposed_event,
+            raw=body,
+        )
+
+    created = service.events().insert(calendarId=cal_id, body=body).execute()
+    return GoogleCalendarResult(
+        success=True,
+        dry_run=False,
+        operation_type="create_event",
+        calendar_id=cal_id,
+        event_id=created.get("id"),
+        message=f"Event '{title}' created.",
+        event=_event_from_google(created, cal_id),
+        raw=created,
+    )
+
+
+def update_calendar_event(
+    service,
+    config: GoogleCalendarConfig,
+    event_id: str,
+    calendar_id: Optional[str] = None,
+    title: Optional[str] = None,
+    start_time: Optional[str] = None,
+    end_time: Optional[str] = None,
+    location: Optional[str] = None,
+    description: Optional[str] = None,
+    timezone: Optional[str] = None,
+) -> GoogleCalendarResult:
+    if not event_id or not event_id.strip():
+        raise ValueError("event_id is required for update_calendar_event")
+
+    cal_id = _calendar_id(config, calendar_id)
+    tz = timezone or config.timezone
+
+    if not config.enabled:
+        return _disabled_result("update_event", cal_id)
+
+    patch: dict[str, Any] = {}
+    if title is not None:
+        patch["summary"] = title
+    if start_time is not None:
+        patch["start"] = {"dateTime": start_time, "timeZone": tz}
+    if end_time is not None:
+        patch["end"] = {"dateTime": end_time, "timeZone": tz}
+    if location is not None:
+        patch["location"] = location
+    if description is not None:
+        patch["description"] = description
+
+    if config.dry_run:
+        return GoogleCalendarResult(
+            success=True,
+            dry_run=True,
+            operation_type="update_event",
+            calendar_id=cal_id,
+            event_id=event_id,
+            message=f"[DRY RUN] Would update event '{event_id}'.",
+            event=None,
+            raw={"event_id": event_id, "patch": patch},
+        )
+
+    updated = (
+        service.events().patch(calendarId=cal_id, eventId=event_id, body=patch).execute()
+    )
+    return GoogleCalendarResult(
+        success=True,
+        dry_run=False,
+        operation_type="update_event",
+        calendar_id=cal_id,
+        event_id=event_id,
+        message=f"Event '{event_id}' updated.",
+        event=_event_from_google(updated, cal_id),
+        raw=updated,
+    )
+
+
+def delete_calendar_event(
+    service,
+    config: GoogleCalendarConfig,
+    event_id: str,
+    calendar_id: Optional[str] = None,
+) -> GoogleCalendarResult:
+    if not event_id or not event_id.strip():
+        raise ValueError("event_id is required for delete_calendar_event")
+
+    cal_id = _calendar_id(config, calendar_id)
+
+    if not config.enabled:
+        return _disabled_result("delete_event", cal_id)
+
+    if config.dry_run:
+        return GoogleCalendarResult(
+            success=True,
+            dry_run=True,
+            operation_type="delete_event",
+            calendar_id=cal_id,
+            event_id=event_id,
+            message=f"[DRY RUN] Would delete event '{event_id}'.",
+            event=None,
+            raw={"event_id": event_id},
+        )
+
+    service.events().delete(calendarId=cal_id, eventId=event_id).execute()
+    return GoogleCalendarResult(
+        success=True,
+        dry_run=False,
+        operation_type="delete_event",
+        calendar_id=cal_id,
+        event_id=event_id,
+        message=f"Event '{event_id}' deleted.",
+        event=None,
+        raw={"event_id": event_id},
+    )
+
+
+# ── Dry-run operation helper (for Lumen proposal router) ──────────────────────
+
+_SUPPORTED_DRY_RUN_TYPES = frozenset({
+    "create_event",
+    "update_event",
+    "delete_event",
+    "read_events",
+    "find_availability",
+    "suggest_schedule_change",
+})
+
+
+def dry_run_calendar_operation(
+    operation: dict,
+    config: GoogleCalendarConfig,
+) -> GoogleCalendarResult:
+    op_type = operation.get("operation_type", "")
+    if op_type not in _SUPPORTED_DRY_RUN_TYPES:
+        return GoogleCalendarResult(
+            success=False,
+            dry_run=True,
+            operation_type=op_type or "unknown",
+            calendar_id=operation.get("calendar_id", config.default_calendar_id),
+            event_id=operation.get("event_id"),
+            message=f"Unsupported operation_type: {op_type!r}. "
+                    f"Supported: {sorted(_SUPPORTED_DRY_RUN_TYPES)}.",
+            event=None,
+            raw=operation,
+        )
+
+    cal_id = operation.get("calendar_id") or config.default_calendar_id
+    event_id = operation.get("event_id")
+    title = operation.get("title")
+    start_time = operation.get("start_time")
+    end_time = operation.get("end_time")
+
+    if op_type in ("read_events", "find_availability", "suggest_schedule_change"):
+        return GoogleCalendarResult(
+            success=True,
+            dry_run=True,
+            operation_type=op_type,
+            calendar_id=cal_id,
+            event_id=None,
+            message=f"[DRY RUN] Would perform {op_type} on calendar '{cal_id}'.",
+            event=None,
+            raw=operation,
+        )
+
+    if op_type == "create_event":
+        proposed = GoogleCalendarEvent(
+            event_id=None,
+            calendar_id=cal_id,
+            title=title or "",
+            start_time=start_time or "",
+            end_time=end_time,
+            location=operation.get("location"),
+            description=operation.get("description"),
+            html_link=None,
+            raw=operation,
+        )
+        return GoogleCalendarResult(
+            success=True,
+            dry_run=True,
+            operation_type="create_event",
+            calendar_id=cal_id,
+            event_id=None,
+            message=f"[DRY RUN] Would create event '{title}' at {start_time}.",
+            event=proposed,
+            raw=operation,
+        )
+
+    if op_type == "update_event":
+        return GoogleCalendarResult(
+            success=True,
+            dry_run=True,
+            operation_type="update_event",
+            calendar_id=cal_id,
+            event_id=event_id,
+            message=f"[DRY RUN] Would update event '{event_id}'.",
+            event=None,
+            raw=operation,
+        )
+
+    # delete_event
+    return GoogleCalendarResult(
+        success=True,
+        dry_run=True,
+        operation_type="delete_event",
+        calendar_id=cal_id,
+        event_id=event_id,
+        message=f"[DRY RUN] Would delete event '{event_id}'.",
+        event=None,
+        raw=operation,
+    )
+
+
+# ── CLI entry point ───────────────────────────────────────────────────────────
+
+def _main(argv: list[str] | None = None) -> None:
+    import json as _json
+    args = argv if argv is not None else sys.argv[1:]
+    if not args:
+        print(
+            "Usage: python -m prometheus.integrations.google_calendar "
+            "--config | --dry-run-create-sample"
+        )
+        sys.exit(1)
+
+    cmd = args[0]
+
+    if cmd == "--config":
+        config = load_google_calendar_config()
+        d = dataclasses.asdict(config)
+        # Mask any sensitive fields that might be set
+        if d.get("credentials_path"):
+            d["credentials_path"] = "<set>"
+        if d.get("token_path"):
+            d["token_path"] = "<set>"
+        print(_json.dumps(d, indent=2))
+
+    elif cmd == "--dry-run-create-sample":
+        config = load_google_calendar_config()
+        # Force dry_run for this sample regardless of env
+        config = dataclasses.replace(config, dry_run=True)
+        from datetime import date, timedelta
+        tomorrow = (date.today() + timedelta(days=1)).isoformat()
+        op = {
+            "operation_type": "create_event",
+            "calendar_id": config.default_calendar_id,
+            "title": "Sample Focus Block",
+            "start_time": f"{tomorrow}T14:00:00",
+            "end_time": f"{tomorrow}T15:30:00",
+            "description": "Dry-run sample event.",
+        }
+        result = dry_run_calendar_operation(op, config)
+        d = dataclasses.asdict(result)
+        print(_json.dumps(d, indent=2))
+
+    else:
+        print(f"Unknown command: {cmd}")
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    _main()

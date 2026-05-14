@@ -1,7 +1,7 @@
 # Prometheus Capability Audit
 
-**Generated:** 2026-05-13 23:47:43
-**Tests run:** 120  **Passed:** 120  **Failed:** 0  (100.0% pass rate)
+**Generated:** 2026-05-14 00:47:07
+**Tests run:** 129  **Passed:** 129  **Failed:** 0  (100.0% pass rate)
 
 ---
 
@@ -19,6 +19,7 @@ Key findings:
 - **VOICE**: ✓ 12/12 passing
 - **LOGGING**: ✓ 6/6 passing
 - **HUD**: ✓ 11/11 passing
+- **OTHER**: ✓ 9/9 passing
 
 ---
 
@@ -34,7 +35,7 @@ Key findings:
 | startup | ~/.jarvis/logs dir exists | PASS |  |  |
 | startup | ~/.jarvis/audio dir exists | PASS |  |  |
 | startup | ~/.jarvis/memory_v2 dir exists | PASS |  |  |
-| startup | tools.py imports cleanly | PASS | 105ms |  |
+| startup | tools.py imports cleanly | PASS | 109ms |  |
 | startup | memory.py imports cleanly | PASS | 0ms |  |
 | startup | working_memory.py imports cleanly | PASS | 0ms |  |
 | startup | planner.planner imports cleanly | PASS | 1ms |  |
@@ -57,7 +58,7 @@ Key findings:
 | tools | tool:get_active_window:no_crash | PASS |  | ok=True |
 | tools | tool:system_status | PASS |  | System status retrieved. |
 | tools | tool:system_status:has_active_project_key | PASS |  |  |
-| tools | tool:get_priorities:no_crash | PASS |  | ok=True Found 1 priorities. |
+| tools | tool:get_priorities:no_crash | PASS |  | ok=True Found 0 priorities. |
 | tools | tool:query_vault:vault_not_configured | PASS |  | vault_path not set — skipped; returns gracefully |
 | tools | tool:run_python:safe_snippet | PASS |  | prometheus_audit_ok |
 | tools | tool:run_python:blocks_os_system | PASS |  | run_python: blocked — command contains restricted patterns |
@@ -110,7 +111,7 @@ Key findings:
 | planning | planning:plan_is_serializable | PASS |  |  |
 | planning | planning:low_confidence:triggers_clarification | PASS | 0ms | conf=0.20 q='Can you be more specific about what you'd like me to do?' |
 | planning | planning:multi_step:two_or_more_steps | PASS |  | steps=2 conf=0.82 |
-| planning | planning:executor:runs_safe_plan | PASS | 49ms | 2/2 steps succeeded. |
+| planning | planning:executor:runs_safe_plan | PASS | 56ms | 2/2 steps succeeded. |
 | planning | planning:executor:steps_in_order | PASS |  | first step: list_files |
 | planning | planning:executor:first_step_failure_recorded | PASS |  | 1/2 steps succeeded. |
 | planning | planning:verifier:passes_on_success | PASS |  | 2/2 steps succeeded. |
@@ -130,13 +131,13 @@ Key findings:
 | voice | voice:response_in_progress_guard_exists | PASS |  | Checked source for duplicate-response guard |
 | voice | voice:error_callback:fires | PASS |  |  |
 | logging | logging:log_file_created_today | PASS |  |  |
-| logging | logging:jsonl_lines_valid | PASS |  | Checked last 20 of 341 lines |
+| logging | logging:jsonl_lines_valid | PASS |  | Checked last 20 of 1044 lines |
 | logging | logging:entries_have_ts | PASS |  |  |
 | logging | logging:entries_have_kind | PASS |  |  |
 | logging | logging:activity.jsonl_exists | PASS |  |  |
 | logging | logging:tool_errors_logged | PASS |  |  |
 | hud | hud:jarvis_desktop_hud.py_exists | PASS |  |  |
-| hud | hud:imports_cleanly | PASS | 36ms |  |
+| hud | hud:imports_cleanly | PASS | 40ms |  |
 | hud | hud:Store:instantiates | PASS |  |  |
 | hud | hud:Store:has_chat_history | PASS |  |  |
 | hud | hud:Store:has_active_tab | PASS |  |  |
@@ -146,6 +147,15 @@ Key findings:
 | hud | hud:heartbeat.json_exists | PASS |  |  |
 | hud | hud:heartbeat:valid_json | PASS |  |  |
 | hud | hud:shows_current_mission_or_goal | PASS |  |  |
+|  | lumen_ingestion:module_imports | PASS |  |  |
+|  | lumen_ingestion:valid_request_passes | PASS |  | OK |
+|  | lumen_ingestion:dry_run_false_rejected | PASS |  | Operation[0] dry_run must be True. |
+|  | lumen_ingestion:approval_false_rejected | PASS |  | requires_prometheus_approval must be True. |
+|  | lumen_ingestion:suspicious_key_rejected | PASS |  | Operation[0] contains suspicious key 'command'. |
+|  | lumen_ingestion:no_google_calendar_api | PASS |  | No Google Calendar API found in source |
+|  | lumen_ingestion:no_home_assistant_calls | PASS |  | No HA API key usage found in source |
+|  | lumen_ingestion:no_subprocess | PASS |  | No shell execution found in source |
+|  | lumen_ingestion:list_pending_returns_list | PASS |  |  |
 
 ---
 
@@ -266,7 +276,7 @@ Tools tested via direct `ToolRegistry._execute_one_inner()` calls.
 
 ## Raw Log Location
 
-- Prometheus logs: `~/.jarvis/logs/2026-05-13.jsonl`
+- Prometheus logs: `~/.jarvis/logs/2026-05-14.jsonl`
 - This report: `/home/tatel/Desktop/PROMETHEUS/Prometheus_Main/runtime/reports/current_capability_audit.md`
 - Working memory: `~/.jarvis/memory_v2/working_memory.json`
 - Visual state: `~/.jarvis/visual_state.json`

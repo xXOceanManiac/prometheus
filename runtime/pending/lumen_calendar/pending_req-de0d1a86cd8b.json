@@ -1,0 +1,26 @@
+{
+  "request_id": "req-de0d1a86cd8b",
+  "source": "lumen",
+  "reason": "Test",
+  "operation_count": 1,
+  "operations": [
+    {
+      "operation_id": "op-ecaee80ae8a2",
+      "operation_type": "create_event",
+      "calendar_id": "primary",
+      "title": "Test event",
+      "start_time": "2026-05-15T14:00",
+      "end_time": "2026-05-15T15:00",
+      "event_id": null,
+      "location": null,
+      "description": null,
+      "reason": "Test reason",
+      "requires_prometheus_approval": true,
+      "dry_run": true,
+      "created_at": "2026-05-14T04:38:23.593123+00:00"
+    }
+  ],
+  "created_at": "2026-05-14T04:38:23.593133+00:00",
+  "ingested_at": "2026-05-14T04:47:22.574635+00:00",
+  "source_path": "/home/tatel/Desktop/PROMETHEUS/Lumen/runtime/outbox/lumen_calendar_request_20260514T043823_req-de0d1a86cd8b.json"
+}

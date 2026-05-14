@@ -1191,6 +1191,83 @@ def generate_report():
 # ═════════════════════════════════════════════════════════════════════════════
 # MAIN
 # ═════════════════════════════════════════════════════════════════════════════
+def section_google_calendar():
+    print("\n=== SECTION 10: Google Calendar Adapter ===")
+
+    try:
+        from prometheus.integrations.google_calendar import (
+            GoogleCalendarConfig,
+            load_google_calendar_config,
+            build_google_calendar_service,
+            dry_run_calendar_operation,
+            create_calendar_event,
+            update_calendar_event,
+            delete_calendar_event,
+            _GOOGLE_AVAILABLE,
+        )
+        record("google_calendar:module_imports", True)
+    except Exception as exc:
+        record("google_calendar:module_imports", False, error=str(exc))
+        return
+
+    # Default config is disabled
+    cfg_default = GoogleCalendarConfig()
+    record("google_calendar:default_disabled", not cfg_default.enabled,
+           notes="Default config has enabled=False")
+
+    # Default config is dry_run
+    record("google_calendar:default_dry_run", cfg_default.dry_run,
+           notes="Default config has dry_run=True")
+
+    # build_google_calendar_service rejects disabled config
+    try:
+        build_google_calendar_service(GoogleCalendarConfig(enabled=False))
+        record("google_calendar:service_rejects_disabled", False, error="Should have raised")
+    except (ValueError, ImportError):
+        record("google_calendar:service_rejects_disabled", True)
+
+    # Dry-run create does not call service
+    from unittest.mock import MagicMock
+    svc = MagicMock()
+    cfg_dryrun = GoogleCalendarConfig(enabled=True, dry_run=True)
+    try:
+        result = create_calendar_event(svc, cfg_dryrun, "Audit test", "2026-05-15T10:00:00", "2026-05-15T11:00:00")
+        svc.events.assert_not_called()
+        record("google_calendar:dry_run_create_no_service_call", result.dry_run and result.success)
+    except Exception as exc:
+        record("google_calendar:dry_run_create_no_service_call", False, error=str(exc))
+
+    # dry_run_calendar_operation supports create_event
+    op = {"operation_type": "create_event", "title": "Test", "start_time": "2026-05-15T10:00:00", "end_time": "2026-05-15T11:00:00", "calendar_id": "primary"}
+    try:
+        res = dry_run_calendar_operation(op, cfg_default)
+        record("google_calendar:dry_run_op_create_event", res.success and res.dry_run)
+    except Exception as exc:
+        record("google_calendar:dry_run_op_create_event", False, error=str(exc))
+
+    # dry_run_calendar_operation rejects unknown type
+    bad_op = {"operation_type": "send_sms", "calendar_id": "primary"}
+    try:
+        res2 = dry_run_calendar_operation(bad_op, cfg_default)
+        record("google_calendar:dry_run_op_rejects_bad_type", not res2.success)
+    except Exception as exc:
+        record("google_calendar:dry_run_op_rejects_bad_type", False, error=str(exc))
+
+    # Source safety checks
+    import inspect
+    import prometheus.integrations.google_calendar as gc_mod
+    src = inspect.getsource(gc_mod)
+    record("google_calendar:no_home_assistant_calls",
+           "HOME_ASSISTANT_API_KEY" not in src and "ha_service" not in src.lower(),
+           notes="No HA calls in source")
+    record("google_calendar:no_subprocess",
+           "import subprocess" not in src and "subprocess.run" not in src and "os.system" not in src,
+           notes="No shell execution in source")
+    record("google_calendar:no_auto_oauth",
+           "allow_interactive_auth" in src and "run_local_server" in src,
+           notes="OAuth is guarded by allow_interactive_auth flag")
+
+
 def section_lumen_ingestion():
     print("\n=== SECTION 10: Lumen Ingestion ===")
 
@@ -1258,9 +1335,13 @@ def section_lumen_ingestion():
            "HOME_ASSISTANT_API_KEY" not in src and "ha_service" not in src.lower().replace("ha_service", ""),
            notes="No HA API key usage found in source")
 
-    # Source safety: no subprocess
+    # Source safety: no actual subprocess imports/calls
+    # ("subprocess" may appear as a string in the suspicious-keys allow-list — expected)
     record("lumen_ingestion:no_subprocess",
-           "subprocess" not in src and "os.system" not in src,
+           "import subprocess" not in src
+           and "subprocess.run" not in src
+           and "subprocess.Popen" not in src
+           and "os.system" not in src,
            notes="No shell execution found in source")
 
     # list_pending returns a list (even if empty in audit env)
@@ -1287,6 +1368,7 @@ def main():
     section_voice()
     section_logging()
     section_hud()
+    section_google_calendar()
     section_lumen_ingestion()
 
     print("\n" + "=" * 60)

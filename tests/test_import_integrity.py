@@ -161,6 +161,26 @@ class TestPrometheusInfra:
         assert callable(chat_completion)
 
 
+# ── prometheus.integrations.* namespace ──────────────────────────────────────
+
+class TestPrometheusIntegrations:
+    def test_google_calendar_imports(self):
+        from prometheus.integrations.google_calendar import (
+            GoogleCalendarConfig,
+            GoogleCalendarResult,
+            load_google_calendar_config,
+            dry_run_calendar_operation,
+        )
+        assert callable(load_google_calendar_config)
+        assert callable(dry_run_calendar_operation)
+
+    def test_google_calendar_default_config_safe(self):
+        from prometheus.integrations.google_calendar import GoogleCalendarConfig
+        cfg = GoogleCalendarConfig()
+        assert cfg.enabled is False
+        assert cfg.dry_run is True
+
+
 # ── prometheus.agents.* namespace ────────────────────────────────────────────
 
 class TestPrometheusAgents:
