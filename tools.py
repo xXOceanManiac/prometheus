@@ -212,6 +212,14 @@ ACTION_ENUM = [
     "set_mission",
     "add_subtask",
     "complete_subtask",
+    # Calendar reads (read-only, no writes)
+    "calendar_list_upcoming",
+    "calendar_get_today",
+    "calendar_get_tomorrow",
+    "calendar_get_date",
+    "calendar_next_event",
+    "calendar_summarize_day",
+    "calendar_find_free_blocks",
 ]
 
 
@@ -246,6 +254,10 @@ def _step_schema() -> dict[str, Any]:
             "confirmed": {"type": "boolean"},
             "goal": {"type": "string"},
             "context": {"type": "string"},
+            "date": {"type": "string"},
+            "max_results": {"type": "integer"},
+            "minimum_minutes": {"type": "integer"},
+            "days": {"type": "integer"},
             "steps": {
                 "type": "array",
                 "items": {
@@ -640,6 +652,10 @@ class ToolRegistry:
                         "file": {"type": "string"},
                         "message": {"type": "string"},
                         "confirmed": {"type": "boolean"},
+                        "date": {"type": "string"},
+                        "max_results": {"type": "integer"},
+                        "minimum_minutes": {"type": "integer"},
+                        "days": {"type": "integer"},
                         "steps": {
                             "type": "array",
                             "items": _step_schema(),
@@ -1490,6 +1506,77 @@ class ToolRegistry:
                 pass
             notify_voice_error(action, str(exc))
             return ToolResult(False, f"Tool error: {str(exc)[:120]}")
+
+    def _execute_calendar_read(self, action: str, payload: dict[str, Any]) -> ToolResult:
+        """Dispatch read-only calendar actions. No mutation, no writes."""
+        try:
+            from prometheus.agents.calendar_read_tools import (
+                calendar_list_upcoming,
+                calendar_get_today,
+                calendar_get_tomorrow,
+                calendar_get_date,
+                calendar_next_event,
+                calendar_summarize_day,
+                calendar_find_free_blocks,
+            )
+        except ImportError as exc:
+            return ToolResult(False, f"Calendar read tools not available: {exc}")
+
+        try:
+            if action == "calendar_get_today":
+                result = calendar_get_today()
+            elif action == "calendar_get_tomorrow":
+                result = calendar_get_tomorrow()
+            elif action == "calendar_next_event":
+                result = calendar_next_event()
+            elif action == "calendar_list_upcoming":
+                max_results = int(payload.get("max_results") or 10)
+                days = int(payload.get("days") or 14)
+                result = calendar_list_upcoming(max_results=max_results, days=days)
+            elif action == "calendar_get_date":
+                date_str = str(payload.get("date", "")).strip()
+                if not date_str:
+                    return ToolResult(False, "calendar_get_date requires a 'date' parameter (YYYY-MM-DD).")
+                result = calendar_get_date(date_str)
+            elif action == "calendar_summarize_day":
+                date_str = str(payload.get("date", "")).strip() or None
+                result = calendar_summarize_day(date_str)
+            elif action == "calendar_find_free_blocks":
+                date_str = str(payload.get("date", "")).strip()
+                if not date_str:
+                    return ToolResult(False, "calendar_find_free_blocks requires a 'date' parameter (YYYY-MM-DD).")
+                min_min = int(payload.get("minimum_minutes") or 60)
+                result = calendar_find_free_blocks(date_str, minimum_minutes=min_min)
+            else:
+                return ToolResult(False, f"Unknown calendar action: {action}")
+        except Exception as exc:
+            log_event("calendar_read_error", {"action": action, "error": str(exc)[:200]})
+            return ToolResult(False, f"Calendar read error: {str(exc)[:120]}")
+
+        ok = bool(result.get("ok", False))
+        if not ok:
+            return ToolResult(False, result.get("error", "Calendar read failed."), result)
+
+        summary = result.get("summary") or result.get("error") or f"{action} completed."
+        if action == "calendar_get_today":
+            summary = f"{result.get('count', 0)} event(s) today ({result.get('date', '')})."
+        elif action == "calendar_get_tomorrow":
+            summary = f"{result.get('count', 0)} event(s) tomorrow ({result.get('date', '')})."
+        elif action == "calendar_list_upcoming":
+            summary = f"{result.get('count', 0)} upcoming event(s) over the next {result.get('days', 14)} days."
+        elif action == "calendar_next_event":
+            nxt = result.get("next_timed_event")
+            if nxt:
+                summary = f"Next event: {nxt.get('title', '')} at {str(nxt.get('start_time', ''))[:16]}."
+            else:
+                summary = "No upcoming timed events found."
+        elif action == "calendar_find_free_blocks":
+            n = result.get("free_block_count", 0)
+            summary = f"{n} free block(s) of {result.get('minimum_minutes', 60)}+ min on {result.get('date', '')}."
+
+        log_event("calendar_read_tool", {"action": action, "ok": ok, "summary": summary[:120]})
+        self.working.write({"last_tool_action": action})
+        return ToolResult(True, summary, result)
 
     def _execute_one_inner(self, payload: dict[str, Any]) -> ToolResult:
         action = str(payload.get("action", "")).strip()
@@ -2909,5 +2996,17 @@ class ToolRegistry:
             except Exception as exc:
                 log_event("get_build_status_error", {"error": str(exc)})
                 return ToolResult(ok=False, message=f"get_build_status error: {exc}")
+
+        # ── Calendar reads (read-only, no writes) ─────────────────────────────
+        if action in {
+            "calendar_list_upcoming",
+            "calendar_get_today",
+            "calendar_get_tomorrow",
+            "calendar_get_date",
+            "calendar_next_event",
+            "calendar_summarize_day",
+            "calendar_find_free_blocks",
+        }:
+            return self._execute_calendar_read(action, payload)
 
         return ToolResult(False, f"Unknown action: {action}")

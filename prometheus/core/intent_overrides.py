@@ -371,6 +371,75 @@ _RESUME_PHRASES = (
     "open my project",
 )
 
+# ── Calendar read phrases ─────────────────────────────────────────────────────
+
+_CALENDAR_TODAY_PHRASES = (
+    "what's on my calendar today",
+    "whats on my calendar today",
+    "what do i have today",
+    "my schedule today",
+    "what's on today",
+    "whats on today",
+    "show my calendar today",
+    "today's calendar",
+    "todays calendar",
+    "calendar today",
+)
+
+_CALENDAR_TOMORROW_PHRASES = (
+    "what do i have tomorrow",
+    "what's on my calendar tomorrow",
+    "whats on my calendar tomorrow",
+    "tomorrow's schedule",
+    "tomorrows schedule",
+    "what's on tomorrow",
+    "whats on tomorrow",
+    "calendar tomorrow",
+    "show me tomorrow",
+)
+
+_CALENDAR_NEXT_EVENT_PHRASES = (
+    "what's my next event",
+    "whats my next event",
+    "next meeting",
+    "next event",
+    "what's coming up next",
+    "whats coming up next",
+    "what's coming up",
+    "whats coming up",
+    "when's my next meeting",
+    "when is my next meeting",
+    "what's my next meeting",
+)
+
+_CALENDAR_SUMMARIZE_PHRASES = (
+    "summarize my day",
+    "how does my day look",
+    "how's my day looking",
+    "hows my day looking",
+    "what's my day like",
+    "whats my day like",
+    "what does my day look like",
+    "daily summary",
+    "day summary",
+)
+
+_CALENDAR_FREE_BLOCK_PHRASES = (
+    "do i have a free hour",
+    "do i have free time today",
+    "when am i free",
+    "when am i free today",
+    "find a free block",
+    "any free time today",
+    "free time today",
+    "free blocks today",
+    "when's a good time today",
+    "whens a good time today",
+    "first hard commitment",
+    "when is my first meeting",
+    "when's my first meeting",
+)
+
 
 # ── Standalone intent resolvers ───────────────────────────────────────────────
 
@@ -564,6 +633,45 @@ def resolve_direct_intent(transcript: str) -> dict[str, Any] | None:
         return {
             "type": "direct_tool",
             "payload": {"action": "smart_action", "request_text": transcript},
+        }
+
+    # Calendar reads — checked before web_search so "today"/"tomorrow" keywords
+    # don't accidentally route calendar questions to web_search.
+    if any(p in text for p in _CALENDAR_TODAY_PHRASES):
+        return {
+            "type": "direct_tool",
+            "payload": {"action": "calendar_get_today", "request_text": transcript},
+        }
+
+    if any(p in text for p in _CALENDAR_TOMORROW_PHRASES):
+        return {
+            "type": "direct_tool",
+            "payload": {"action": "calendar_get_tomorrow", "request_text": transcript},
+        }
+
+    if any(p in text for p in _CALENDAR_NEXT_EVENT_PHRASES):
+        return {
+            "type": "direct_tool",
+            "payload": {"action": "calendar_next_event", "request_text": transcript},
+        }
+
+    if any(p in text for p in _CALENDAR_SUMMARIZE_PHRASES):
+        return {
+            "type": "direct_tool",
+            "payload": {"action": "calendar_summarize_day", "request_text": transcript},
+        }
+
+    if any(p in text for p in _CALENDAR_FREE_BLOCK_PHRASES):
+        from datetime import date as _date
+        today = _date.today().isoformat()
+        return {
+            "type": "direct_tool",
+            "payload": {
+                "action": "calendar_find_free_blocks",
+                "date": today,
+                "minimum_minutes": 60,
+                "request_text": transcript,
+            },
         }
 
     if any(k in text for k in _WEB_SEARCH_KEYWORDS):

@@ -306,6 +306,80 @@ class Planner:
                 steps=[PlanStep("read_file", {"path": m.group(1).strip()})],
             )
 
+        # ── Calendar read patterns ─────────────────────────────────────────────
+        import datetime as _dt
+        _today_iso = _dt.date.today().isoformat()
+
+        _cal_today = re.compile(
+            r"(calendar\s+today|what'?s?\s+on\s+(my\s+)?calendar\s+today"
+            r"|what\s+do\s+i\s+have\s+today|my\s+schedule\s+today"
+            r"|what'?s?\s+on\s+today|show\s+(my\s+)?calendar\s+today)",
+            re.I,
+        )
+        if _cal_today.search(text):
+            return Plan(
+                intent=intent,
+                confidence=0.92,
+                reason="Calendar query for today",
+                steps=[PlanStep("calendar_get_today", {})],
+            )
+
+        _cal_tomorrow = re.compile(
+            r"(calendar\s+tomorrow|what\s+do\s+i\s+have\s+tomorrow"
+            r"|what'?s?\s+on\s+(my\s+)?calendar\s+tomorrow|tomorrow'?s?\s+schedule"
+            r"|what'?s?\s+on\s+tomorrow)",
+            re.I,
+        )
+        if _cal_tomorrow.search(text):
+            return Plan(
+                intent=intent,
+                confidence=0.92,
+                reason="Calendar query for tomorrow",
+                steps=[PlanStep("calendar_get_tomorrow", {})],
+            )
+
+        _cal_next = re.compile(
+            r"(what'?s?\s+my\s+next\s+(event|meeting)|next\s+(event|meeting)"
+            r"|what'?s?\s+coming\s+up(\s+next)?)",
+            re.I,
+        )
+        if _cal_next.search(text):
+            return Plan(
+                intent=intent,
+                confidence=0.92,
+                reason="Next calendar event lookup",
+                steps=[PlanStep("calendar_next_event", {})],
+            )
+
+        _cal_summarize = re.compile(
+            r"(summarize\s+my\s+day|how\s+does\s+my\s+day\s+look"
+            r"|how'?s?\s+my\s+day\s+looking|what'?s?\s+my\s+day\s+like"
+            r"|what\s+does\s+my\s+day\s+look\s+like|daily\s+summary|day\s+summary)",
+            re.I,
+        )
+        if _cal_summarize.search(text):
+            return Plan(
+                intent=intent,
+                confidence=0.92,
+                reason="Calendar day summary",
+                steps=[PlanStep("calendar_summarize_day", {})],
+            )
+
+        _cal_free = re.compile(
+            r"(do\s+i\s+have\s+a\s+free\s+hour|do\s+i\s+have\s+free\s+time\s+today"
+            r"|when\s+am\s+i\s+free(\s+today)?|find\s+a\s+free\s+block"
+            r"|any\s+free\s+time\s+today|free\s+time\s+today|free\s+blocks?\s+today"
+            r"|first\s+hard\s+commitment|when\s+is\s+my\s+first\s+meeting)",
+            re.I,
+        )
+        if _cal_free.search(text):
+            return Plan(
+                intent=intent,
+                confidence=0.90,
+                reason="Find free calendar blocks today",
+                steps=[PlanStep("calendar_find_free_blocks", {"date": _today_iso, "minimum_minutes": 60})],
+            )
+
         return None
 
     # ------------------------------------------------------------------

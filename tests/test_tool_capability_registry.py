@@ -53,6 +53,10 @@ class TestRegistryStructure:
             "system_status", "get_priorities", "start_coding_task", "get_coding_status",
             "start_build", "get_build_status", "query_vault", "run_diagnostics",
             "get_mission_status", "set_mission", "add_subtask", "complete_subtask",
+            # Calendar reads
+            "calendar_list_upcoming", "calendar_get_today", "calendar_get_tomorrow",
+            "calendar_get_date", "calendar_next_event", "calendar_summarize_day",
+            "calendar_find_free_blocks",
         }
         missing = required - set(TOOL_CAPABILITIES.keys())
         assert not missing, f"Missing from registry: {missing}"

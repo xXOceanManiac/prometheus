@@ -1,6 +1,6 @@
 # Prometheus Capability Audit
 
-**Generated:** 2026-05-14 01:50:37
+**Generated:** 2026-05-14 01:59:18
 **Tests run:** 159  **Passed:** 159  **Failed:** 0  (100.0% pass rate)
 
 ---
@@ -35,7 +35,7 @@ Key findings:
 | startup | ~/.jarvis/logs dir exists | PASS |  |  |
 | startup | ~/.jarvis/audio dir exists | PASS |  |  |
 | startup | ~/.jarvis/memory_v2 dir exists | PASS |  |  |
-| startup | tools.py imports cleanly | PASS | 112ms |  |
+| startup | tools.py imports cleanly | PASS | 109ms |  |
 | startup | memory.py imports cleanly | PASS | 0ms |  |
 | startup | working_memory.py imports cleanly | PASS | 0ms |  |
 | startup | planner.planner imports cleanly | PASS | 1ms |  |
@@ -106,12 +106,12 @@ Key findings:
 | mission | mission:what_are_we_working_on_today:routable | PASS |  | 'today' variant type=direct_tool |
 | mission | mission:what_are_we_working_on:without_today_routable | PASS |  | GAP: short form requires LLM — direct override only covers '...today' suffix |
 | mission | mission:active_goal_appears_in_get_priorities | PASS |  | priorities=['Finish Prometheus audit report'] |
-| planning | planning:simple_one_step:builds_plan | PASS | 2ms | steps=1 conf=0.90 |
+| planning | planning:simple_one_step:builds_plan | PASS | 3ms | steps=1 conf=0.90 |
 | planning | planning:simple_one_step:valid_action | PASS |  | web_search |
 | planning | planning:plan_is_serializable | PASS |  |  |
 | planning | planning:low_confidence:triggers_clarification | PASS | 0ms | conf=0.20 q='Can you be more specific about what you'd like me to do?' |
 | planning | planning:multi_step:two_or_more_steps | PASS |  | steps=2 conf=0.82 |
-| planning | planning:executor:runs_safe_plan | PASS | 53ms | 2/2 steps succeeded. |
+| planning | planning:executor:runs_safe_plan | PASS | 55ms | 2/2 steps succeeded. |
 | planning | planning:executor:steps_in_order | PASS |  | first step: list_files |
 | planning | planning:executor:first_step_failure_recorded | PASS |  | 1/2 steps succeeded. |
 | planning | planning:verifier:passes_on_success | PASS |  | 2/2 steps succeeded. |
@@ -131,13 +131,13 @@ Key findings:
 | voice | voice:response_in_progress_guard_exists | PASS |  | Checked source for duplicate-response guard |
 | voice | voice:error_callback:fires | PASS |  |  |
 | logging | logging:log_file_created_today | PASS |  |  |
-| logging | logging:jsonl_lines_valid | PASS |  | Checked last 20 of 2681 lines |
+| logging | logging:jsonl_lines_valid | PASS |  | Checked last 20 of 3913 lines |
 | logging | logging:entries_have_ts | PASS |  |  |
 | logging | logging:entries_have_kind | PASS |  |  |
 | logging | logging:activity.jsonl_exists | PASS |  |  |
 | logging | logging:tool_errors_logged | PASS |  |  |
 | hud | hud:jarvis_desktop_hud.py_exists | PASS |  |  |
-| hud | hud:imports_cleanly | PASS | 40ms |  |
+| hud | hud:imports_cleanly | PASS | 36ms |  |
 | hud | hud:Store:instantiates | PASS |  |  |
 | hud | hud:Store:has_chat_history | PASS |  |  |
 | hud | hud:Store:has_active_tab | PASS |  |  |

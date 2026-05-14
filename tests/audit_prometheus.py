@@ -348,6 +348,10 @@ def section_tools():
         "start_coding_task", "get_coding_status", "start_build", "get_build_status",
         "query_vault", "run_diagnostics", "show_logs",
         "get_mission_status", "set_mission", "add_subtask", "complete_subtask",
+        # Calendar reads
+        "calendar_list_upcoming", "calendar_get_today", "calendar_get_tomorrow",
+        "calendar_get_date", "calendar_next_event", "calendar_summarize_day",
+        "calendar_find_free_blocks",
     }
     unhandled = [a for a in ACTION_ENUM if a not in known_handled]
     record(f"ACTION_ENUM all actions known ({len(ACTION_ENUM)} total)",
@@ -946,6 +950,211 @@ def section_hud():
         record("hud:shows_current_mission_or_goal", shows_mission,
                notes="MISSING — HUD does not surface active_goal from WorkingMemory" if not shows_mission else "",
                section=S)
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# SECTION 10 — Calendar Read Tools Audit
+# ═════════════════════════════════════════════════════════════════════════════
+def section_calendar_read_tools():
+    print("\n=== SECTION 10: Calendar Read Tools Audit ===")
+    S = "calendar"
+
+    # 10.1 Module imports cleanly
+    val, ms, exc = run_timed(
+        lambda: importlib.import_module("prometheus.agents.calendar_read_tools")
+    )
+    record("calendar:module_imports_cleanly", exc is None,
+           error=str(exc)[:120] if exc else "", latency_ms=ms, section=S)
+    if exc:
+        return
+
+    import prometheus.agents.calendar_read_tools as _cal
+
+    # 10.2 All 7 functions exist
+    for fn_name in [
+        "calendar_list_upcoming", "calendar_get_today", "calendar_get_tomorrow",
+        "calendar_get_date", "calendar_next_event", "calendar_summarize_day",
+        "calendar_find_free_blocks",
+    ]:
+        record(f"calendar:function_exists:{fn_name}", hasattr(_cal, fn_name), section=S)
+
+    # 10.3 Disabled-calendar returns clear error (no crash)
+    with patch.dict(os.environ, {"GOOGLE_CALENDAR_ENABLED": "false"}, clear=False):
+        r = _cal.calendar_get_today()
+        record("calendar:disabled_returns_error_dict", isinstance(r, dict) and not r.get("ok"), section=S)
+        record("calendar:disabled_has_error_key", "error" in r or "calendar_enabled" in r, section=S)
+
+    # 10.4 calendar_get_date validates bad date string
+    r = _cal.calendar_get_date("not-a-date")
+    record("calendar:get_date:invalid_format_returns_error",
+           isinstance(r, dict) and not r.get("ok"), section=S)
+
+    r = _cal.calendar_get_date("")
+    record("calendar:get_date:empty_string_returns_error",
+           isinstance(r, dict) and not r.get("ok"), section=S)
+
+    # 10.5 calendar_find_free_blocks validates bad date
+    r = _cal.calendar_find_free_blocks("not-a-date")
+    record("calendar:find_free_blocks:invalid_date_returns_error",
+           isinstance(r, dict) and not r.get("ok"), section=S)
+
+    # 10.6 Free-block algorithm correctness — deterministic with mock events
+    # Test free-block logic in isolation (no live API needed)
+    from datetime import date as _date, datetime as _datetime, timezone as _tz_mod
+    from zoneinfo import ZoneInfo as _ZI
+
+    tz = _ZI("America/New_York")
+    target = _date.today()
+
+    def _make_mock_event(start_hour: int, end_hour: int) -> dict:
+        d = target.isoformat()
+        return {
+            "start_time": f"{d}T{start_hour:02d}:00:00-04:00",
+            "end_time": f"{d}T{end_hour:02d}:00:00-04:00",
+        }
+
+    # Use private helper: check that gaps are found between mock events
+    # We'll patch list_calendar_events to return controlled events
+    mock_events_raw = [_make_mock_event(9, 10), _make_mock_event(14, 15)]
+
+    from prometheus.integrations.google_calendar import GoogleCalendarEvent as _GCE
+    mock_gc_events = [
+        _GCE(
+            event_id=f"ev{i}",
+            calendar_id="primary",
+            title=f"Event {i}",
+            start_time=e["start_time"],
+            end_time=e["end_time"],
+            location=None,
+            description=None,
+            html_link=None,
+            raw=e,
+        )
+        for i, e in enumerate(mock_events_raw)
+    ]
+
+    with patch("prometheus.integrations.google_calendar.build_google_calendar_service"), \
+         patch("prometheus.agents.calendar_read_tools.list_calendar_events", return_value=mock_gc_events), \
+         patch("prometheus.agents.calendar_read_tools.build_google_calendar_service"), \
+         patch.dict(os.environ, {"GOOGLE_CALENDAR_ENABLED": "true",
+                                 "GOOGLE_CALENDAR_CREDENTIALS_PATH": "/tmp/fake_creds.json",
+                                 "GOOGLE_CALENDAR_TOKEN_PATH": "/tmp/fake_token.json"}, clear=False):
+        r = _cal.calendar_find_free_blocks(target.isoformat(), minimum_minutes=60)
+        record("calendar:find_free_blocks:returns_dict", isinstance(r, dict), section=S)
+        is_ok = r.get("ok", False)
+        if is_ok:
+            blocks = r.get("free_blocks", [])
+            record("calendar:find_free_blocks:finds_gaps",
+                   len(blocks) >= 1,
+                   notes=f"Found {len(blocks)} free blocks with 2 mocked busy events", section=S)
+        else:
+            record("calendar:find_free_blocks:finds_gaps", False,
+                   notes=r.get("error", ""), section=S)
+
+    # 10.7 calendar_summarize_day structure check (with mocked events)
+    with patch("prometheus.agents.calendar_read_tools.list_calendar_events", return_value=mock_gc_events), \
+         patch("prometheus.agents.calendar_read_tools.build_google_calendar_service"), \
+         patch.dict(os.environ, {"GOOGLE_CALENDAR_ENABLED": "true",
+                                 "GOOGLE_CALENDAR_CREDENTIALS_PATH": "/tmp/fake_creds.json",
+                                 "GOOGLE_CALENDAR_TOKEN_PATH": "/tmp/fake_token.json"}, clear=False):
+        r = _cal.calendar_summarize_day(target.isoformat())
+        required_keys = {"ok", "date", "event_count", "all_day_events", "timed_events",
+                         "first_timed_event", "last_timed_event", "summary"}
+        has_all_keys = required_keys.issubset(r.keys())
+        record("calendar:summarize_day:has_all_required_keys", has_all_keys,
+               notes=f"Missing: {required_keys - set(r.keys())}", section=S)
+        record("calendar:summarize_day:summary_is_string",
+               isinstance(r.get("summary"), str), section=S)
+
+    # 10.8 calendar_next_event structure with mocked events
+    with patch("prometheus.agents.calendar_read_tools.list_calendar_events", return_value=mock_gc_events), \
+         patch("prometheus.agents.calendar_read_tools.build_google_calendar_service"), \
+         patch.dict(os.environ, {"GOOGLE_CALENDAR_ENABLED": "true",
+                                 "GOOGLE_CALENDAR_CREDENTIALS_PATH": "/tmp/fake_creds.json",
+                                 "GOOGLE_CALENDAR_TOKEN_PATH": "/tmp/fake_token.json"}, clear=False):
+        r = _cal.calendar_next_event()
+        record("calendar:next_event:has_ok_key", "ok" in r, section=S)
+        record("calendar:next_event:has_next_timed_key", "next_timed_event" in r, section=S)
+        record("calendar:next_event:has_all_day_key", "todays_all_day_events" in r, section=S)
+
+    # 10.9 Outputs are JSON-serializable
+    with patch("prometheus.agents.calendar_read_tools.list_calendar_events", return_value=mock_gc_events), \
+         patch("prometheus.agents.calendar_read_tools.build_google_calendar_service"), \
+         patch.dict(os.environ, {"GOOGLE_CALENDAR_ENABLED": "true",
+                                 "GOOGLE_CALENDAR_CREDENTIALS_PATH": "/tmp/fake_creds.json",
+                                 "GOOGLE_CALENDAR_TOKEN_PATH": "/tmp/fake_token.json"}, clear=False):
+        try:
+            r = _cal.calendar_get_today()
+            json.dumps(r)
+            record("calendar:output_is_json_serializable", True, section=S)
+        except (TypeError, ValueError) as exc:
+            record("calendar:output_is_json_serializable", False, error=str(exc), section=S)
+
+    # 10.10 No HA coupling — verify module source
+    import inspect
+    src = inspect.getsource(_cal)
+    record("calendar:no_home_assistant_calls",
+           "HOME_ASSISTANT" not in src and "run_ha_script" not in src, section=S)
+    record("calendar:no_subprocess_calls",
+           "subprocess" not in src, section=S)
+
+    # 10.11 Tool registry includes calendar tools as risk="none"
+    from prometheus.execution.tool_capability_registry import TOOL_CAPABILITIES, get_tool
+    cal_tools = [
+        "calendar_list_upcoming", "calendar_get_today", "calendar_get_tomorrow",
+        "calendar_get_date", "calendar_next_event", "calendar_summarize_day",
+        "calendar_find_free_blocks",
+    ]
+    for tool_name in cal_tools:
+        cap = get_tool(tool_name)
+        record(f"calendar:registry:{tool_name}:exists", cap is not None, section=S)
+        if cap:
+            record(f"calendar:registry:{tool_name}:risk_is_none",
+                   cap.risk == "none", notes=f"risk={cap.risk}", section=S)
+
+    # 10.12 No write tools registered (insert/update/delete guard)
+    write_tool_names = [k for k in TOOL_CAPABILITIES if "calendar" in k and "write" in k.lower()]
+    record("calendar:no_write_tools_in_registry",
+           len(write_tool_names) == 0,
+           notes=f"Found: {write_tool_names}", section=S)
+
+    # 10.13 Intent overrides include calendar phrases
+    from prometheus.core.intent_overrides import resolve_direct_intent
+    calendar_phrase_tests = [
+        ("what's on my calendar today", "calendar_get_today"),
+        ("what do i have tomorrow", "calendar_get_tomorrow"),
+        ("what's my next event", "calendar_next_event"),
+        ("summarize my day", "calendar_summarize_day"),
+        ("do i have a free hour", "calendar_find_free_blocks"),
+    ]
+    for phrase, expected_action in calendar_phrase_tests:
+        override = resolve_direct_intent(phrase)
+        if override is None:
+            record(f"calendar:intent_override:'{phrase}'", False,
+                   notes="No override matched", section=S)
+        else:
+            got_action = override.get("payload", {}).get("action", "")
+            record(f"calendar:intent_override:'{phrase}'",
+                   got_action == expected_action,
+                   notes=f"got={got_action}, expected={expected_action}", section=S)
+
+    # 10.14 ToolRegistry dispatches calendar read actions without crash
+    reg = _make_registry()
+    with patch("prometheus.agents.calendar_read_tools.list_calendar_events", return_value=[]), \
+         patch("prometheus.agents.calendar_read_tools.build_google_calendar_service"), \
+         patch.dict(os.environ, {"GOOGLE_CALENDAR_ENABLED": "true",
+                                 "GOOGLE_CALENDAR_CREDENTIALS_PATH": "/tmp/fake_creds.json",
+                                 "GOOGLE_CALENDAR_TOKEN_PATH": "/tmp/fake_token.json"}, clear=False):
+        r = reg._execute_one_inner({"action": "calendar_get_today"})
+        record("calendar:tool_registry:calendar_get_today:no_crash", True,
+               notes=f"ok={r.ok} msg={r.message[:60]}", section=S)
+
+    # 10.15 Disabled calendar returns graceful ToolResult
+    with patch.dict(os.environ, {"GOOGLE_CALENDAR_ENABLED": "false"}, clear=False):
+        r = reg._execute_one_inner({"action": "calendar_get_today"})
+        record("calendar:tool_registry:disabled_returns_graceful_error",
+               not r.ok and "disabled" in r.message.lower(),
+               notes=r.message[:80], section=S)
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -1549,6 +1758,7 @@ def main():
     section_lumen_ingestion()
     section_lumen_calendar_context()
     section_lumen_calendar_router()
+    section_calendar_read_tools()
 
     print("\n" + "=" * 60)
     total = len(results)
