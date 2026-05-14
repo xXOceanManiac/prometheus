@@ -1,7 +1,7 @@
 """
 test_workspace_policy.py — Workspace safety tests.
 
-Verifies that write_file is restricted to ~/PROMETHEUS/workspace and that
+Verifies that write_file is restricted to runtime/workspace and that
 resolve_workspace_path correctly enforces the boundary.
 """
 from __future__ import annotations
@@ -17,7 +17,41 @@ import pytest
 ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(ROOT))
 
-from workspace_policy import WORKSPACE_ROOT, resolve_workspace_path, ensure_workspace_root
+from prometheus.infra.paths import (
+    PROJECT_ROOT,
+    RUNTIME_ROOT,
+    REPORTS_DIR,
+    WORKSPACE_ROOT,
+    LOGS_DIR,
+)
+from workspace_policy import resolve_workspace_path, ensure_workspace_root
+
+
+# ── Path constant structure tests ─────────────────────────────────────────────
+
+class TestPathConstants:
+    def test_project_root_is_correct(self):
+        assert PROJECT_ROOT == Path(__file__).resolve().parent.parent
+
+    def test_runtime_root_inside_project(self):
+        assert PROJECT_ROOT in RUNTIME_ROOT.parents
+
+    def test_workspace_root_inside_runtime(self):
+        assert RUNTIME_ROOT in WORKSPACE_ROOT.parents
+
+    def test_reports_dir_inside_runtime(self):
+        assert RUNTIME_ROOT in REPORTS_DIR.parents
+
+    def test_logs_dir_inside_runtime(self):
+        assert RUNTIME_ROOT in LOGS_DIR.parents
+
+    def test_workspace_root_name(self):
+        assert WORKSPACE_ROOT.name == "workspace"
+        assert WORKSPACE_ROOT.parent.name == "runtime"
+
+    def test_reports_dir_name(self):
+        assert REPORTS_DIR.name == "reports"
+        assert REPORTS_DIR.parent.name == "runtime"
 
 
 # ── resolve_workspace_path tests ──────────────────────────────────────────────

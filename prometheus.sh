@@ -2,7 +2,7 @@
 # prometheus.sh — Prometheus management script
 set -euo pipefail
 
-PROJ="/home/tatel/Desktop/Jarvis.v5.1"
+PROJ="/home/tatel/Desktop/PROMETHEUS/Prometheus_Main"
 MAIN_SVC="prometheus.service"
 HUD_SVC="prometheus-hud.service"
 

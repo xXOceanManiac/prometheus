@@ -1,6 +1,6 @@
 from pathlib import Path
 
-WORKSPACE_ROOT = Path.home() / "PROMETHEUS" / "workspace"
+from prometheus.infra.paths import WORKSPACE_ROOT
 
 
 def resolve_workspace_path(raw_path: str | None) -> Path:

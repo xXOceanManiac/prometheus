@@ -546,6 +546,8 @@ class PrometheusCore:
 
 
 async def amain() -> None:
+    from prometheus.infra.paths import ensure_runtime_dirs
+    ensure_runtime_dirs()
     await PrometheusCore().run()
 
 

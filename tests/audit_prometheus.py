@@ -35,7 +35,8 @@ _ROOT = Path(__file__).resolve().parent.parent
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
-REPORT_PATH = Path.home() / "PROMETHEUS" / "reports" / "current_capability_audit.md"
+from prometheus.infra.paths import REPORTS_DIR
+REPORT_PATH = REPORTS_DIR / "current_capability_audit.md"
 REPORT_PATH.parent.mkdir(parents=True, exist_ok=True)
 
 # ── Result primitives ─────────────────────────────────────────────────────────
