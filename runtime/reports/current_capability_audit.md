@@ -1,7 +1,7 @@
 # Prometheus Capability Audit
 
-**Generated:** 2026-05-14 15:27:02
-**Tests run:** 222  **Passed:** 222  **Failed:** 0  (100.0% pass rate)
+**Generated:** 2026-05-14 15:49:54
+**Tests run:** 241  **Passed:** 241  **Failed:** 0  (100.0% pass rate)
 
 ---
 
@@ -19,7 +19,7 @@ Key findings:
 - **VOICE**: ✓ 12/12 passing
 - **LOGGING**: ✓ 6/6 passing
 - **HUD**: ✓ 11/11 passing
-- **OTHER**: ✓ 39/39 passing
+- **OTHER**: ✓ 58/58 passing
 - **CALENDAR**: ✓ 45/45 passing
 - **RESPONSE_VAULT_LOGS**: ✓ 18/18 passing
 
@@ -37,10 +37,10 @@ Key findings:
 | startup | ~/.jarvis/logs dir exists | PASS |  |  |
 | startup | ~/.jarvis/audio dir exists | PASS |  |  |
 | startup | ~/.jarvis/memory_v2 dir exists | PASS |  |  |
-| startup | tools.py imports cleanly | PASS | 129ms |  |
+| startup | tools.py imports cleanly | PASS | 107ms |  |
 | startup | memory.py imports cleanly | PASS | 0ms |  |
 | startup | working_memory.py imports cleanly | PASS | 0ms |  |
-| startup | planner.planner imports cleanly | PASS | 2ms |  |
+| startup | planner.planner imports cleanly | PASS | 1ms |  |
 | startup | Missing OPENAI_API_KEY surfaced in CONFIG (not silently blank) | PASS |  | If key is absent it should be detectable — config reads env correctly |
 | startup | visual_state.json writable | PASS |  |  |
 | startup | heartbeat.json writable | PASS |  |  |
@@ -56,7 +56,7 @@ Key findings:
 | tools | tool:write_file:content_correct | PASS |  |  |
 | tools | tool:screenshot:no_crash | PASS |  | ok=True: Screenshot saved to /home/tatel/Pictures/Screenshots/screens |
 | tools | tool:web_search:returns_result | PASS |  | Searched the web for prometheus audit test. |
-| tools | tool:list_windows:no_crash | PASS |  | ok=True windows=11 |
+| tools | tool:list_windows:no_crash | PASS |  | ok=True windows=9 |
 | tools | tool:get_active_window:no_crash | PASS |  | ok=True |
 | tools | tool:system_status | PASS |  | System status retrieved. |
 | tools | tool:system_status:has_active_project_key | PASS |  |  |
@@ -72,7 +72,7 @@ Key findings:
 | tools | tool:restart:requires_confirmation | PASS |  | Awaiting confirmation for restart. |
 | tools | tool:shutdown:requires_confirmation | PASS |  | Awaiting confirmation for shutdown. |
 | tools | tool:background_task:no_pool_gives_clear_error | PASS |  | Background worker pool is not running. |
-| tools | ACTION_ENUM all actions known (65 total) | PASS |  |  |
+| tools | ACTION_ENUM all actions known (68 total) | PASS |  |  |
 | sandbox | sandbox:write_inside_workspace_allowed | PASS |  | Wrote file: sandbox_test.txt |
 | sandbox | sandbox:write_outside_workspace_blocked | PASS |  | Write blocked: Path outside workspace is not allowed: /tmp/escape_attempt.txt |
 | sandbox | sandbox:run_python:blocks 'rm ' | PASS |  | run_python: blocked — command contains restricted patterns |
@@ -113,7 +113,7 @@ Key findings:
 | planning | planning:plan_is_serializable | PASS |  |  |
 | planning | planning:low_confidence:triggers_clarification | PASS | 0ms | conf=0.20 q='Can you be more specific about what you'd like me to do?' |
 | planning | planning:multi_step:two_or_more_steps | PASS |  | steps=2 conf=0.82 |
-| planning | planning:executor:runs_safe_plan | PASS | 59ms | 2/2 steps succeeded. |
+| planning | planning:executor:runs_safe_plan | PASS | 50ms | 2/2 steps succeeded. |
 | planning | planning:executor:steps_in_order | PASS |  | first step: list_files |
 | planning | planning:executor:first_step_failure_recorded | PASS |  | 1/2 steps succeeded. |
 | planning | planning:verifier:passes_on_success | PASS |  | 2/2 steps succeeded. |
@@ -133,13 +133,13 @@ Key findings:
 | voice | voice:response_in_progress_guard_exists | PASS |  | Checked source for duplicate-response guard |
 | voice | voice:error_callback:fires | PASS |  |  |
 | logging | logging:log_file_created_today | PASS |  |  |
-| logging | logging:jsonl_lines_valid | PASS |  | Checked last 20 of 6273 lines |
+| logging | logging:jsonl_lines_valid | PASS |  | Checked last 20 of 7619 lines |
 | logging | logging:entries_have_ts | PASS |  |  |
 | logging | logging:entries_have_kind | PASS |  |  |
 | logging | logging:activity.jsonl_exists | PASS |  |  |
 | logging | logging:tool_errors_logged | PASS |  |  |
 | hud | hud:jarvis_desktop_hud.py_exists | PASS |  |  |
-| hud | hud:imports_cleanly | PASS | 41ms |  |
+| hud | hud:imports_cleanly | PASS | 38ms |  |
 | hud | hud:Store:instantiates | PASS |  |  |
 | hud | hud:Store:has_chat_history | PASS |  |  |
 | hud | hud:Store:has_active_tab | PASS |  |  |
@@ -188,7 +188,7 @@ Key findings:
 |  | lumen_calendar_router:no_subprocess | PASS |  | No shell execution in router source |
 |  | lumen_calendar_router:no_home_assistant | PASS |  | No Home Assistant calls in router source |
 |  | lumen_calendar_router:no_auto_approval | PASS |  | Proposals are never auto-approved by the router |
-| calendar | calendar:module_imports_cleanly | PASS | 2ms |  |
+| calendar | calendar:module_imports_cleanly | PASS | 3ms |  |
 | calendar | calendar:function_exists:calendar_list_upcoming | PASS |  |  |
 | calendar | calendar:function_exists:calendar_get_today | PASS |  |  |
 | calendar | calendar:function_exists:calendar_get_tomorrow | PASS |  |  |
@@ -251,6 +251,25 @@ Key findings:
 | response_vault_logs | response_vault_logs:vault_diag_multi_candidate_scan | PASS |  |  |
 | response_vault_logs | response_vault_logs:vault_diag_has_required_fields | PASS |  |  |
 | response_vault_logs | response_vault_logs:hud_vault_lambda_uses_active_field | PASS |  |  |
+|  | calendar_executor:module_imports | PASS |  |  |
+|  | calendar_executor:list_reviewed_returns_list | PASS |  |  |
+|  | calendar_executor:load_missing_returns_none | PASS |  |  |
+|  | calendar_executor:approve_missing_fails | PASS |  | approval of nonexistent request returns ok=False |
+|  | calendar_executor:execute_without_approval_fails | PASS |  | execution without approval record returns success=False |
+|  | calendar_executor:get_status_returns_dict | PASS |  |  |
+|  | calendar_executor:registry_has_all_three | PASS |  |  |
+|  | calendar_executor:execute_requires_confirmed | PASS |  | calendar_execute_approved_request.required_slots includes confirmed |
+|  | calendar_executor:execute_is_high_risk | PASS |  |  |
+|  | calendar_executor:approve_is_medium_risk | PASS |  |  |
+|  | calendar_executor:no_subprocess | PASS |  | No shell execution in executor source |
+|  | calendar_executor:no_home_assistant_calls | PASS |  | No HA integration calls in executor |
+|  | calendar_executor:has_suspicious_key_check | PASS |  | Executor validates operations against suspicious key blocklist |
+|  | calendar_executor:execute_requires_approval_record | PASS |  | Executor checks for approval record before executing |
+|  | calendar_executor:all_in_followup_actions | PASS |  |  |
+|  | calendar_executor:synthesizer_handles_all_three | PASS |  |  |
+|  | show_logs:direct_intent_override | PASS |  | 'show me the logs' routes to show_logs via direct intent override |
+|  | show_logs:check_logs_phrase | PASS |  |  |
+|  | show_logs:synthesizer_handles_show_logs | PASS |  |  |
 
 ---
 

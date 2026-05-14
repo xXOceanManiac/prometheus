@@ -675,3 +675,101 @@ class TestSafety:
         from prometheus.execution.tool_capability_registry import TOOL_CAPABILITIES
         cap = TOOL_CAPABILITIES["calendar_execute_approved_request"]
         assert "confirmed" in cap.required_slots
+
+
+# ── .env loading ──────────────────────────────────────────────────────────────
+
+class TestDotenvLoading:
+    def test_load_project_dotenv_sets_enabled_and_dry_run(self, tmp_path):
+        """_load_project_dotenv reads GOOGLE_CALENDAR_ENABLED and DRY_RUN from .env
+        without requiring the caller to have sourced the shell environment first."""
+        import os
+        from prometheus.integrations.google_calendar import _load_project_dotenv
+
+        env_file = tmp_path / ".env"
+        env_file.write_text(
+            "GOOGLE_CALENDAR_ENABLED=true\n"
+            "GOOGLE_CALENDAR_DRY_RUN=true\n"
+        )
+
+        saved = {k: os.environ.pop(k) for k in ("GOOGLE_CALENDAR_ENABLED", "GOOGLE_CALENDAR_DRY_RUN")
+                 if k in os.environ}
+        try:
+            ok = _load_project_dotenv(env_path=env_file)
+            assert ok, "expected _load_project_dotenv to return True"
+            assert os.environ.get("GOOGLE_CALENDAR_ENABLED") == "true"
+            assert os.environ.get("GOOGLE_CALENDAR_DRY_RUN") == "true"
+        finally:
+            for k in ("GOOGLE_CALENDAR_ENABLED", "GOOGLE_CALENDAR_DRY_RUN"):
+                os.environ.pop(k, None)
+            os.environ.update(saved)
+
+    def test_executor_cli_entrypoint_loads_dotenv(self):
+        """_main() calls _load_project_dotenv before reading config — verified in source."""
+        src = (ROOT / "prometheus" / "agents" / "lumen_calendar_executor.py").read_text()
+        assert "_load_project_dotenv" in src
+        # Confirm it's called inside _main, not at module level
+        main_body = src.split("def _main(")[1]
+        assert "_load_project_dotenv()" in main_body
+
+    def test_execute_blocked_when_dry_run_true_from_dotenv(self, tmp_path):
+        """With ENABLED=true and DRY_RUN=true loaded from .env, execution is blocked
+        on dry_run=true — not on enabled-missing."""
+        import os
+        from prometheus.integrations.google_calendar import load_google_calendar_config
+
+        env_file = tmp_path / ".env"
+        env_file.write_text(
+            "GOOGLE_CALENDAR_ENABLED=true\n"
+            "GOOGLE_CALENDAR_DRY_RUN=true\n"
+        )
+
+        from prometheus.integrations.google_calendar import _load_project_dotenv
+        saved = {k: os.environ.pop(k) for k in ("GOOGLE_CALENDAR_ENABLED", "GOOGLE_CALENDAR_DRY_RUN")
+                 if k in os.environ}
+        try:
+            _load_project_dotenv(env_path=env_file)
+            config = load_google_calendar_config()
+            assert config.enabled is True, "enabled should be True after loading .env"
+            assert config.dry_run is True, "dry_run should be True after loading .env"
+
+            # Now wire up a fake approved request and verify execution blocks on dry_run
+            reviewed_dir = tmp_path / "reviewed"
+            pending_dir = tmp_path / "pending"
+            approved_dir = tmp_path / "approved"
+            _write_reviewed(reviewed_dir, "req-dryrun", _make_reviewed("req-dryrun"))
+            _write_pending(pending_dir, "req-dryrun", _make_pending("req-dryrun"))
+            approval = {
+                "request_id": "req-dryrun",
+                "approved": True,
+                "approved_by": "user",
+                "approved_at": "2026-05-14T00:00:00+00:00",
+                "operation_count": 1,
+                "explicit_user_approval_required": True,
+            }
+            approved_dir.mkdir(parents=True)
+            (approved_dir / "approved_req-dryrun.json").write_text(json.dumps(approval))
+
+            with (
+                patch("prometheus.agents.lumen_calendar_executor.REVIEWED_LUMEN_DIR", reviewed_dir),
+                patch("prometheus.agents.lumen_calendar_executor.PENDING_LUMEN_DIR", pending_dir),
+                patch("prometheus.agents.lumen_calendar_executor.APPROVED_LUMEN_DIR", approved_dir),
+                patch("prometheus.agents.lumen_calendar_executor.COMPLETED_LUMEN_DIR", tmp_path / "completed"),
+                patch("prometheus.agents.lumen_calendar_executor.FAILED_LUMEN_DIR", tmp_path / "failed"),
+                patch("prometheus.agents.lumen_calendar_executor.load_google_calendar_config",
+                      return_value=config),
+            ):
+                from prometheus.agents import lumen_calendar_executor as ex
+                result = ex.execute_approved_calendar_request("req-dryrun")
+
+            assert not result["success"]
+            reason = result["reason"].lower()
+            # Must block on dry_run, not on enabled-missing
+            assert "dry_run" in reason or "dry run" in reason, (
+                f"Expected block on dry_run, got: {result['reason']!r}"
+            )
+            assert "enabled" not in reason or "not true" not in reason
+        finally:
+            for k in ("GOOGLE_CALENDAR_ENABLED", "GOOGLE_CALENDAR_DRY_RUN"):
+                os.environ.pop(k, None)
+            os.environ.update(saved)

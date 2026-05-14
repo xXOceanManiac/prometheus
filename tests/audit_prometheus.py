@@ -1935,6 +1935,169 @@ def section_lumen_calendar_router():
            notes="Proposals are never auto-approved by the router")
 
 
+def section_calendar_executor():
+    print("\n=== SECTION 15: Lumen Calendar Executor ===")
+
+    try:
+        from prometheus.agents.lumen_calendar_executor import (
+            list_reviewed_calendar_requests,
+            load_reviewed_calendar_request,
+            approve_calendar_request,
+            execute_approved_calendar_request,
+            execute_calendar_operation,
+            write_calendar_execution_result,
+            get_request_status,
+        )
+        record("calendar_executor:module_imports", True)
+    except Exception as exc:
+        record("calendar_executor:module_imports", False, error=str(exc))
+        return
+
+    # list_reviewed returns list
+    try:
+        requests = list_reviewed_calendar_requests()
+        record("calendar_executor:list_reviewed_returns_list", isinstance(requests, list))
+    except Exception as exc:
+        record("calendar_executor:list_reviewed_returns_list", False, error=str(exc))
+
+    # load missing request returns None
+    try:
+        result = load_reviewed_calendar_request("audit-nonexistent-id")
+        record("calendar_executor:load_missing_returns_none", result is None)
+    except Exception as exc:
+        record("calendar_executor:load_missing_returns_none", False, error=str(exc))
+
+    # approve missing request returns failure
+    try:
+        result = approve_calendar_request("audit-nonexistent-id")
+        record("calendar_executor:approve_missing_fails", not result.get("ok"),
+               notes="approval of nonexistent request returns ok=False")
+    except Exception as exc:
+        record("calendar_executor:approve_missing_fails", False, error=str(exc))
+
+    # execute without approval fails
+    try:
+        result = execute_approved_calendar_request("audit-nonexistent-id")
+        record("calendar_executor:execute_without_approval_fails", not result.get("success"),
+               notes="execution without approval record returns success=False")
+    except Exception as exc:
+        record("calendar_executor:execute_without_approval_fails", False, error=str(exc))
+
+    # get_request_status returns dict
+    try:
+        status = get_request_status("audit-nonexistent-id")
+        record("calendar_executor:get_status_returns_dict", isinstance(status, dict))
+    except Exception as exc:
+        record("calendar_executor:get_status_returns_dict", False, error=str(exc))
+
+    # Tool registry — 3 executor actions registered
+    try:
+        from prometheus.execution.tool_capability_registry import TOOL_CAPABILITIES
+        has_list = "calendar_list_reviewed_requests" in TOOL_CAPABILITIES
+        has_approve = "calendar_approve_request" in TOOL_CAPABILITIES
+        has_execute = "calendar_execute_approved_request" in TOOL_CAPABILITIES
+        record("calendar_executor:registry_has_all_three",
+               has_list and has_approve and has_execute)
+    except Exception as exc:
+        record("calendar_executor:registry_has_all_three", False, error=str(exc))
+
+    # Execute tool requires confirmed=True slot
+    try:
+        from prometheus.execution.tool_capability_registry import TOOL_CAPABILITIES
+        cap = TOOL_CAPABILITIES["calendar_execute_approved_request"]
+        record("calendar_executor:execute_requires_confirmed",
+               "confirmed" in cap.required_slots,
+               notes="calendar_execute_approved_request.required_slots includes confirmed")
+    except Exception as exc:
+        record("calendar_executor:execute_requires_confirmed", False, error=str(exc))
+
+    # Execute tool is high risk
+    try:
+        from prometheus.execution.tool_capability_registry import TOOL_CAPABILITIES
+        cap = TOOL_CAPABILITIES["calendar_execute_approved_request"]
+        record("calendar_executor:execute_is_high_risk", cap.risk == "high")
+    except Exception as exc:
+        record("calendar_executor:execute_is_high_risk", False, error=str(exc))
+
+    # Approve tool is medium risk
+    try:
+        from prometheus.execution.tool_capability_registry import TOOL_CAPABILITIES
+        cap = TOOL_CAPABILITIES["calendar_approve_request"]
+        record("calendar_executor:approve_is_medium_risk", cap.risk == "medium")
+    except Exception as exc:
+        record("calendar_executor:approve_is_medium_risk", False, error=str(exc))
+
+    # Source safety checks
+    import inspect
+    import prometheus.agents.lumen_calendar_executor as exec_mod
+    src = inspect.getsource(exec_mod)
+
+    record("calendar_executor:no_subprocess",
+           "import subprocess" not in src and "subprocess.run" not in src and "os.system" not in src,
+           notes="No shell execution in executor source")
+
+    record("calendar_executor:no_home_assistant_calls",
+           "run_ha_script" not in src and "home_assistant_url" not in src.lower(),
+           notes="No HA integration calls in executor")
+
+    record("calendar_executor:has_suspicious_key_check",
+           "_SUSPICIOUS_KEYS" in src,
+           notes="Executor validates operations against suspicious key blocklist")
+
+    record("calendar_executor:execute_requires_approval_record",
+           "_load_approval_record" in src or "No approval record" in src,
+           notes="Executor checks for approval record before executing")
+
+    # FOLLOWUP_ACTIONS includes executor actions
+    try:
+        from prometheus.core.tool_followups import FOLLOWUP_ACTIONS
+        has_all = all(a in FOLLOWUP_ACTIONS for a in (
+            "calendar_list_reviewed_requests",
+            "calendar_approve_request",
+            "calendar_execute_approved_request",
+        ))
+        record("calendar_executor:all_in_followup_actions", has_all)
+    except Exception as exc:
+        record("calendar_executor:all_in_followup_actions", False, error=str(exc))
+
+    # Response synthesizer handles executor actions
+    try:
+        from prometheus.execution.response_synthesizer import is_synthesized_action
+        ok = (
+            is_synthesized_action("calendar_list_reviewed_requests")
+            and is_synthesized_action("calendar_approve_request")
+            and is_synthesized_action("calendar_execute_approved_request")
+        )
+        record("calendar_executor:synthesizer_handles_all_three", ok)
+    except Exception as exc:
+        record("calendar_executor:synthesizer_handles_all_three", False, error=str(exc))
+
+    # Show Logs intent override — fix verification
+    try:
+        from prometheus.core.intent_overrides import resolve_direct_intent
+        result = resolve_direct_intent("show me the logs")
+        record("show_logs:direct_intent_override",
+               result is not None and result.get("payload", {}).get("action") == "show_logs",
+               notes="'show me the logs' routes to show_logs via direct intent override")
+    except Exception as exc:
+        record("show_logs:direct_intent_override", False, error=str(exc))
+
+    try:
+        from prometheus.core.intent_overrides import resolve_direct_intent
+        result = resolve_direct_intent("check the logs")
+        record("show_logs:check_logs_phrase",
+               result is not None and result.get("payload", {}).get("action") == "show_logs")
+    except Exception as exc:
+        record("show_logs:check_logs_phrase", False, error=str(exc))
+
+    # Show Logs response synthesizer
+    try:
+        from prometheus.execution.response_synthesizer import is_synthesized_action
+        record("show_logs:synthesizer_handles_show_logs", is_synthesized_action("show_logs"))
+    except Exception as exc:
+        record("show_logs:synthesizer_handles_show_logs", False, error=str(exc))
+
+
 def main():
     print("=" * 60)
     print("PROMETHEUS CAPABILITY AUDIT")
@@ -1957,6 +2120,7 @@ def main():
     section_lumen_calendar_router()
     section_calendar_read_tools()
     section_response_vault_logs()
+    section_calendar_executor()
 
     print("\n" + "=" * 60)
     total = len(results)

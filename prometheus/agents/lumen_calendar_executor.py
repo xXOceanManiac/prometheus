@@ -496,6 +496,9 @@ def get_request_status(request_id: str) -> dict:
 # ── CLI ───────────────────────────────────────────────────────────────────────
 
 def _main(argv: list[str] | None = None) -> None:
+    from prometheus.integrations.google_calendar import _load_project_dotenv
+    _load_project_dotenv()
+
     args = argv if argv is not None else sys.argv[1:]
     if not args:
         print(
