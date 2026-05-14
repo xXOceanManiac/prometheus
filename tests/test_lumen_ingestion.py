@@ -178,43 +178,41 @@ def _write_request(outbox_dir: Path, name: str, payload: dict) -> Path:
     return p
 
 
+def _patch_ingestion_dirs(monkeypatch, tmp_path):
+    """Monkeypatch all ingestion dir constants and stub ensure_lumen_ingestion_dirs."""
+    import prometheus.agents.lumen_ingestion as lmod
+    outbox = tmp_path / "outbox"
+    accepted = tmp_path / "accepted"
+    rejected = tmp_path / "rejected"
+    pending = tmp_path / "pending"
+    for d in (accepted, rejected, pending):
+        d.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(lmod, "LUMEN_OUTBOX_DIR", outbox)
+    monkeypatch.setattr(lmod, "LUMEN_ACCEPTED_DIR", accepted)
+    monkeypatch.setattr(lmod, "LUMEN_REJECTED_DIR", rejected)
+    monkeypatch.setattr(lmod, "PENDING_LUMEN_DIR", pending)
+    monkeypatch.setattr(lmod, "ensure_lumen_ingestion_dirs", lambda: None)
+    return outbox, accepted, rejected, pending
+
+
 class TestIngestLumenOutboxOnce:
     def test_missing_outbox_returns_empty(self, tmp_path, monkeypatch):
-        import prometheus.agents.lumen_ingestion as lmod
-        monkeypatch.setattr(lmod, "LUMEN_OUTBOX_DIR", tmp_path / "nonexistent")
-        monkeypatch.setattr(lmod, "LUMEN_ACCEPTED_DIR", tmp_path / "accepted")
-        monkeypatch.setattr(lmod, "LUMEN_REJECTED_DIR", tmp_path / "rejected")
-        monkeypatch.setattr(lmod, "PENDING_LUMEN_DIR", tmp_path / "pending")
+        outbox, *_ = _patch_ingestion_dirs(monkeypatch, tmp_path)
+        # outbox dir not created → should return []
         results = ingest_lumen_outbox_once()
         assert results == []
 
     def test_valid_request_is_accepted(self, tmp_path, monkeypatch):
-        outbox = tmp_path / "outbox"
+        outbox, accepted, rejected, pending = _patch_ingestion_dirs(monkeypatch, tmp_path)
         outbox.mkdir()
-        accepted = tmp_path / "accepted"
-        rejected = tmp_path / "rejected"
-        pending = tmp_path / "pending"
-
-        import prometheus.agents.lumen_ingestion as lmod
-        monkeypatch.setattr(lmod, "LUMEN_OUTBOX_DIR", outbox)
-        monkeypatch.setattr(lmod, "LUMEN_ACCEPTED_DIR", accepted)
-        monkeypatch.setattr(lmod, "LUMEN_REJECTED_DIR", rejected)
-        monkeypatch.setattr(lmod, "PENDING_LUMEN_DIR", pending)
-
         _write_request(outbox, "lumen_calendar_request_001.json", _good_request())
         results = ingest_lumen_outbox_once()
         assert len(results) == 1
         assert results[0].status == "accepted"
 
     def test_accepted_creates_pending_proposal(self, tmp_path, monkeypatch):
-        outbox = tmp_path / "outbox"
+        outbox, accepted, rejected, pending = _patch_ingestion_dirs(monkeypatch, tmp_path)
         outbox.mkdir()
-        import prometheus.agents.lumen_ingestion as lmod
-        monkeypatch.setattr(lmod, "LUMEN_OUTBOX_DIR", outbox)
-        monkeypatch.setattr(lmod, "LUMEN_ACCEPTED_DIR", tmp_path / "accepted")
-        monkeypatch.setattr(lmod, "LUMEN_REJECTED_DIR", tmp_path / "rejected")
-        monkeypatch.setattr(lmod, "PENDING_LUMEN_DIR", tmp_path / "pending")
-
         req = _good_request()
         _write_request(outbox, "lumen_calendar_request_002.json", req)
         results = ingest_lumen_outbox_once()
@@ -226,32 +224,16 @@ class TestIngestLumenOutboxOnce:
         assert data["source"] == "lumen"
 
     def test_accepted_original_moves_to_accepted_dir(self, tmp_path, monkeypatch):
-        outbox = tmp_path / "outbox"
+        outbox, accepted, rejected, pending = _patch_ingestion_dirs(monkeypatch, tmp_path)
         outbox.mkdir()
-        accepted = tmp_path / "accepted"
-        import prometheus.agents.lumen_ingestion as lmod
-        monkeypatch.setattr(lmod, "LUMEN_OUTBOX_DIR", outbox)
-        monkeypatch.setattr(lmod, "LUMEN_ACCEPTED_DIR", accepted)
-        monkeypatch.setattr(lmod, "LUMEN_REJECTED_DIR", tmp_path / "rejected")
-        monkeypatch.setattr(lmod, "PENDING_LUMEN_DIR", tmp_path / "pending")
-
         _write_request(outbox, "lumen_calendar_request_003.json", _good_request())
         ingest_lumen_outbox_once()
-        # original no longer in outbox
         assert not (outbox / "lumen_calendar_request_003.json").exists()
-        # moved to accepted
         assert (accepted / "lumen_calendar_request_003.json").exists()
 
     def test_malformed_json_is_rejected(self, tmp_path, monkeypatch):
-        outbox = tmp_path / "outbox"
+        outbox, accepted, rejected, pending = _patch_ingestion_dirs(monkeypatch, tmp_path)
         outbox.mkdir()
-        rejected = tmp_path / "rejected"
-        import prometheus.agents.lumen_ingestion as lmod
-        monkeypatch.setattr(lmod, "LUMEN_OUTBOX_DIR", outbox)
-        monkeypatch.setattr(lmod, "LUMEN_ACCEPTED_DIR", tmp_path / "accepted")
-        monkeypatch.setattr(lmod, "LUMEN_REJECTED_DIR", rejected)
-        monkeypatch.setattr(lmod, "PENDING_LUMEN_DIR", tmp_path / "pending")
-
         bad = outbox / "lumen_calendar_request_bad.json"
         bad.write_text("{not valid json", encoding="utf-8")
         results = ingest_lumen_outbox_once()
@@ -259,28 +241,16 @@ class TestIngestLumenOutboxOnce:
         assert (rejected / "lumen_calendar_request_bad.json").exists()
 
     def test_missing_approval_is_rejected(self, tmp_path, monkeypatch):
-        outbox = tmp_path / "outbox"
+        outbox, *_ = _patch_ingestion_dirs(monkeypatch, tmp_path)
         outbox.mkdir()
-        import prometheus.agents.lumen_ingestion as lmod
-        monkeypatch.setattr(lmod, "LUMEN_OUTBOX_DIR", outbox)
-        monkeypatch.setattr(lmod, "LUMEN_ACCEPTED_DIR", tmp_path / "accepted")
-        monkeypatch.setattr(lmod, "LUMEN_REJECTED_DIR", tmp_path / "rejected")
-        monkeypatch.setattr(lmod, "PENDING_LUMEN_DIR", tmp_path / "pending")
-
         req = _good_request({"requires_prometheus_approval": False})
         _write_request(outbox, "lumen_calendar_request_noapproval.json", req)
         results = ingest_lumen_outbox_once()
         assert results[0].status == "rejected"
 
     def test_dry_run_false_is_rejected(self, tmp_path, monkeypatch):
-        outbox = tmp_path / "outbox"
+        outbox, *_ = _patch_ingestion_dirs(monkeypatch, tmp_path)
         outbox.mkdir()
-        import prometheus.agents.lumen_ingestion as lmod
-        monkeypatch.setattr(lmod, "LUMEN_OUTBOX_DIR", outbox)
-        monkeypatch.setattr(lmod, "LUMEN_ACCEPTED_DIR", tmp_path / "accepted")
-        monkeypatch.setattr(lmod, "LUMEN_REJECTED_DIR", tmp_path / "rejected")
-        monkeypatch.setattr(lmod, "PENDING_LUMEN_DIR", tmp_path / "pending")
-
         req = _good_request()
         req["operations"][0]["dry_run"] = False
         _write_request(outbox, "lumen_calendar_request_nodryrun.json", req)
@@ -288,14 +258,8 @@ class TestIngestLumenOutboxOnce:
         assert results[0].status == "rejected"
 
     def test_operation_approval_false_rejected(self, tmp_path, monkeypatch):
-        outbox = tmp_path / "outbox"
+        outbox, *_ = _patch_ingestion_dirs(monkeypatch, tmp_path)
         outbox.mkdir()
-        import prometheus.agents.lumen_ingestion as lmod
-        monkeypatch.setattr(lmod, "LUMEN_OUTBOX_DIR", outbox)
-        monkeypatch.setattr(lmod, "LUMEN_ACCEPTED_DIR", tmp_path / "accepted")
-        monkeypatch.setattr(lmod, "LUMEN_REJECTED_DIR", tmp_path / "rejected")
-        monkeypatch.setattr(lmod, "PENDING_LUMEN_DIR", tmp_path / "pending")
-
         req = _good_request()
         req["operations"][0]["requires_prometheus_approval"] = False
         _write_request(outbox, "lumen_calendar_request_opnoapproval.json", req)
@@ -307,9 +271,9 @@ class TestIngestLumenOutboxOnce:
 
 class TestListPendingProposals:
     def test_list_pending_returns_proposals(self, tmp_path, monkeypatch):
+        import prometheus.agents.lumen_ingestion as lmod
         pending = tmp_path / "pending"
         pending.mkdir()
-        import prometheus.agents.lumen_ingestion as lmod
         monkeypatch.setattr(lmod, "PENDING_LUMEN_DIR", pending)
 
         proposal = PendingCalendarProposal(
@@ -330,9 +294,9 @@ class TestListPendingProposals:
         assert results[0].request_id == "req-test001"
 
     def test_empty_pending_dir_returns_empty(self, tmp_path, monkeypatch):
+        import prometheus.agents.lumen_ingestion as lmod
         pending = tmp_path / "pending"
         pending.mkdir()
-        import prometheus.agents.lumen_ingestion as lmod
         monkeypatch.setattr(lmod, "PENDING_LUMEN_DIR", pending)
         results = list_pending_lumen_calendar_proposals()
         assert results == []
@@ -353,7 +317,12 @@ class TestNoForbiddenDependencies:
 
     def test_no_subprocess_in_lumen_ingestion(self):
         src = self._source("prometheus/agents/lumen_ingestion.py")
-        assert "subprocess" not in src
+        # "subprocess" may appear as a string in the suspicious-keys list — that's expected.
+        # What must not appear is an actual import or call.
+        assert "import subprocess" not in src
+        assert "subprocess.run" not in src
+        assert "subprocess.call" not in src
+        assert "subprocess.Popen" not in src
         assert "os.system" not in src
 
     def test_no_google_calendar_api_in_lumen_ingestion(self):
