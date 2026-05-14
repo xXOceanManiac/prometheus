@@ -38,6 +38,7 @@ from prometheus.infra.paths import (
 from prometheus.integrations.google_calendar import (
     GoogleCalendarConfig,
     GoogleCalendarResult,
+    build_google_calendar_service,
     create_calendar_event,
     update_calendar_event,
     delete_calendar_event,
@@ -213,6 +214,7 @@ def approve_calendar_request(
         "explicit_user_approval_required": True,
     }
     dest = APPROVED_LUMEN_DIR / f"approved_{request_id}.json"
+    dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_text(json.dumps(approval, indent=2), encoding="utf-8")
 
     return {
@@ -326,11 +328,11 @@ def execute_calendar_operation(
 
 def write_calendar_execution_result(request_id: str, result: dict) -> Path:
     """Write execution result to COMPLETED or FAILED dir depending on success."""
-    ensure_lumen_executor_dirs()
     if result.get("success"):
         dest = COMPLETED_LUMEN_DIR / f"completed_{request_id}.json"
     else:
         dest = FAILED_LUMEN_DIR / f"failed_{request_id}.json"
+    dest.parent.mkdir(parents=True, exist_ok=True)
     dest.write_text(json.dumps(result, indent=2), encoding="utf-8")
     return dest
 
@@ -408,8 +410,7 @@ def execute_approved_calendar_request(request_id: str) -> dict:
     if not valid:
         return _fail(f"Operation validation failed: {validation_error}")
 
-    # 6. Build service (deferred until here)
-    from prometheus.integrations.google_calendar import build_google_calendar_service
+    # 6. Build service
     try:
         service = build_google_calendar_service(config, allow_interactive_auth=False)
     except Exception as exc:
