@@ -1,0 +1,20 @@
+{
+  "request_id": "req-cb41a3b8798c",
+  "reviewed_at": "2026-05-14T05:25:30.058577+00:00",
+  "proposal_reason": "Test",
+  "source": "lumen",
+  "operation_count": 1,
+  "all_dry_run": true,
+  "approved": false,
+  "results": [
+    {
+      "operation_index": 0,
+      "operation_type": "create_event",
+      "success": true,
+      "dry_run": true,
+      "message": "[DRY RUN] Would create event 'Test event' at 2026-05-15T14:00.",
+      "calendar_id": "primary",
+      "event_id": null
+    }
+  ]
+}

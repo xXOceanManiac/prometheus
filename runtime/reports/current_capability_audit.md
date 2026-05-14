@@ -1,7 +1,7 @@
 # Prometheus Capability Audit
 
-**Generated:** 2026-05-14 00:53:54
-**Tests run:** 139  **Passed:** 139  **Failed:** 0  (100.0% pass rate)
+**Generated:** 2026-05-14 01:25:19
+**Tests run:** 157  **Passed:** 157  **Failed:** 0  (100.0% pass rate)
 
 ---
 
@@ -19,7 +19,7 @@ Key findings:
 - **VOICE**: ✓ 12/12 passing
 - **LOGGING**: ✓ 6/6 passing
 - **HUD**: ✓ 11/11 passing
-- **OTHER**: ✓ 19/19 passing
+- **OTHER**: ✓ 37/37 passing
 
 ---
 
@@ -35,10 +35,10 @@ Key findings:
 | startup | ~/.jarvis/logs dir exists | PASS |  |  |
 | startup | ~/.jarvis/audio dir exists | PASS |  |  |
 | startup | ~/.jarvis/memory_v2 dir exists | PASS |  |  |
-| startup | tools.py imports cleanly | PASS | 114ms |  |
+| startup | tools.py imports cleanly | PASS | 110ms |  |
 | startup | memory.py imports cleanly | PASS | 0ms |  |
 | startup | working_memory.py imports cleanly | PASS | 0ms |  |
-| startup | planner.planner imports cleanly | PASS | 2ms |  |
+| startup | planner.planner imports cleanly | PASS | 1ms |  |
 | startup | Missing OPENAI_API_KEY surfaced in CONFIG (not silently blank) | PASS |  | If key is absent it should be detectable — config reads env correctly |
 | startup | visual_state.json writable | PASS |  |  |
 | startup | heartbeat.json writable | PASS |  |  |
@@ -54,7 +54,7 @@ Key findings:
 | tools | tool:write_file:content_correct | PASS |  |  |
 | tools | tool:screenshot:no_crash | PASS |  | ok=True: Screenshot saved to /home/tatel/Pictures/Screenshots/screens |
 | tools | tool:web_search:returns_result | PASS |  | Searched the web for prometheus audit test. |
-| tools | tool:list_windows:no_crash | PASS |  | ok=True windows=9 |
+| tools | tool:list_windows:no_crash | PASS |  | ok=True windows=10 |
 | tools | tool:get_active_window:no_crash | PASS |  | ok=True |
 | tools | tool:system_status | PASS |  | System status retrieved. |
 | tools | tool:system_status:has_active_project_key | PASS |  |  |
@@ -111,7 +111,7 @@ Key findings:
 | planning | planning:plan_is_serializable | PASS |  |  |
 | planning | planning:low_confidence:triggers_clarification | PASS | 0ms | conf=0.20 q='Can you be more specific about what you'd like me to do?' |
 | planning | planning:multi_step:two_or_more_steps | PASS |  | steps=2 conf=0.82 |
-| planning | planning:executor:runs_safe_plan | PASS | 51ms | 2/2 steps succeeded. |
+| planning | planning:executor:runs_safe_plan | PASS | 54ms | 2/2 steps succeeded. |
 | planning | planning:executor:steps_in_order | PASS |  | first step: list_files |
 | planning | planning:executor:first_step_failure_recorded | PASS |  | 1/2 steps succeeded. |
 | planning | planning:verifier:passes_on_success | PASS |  | 2/2 steps succeeded. |
@@ -131,7 +131,7 @@ Key findings:
 | voice | voice:response_in_progress_guard_exists | PASS |  | Checked source for duplicate-response guard |
 | voice | voice:error_callback:fires | PASS |  |  |
 | logging | logging:log_file_created_today | PASS |  |  |
-| logging | logging:jsonl_lines_valid | PASS |  | Checked last 20 of 1376 lines |
+| logging | logging:jsonl_lines_valid | PASS |  | Checked last 20 of 1918 lines |
 | logging | logging:entries_have_ts | PASS |  |  |
 | logging | logging:entries_have_kind | PASS |  |  |
 | logging | logging:activity.jsonl_exists | PASS |  |  |
@@ -157,6 +157,10 @@ Key findings:
 |  | google_calendar:no_home_assistant_calls | PASS |  | No HA calls in source |
 |  | google_calendar:no_subprocess | PASS |  | No shell execution in source |
 |  | google_calendar:no_auto_oauth | PASS |  | OAuth is guarded by allow_interactive_auth flag |
+|  | google_calendar:auth_function_exists | PASS |  | authorize_google_calendar is callable |
+|  | google_calendar:auth_not_at_import | PASS |  | authorize_google_calendar() is not called at module level |
+|  | google_calendar:list_upcoming_exists | PASS |  | list_upcoming_calendar_events is callable |
+|  | google_calendar:dotenv_in_cli | PASS |  | CLI _main loads .env via dotenv before reading config |
 |  | lumen_ingestion:module_imports | PASS |  |  |
 |  | lumen_ingestion:valid_request_passes | PASS |  | OK |
 |  | lumen_ingestion:dry_run_false_rejected | PASS |  | Operation[0] dry_run must be True. |
@@ -166,6 +170,20 @@ Key findings:
 |  | lumen_ingestion:no_home_assistant_calls | PASS |  | No HA API key usage found in source |
 |  | lumen_ingestion:no_subprocess | PASS |  | No shell execution found in source |
 |  | lumen_ingestion:list_pending_returns_list | PASS |  |  |
+|  | lumen_calendar_context:module_imports | PASS |  |  |
+|  | lumen_calendar_context:event_to_dict | PASS |  |  |
+|  | lumen_calendar_context:empty_summary | PASS |  |  |
+|  | lumen_calendar_context:multi_event_summary | PASS |  |  |
+|  | lumen_calendar_context:no_api_calls | PASS |  | No API or shell calls in source |
+|  | lumen_calendar_router:module_imports | PASS |  |  |
+|  | lumen_calendar_router:load_missing_returns_none | PASS |  |  |
+|  | lumen_calendar_router:missing_review_has_dry_run | PASS |  |  |
+|  | lumen_calendar_router:review_all_returns_list | PASS |  |  |
+|  | lumen_calendar_router:list_reviewed_returns_list | PASS |  |  |
+|  | lumen_calendar_router:no_live_write_calls | PASS |  | Router only calls dry_run_calendar_operation, no live writes |
+|  | lumen_calendar_router:no_subprocess | PASS |  | No shell execution in router source |
+|  | lumen_calendar_router:no_home_assistant | PASS |  | No Home Assistant calls in router source |
+|  | lumen_calendar_router:no_auto_approval | PASS |  | Proposals are never auto-approved by the router |
 
 ---
 

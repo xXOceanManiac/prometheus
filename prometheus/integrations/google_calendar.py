@@ -519,16 +519,66 @@ def dry_run_calendar_operation(
     )
 
 
+# ── CLI env loading (explicit, not at import time) ────────────────────────────
+
+def _load_project_dotenv(env_path=None) -> bool:
+    """
+    Load .env from the project root into os.environ.
+
+    Called from CLI _main() only — never at module import time.
+    Returns True if a .env file was found and processed.
+
+    env_path: explicit override (Path or str). If None, auto-detects:
+      1. prometheus.infra.paths.PROJECT_ROOT / ".env"
+      2. Fallback: parent of parent of parent of __file__ / ".env"
+         (google_calendar.py → integrations/ → prometheus/ → Prometheus_Main/)
+    """
+    from pathlib import Path as _Path
+
+    if env_path is None:
+        try:
+            from prometheus.infra.paths import PROJECT_ROOT as _PROJECT_ROOT
+            env_path = _PROJECT_ROOT / ".env"
+        except Exception:
+            env_path = _Path(__file__).resolve().parent.parent.parent / ".env"
+
+    env_path = _Path(env_path)
+    if not env_path.is_file():
+        return False
+
+    # Try python-dotenv first
+    try:
+        from dotenv import load_dotenv as _load_dotenv
+        _load_dotenv(env_path, override=False)
+        return True
+    except ImportError:
+        pass
+
+    # Fallback: minimal KEY=value parser (no external deps required)
+    try:
+        with env_path.open(encoding="utf-8") as fh:
+            for raw_line in fh:
+                line = raw_line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, _, raw_val = line.partition("=")
+                key = key.strip()
+                if not key or key in os.environ:
+                    continue
+                val = raw_val.strip()
+                if len(val) >= 2 and val[0] == val[-1] and val[0] in ('"', "'"):
+                    val = val[1:-1]
+                os.environ[key] = val
+        return True
+    except OSError:
+        return False
+
+
 # ── CLI entry point ───────────────────────────────────────────────────────────
 
 def _main(argv: list[str] | None = None) -> None:
     import json as _json
-    try:
-        from dotenv import load_dotenv as _load_dotenv
-        from prometheus.infra.paths import PROJECT_ROOT as _PROJECT_ROOT
-        _load_dotenv(_PROJECT_ROOT / ".env", override=False)
-    except ImportError:
-        pass
+    _load_project_dotenv()
 
     args = argv if argv is not None else sys.argv[1:]
     if not args:

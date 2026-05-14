@@ -1291,10 +1291,29 @@ def section_google_calendar():
     except ImportError as exc:
         record("google_calendar:list_upcoming_exists", False, error=str(exc))
 
-    # dotenv loading in CLI _main (not at import time)
+    # _load_project_dotenv helper exists and is callable
+    try:
+        from prometheus.integrations.google_calendar import _load_project_dotenv
+        record("google_calendar:load_project_dotenv_exists", callable(_load_project_dotenv),
+               notes="_load_project_dotenv is callable")
+    except ImportError as exc:
+        record("google_calendar:load_project_dotenv_exists", False, error=str(exc))
+
+    # dotenv loading in CLI _main (not at import time) with fallback path
     record("google_calendar:dotenv_in_cli",
-           "load_dotenv" in src and "PROJECT_ROOT" in src and "_main" in src,
-           notes="CLI _main loads .env via dotenv before reading config")
+           "_load_project_dotenv" in src and "__file__" in src and "_main" in src,
+           notes="CLI _main calls _load_project_dotenv with __file__-based fallback")
+
+    # Fallback path computed from __file__ resolves to project root
+    try:
+        from pathlib import Path as _Path
+        import prometheus.integrations.google_calendar as gc_mod_audit
+        computed = _Path(gc_mod_audit.__file__).resolve().parent.parent.parent / ".env"
+        record("google_calendar:dotenv_fallback_path_correct",
+               computed.parent.name == "Prometheus_Main",
+               notes=f"__file__-based fallback path: {computed}")
+    except Exception as exc:
+        record("google_calendar:dotenv_fallback_path_correct", False, error=str(exc))
 
 
 def section_lumen_ingestion():

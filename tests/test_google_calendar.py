@@ -401,3 +401,123 @@ class TestNoForbiddenDependencies:
         d = dataclasses.asdict(result)
         assert isinstance(d, dict)
         assert "success" in d
+
+
+# ── CLI dotenv loading tests ──────────────────────────────────────────────────
+
+class TestLoadProjectDotenv:
+    """Tests for _load_project_dotenv() — the CLI env-file loader."""
+
+    def test_loads_enabled_true_from_env_file(self, tmp_path, monkeypatch):
+        """Creating a .env with GOOGLE_CALENDAR_ENABLED=true makes load_google_calendar_config return enabled=True."""
+        import os
+        env_file = tmp_path / ".env"
+        env_file.write_text("GOOGLE_CALENDAR_ENABLED=true\n", encoding="utf-8")
+
+        monkeypatch.delenv("GOOGLE_CALENDAR_ENABLED", raising=False)
+
+        from prometheus.integrations.google_calendar import _load_project_dotenv, load_google_calendar_config
+        _load_project_dotenv(env_path=env_file)
+        cfg = load_google_calendar_config()
+        assert cfg.enabled is True
+
+    def test_config_path_vars_loaded_from_env_file(self, tmp_path, monkeypatch):
+        """Credentials and token paths in .env are picked up by load_google_calendar_config."""
+        import os
+        env_file = tmp_path / ".env"
+        env_file.write_text(
+            "GOOGLE_CALENDAR_CREDENTIALS_PATH=/fake/credentials.json\n"
+            "GOOGLE_CALENDAR_TOKEN_PATH=/fake/token.json\n",
+            encoding="utf-8",
+        )
+        monkeypatch.delenv("GOOGLE_CALENDAR_CREDENTIALS_PATH", raising=False)
+        monkeypatch.delenv("GOOGLE_CALENDAR_TOKEN_PATH", raising=False)
+
+        from prometheus.integrations.google_calendar import _load_project_dotenv, load_google_calendar_config
+        _load_project_dotenv(env_path=env_file)
+        cfg = load_google_calendar_config()
+        assert cfg.credentials_path == "/fake/credentials.json"
+        assert cfg.token_path == "/fake/token.json"
+
+    def test_returns_true_when_file_found(self, tmp_path):
+        env_file = tmp_path / ".env"
+        env_file.write_text("GOOGLE_CALENDAR_ENABLED=false\n", encoding="utf-8")
+
+        from prometheus.integrations.google_calendar import _load_project_dotenv
+        result = _load_project_dotenv(env_path=env_file)
+        assert result is True
+
+    def test_returns_false_when_file_missing(self, tmp_path):
+        from prometheus.integrations.google_calendar import _load_project_dotenv
+        result = _load_project_dotenv(env_path=tmp_path / "nonexistent.env")
+        assert result is False
+
+    def test_does_not_override_already_set_vars(self, tmp_path, monkeypatch):
+        """Already-exported env vars are not overwritten."""
+        env_file = tmp_path / ".env"
+        env_file.write_text("GOOGLE_CALENDAR_ENABLED=true\n", encoding="utf-8")
+
+        monkeypatch.setenv("GOOGLE_CALENDAR_ENABLED", "false")
+
+        from prometheus.integrations.google_calendar import _load_project_dotenv
+        _load_project_dotenv(env_path=env_file)
+        import os
+        assert os.environ["GOOGLE_CALENDAR_ENABLED"] == "false"
+
+    def test_safe_defaults_when_no_env_file(self, tmp_path, monkeypatch):
+        """If .env doesn't exist, defaults remain safe: enabled=False, dry_run=True."""
+        monkeypatch.delenv("GOOGLE_CALENDAR_ENABLED", raising=False)
+        monkeypatch.delenv("GOOGLE_CALENDAR_DRY_RUN", raising=False)
+
+        from prometheus.integrations.google_calendar import _load_project_dotenv, load_google_calendar_config
+        _load_project_dotenv(env_path=tmp_path / "missing.env")
+        cfg = load_google_calendar_config()
+        assert cfg.enabled is False
+        assert cfg.dry_run is True
+
+    def test_auto_detect_does_not_raise(self):
+        """Calling _load_project_dotenv() with no args should not raise."""
+        from prometheus.integrations.google_calendar import _load_project_dotenv
+        result = _load_project_dotenv()
+        assert isinstance(result, bool)
+
+    def test_fallback_path_from_file_location(self):
+        """The __file__-based fallback path resolves to Prometheus_Main/.env."""
+        from pathlib import Path
+        import prometheus.integrations.google_calendar as gc_mod
+        computed = Path(gc_mod.__file__).resolve().parent.parent.parent / ".env"
+        assert computed.name == ".env"
+        assert computed.parent.name == "Prometheus_Main"
+
+    def test_minimal_parser_handles_comments_and_blank_lines(self, tmp_path, monkeypatch):
+        """Minimal fallback parser skips comments and blank lines."""
+        env_file = tmp_path / ".env"
+        env_file.write_text(
+            "# This is a comment\n"
+            "\n"
+            "GOOGLE_CALENDAR_TIMEZONE=UTC\n"
+            "# Another comment\n",
+            encoding="utf-8",
+        )
+        monkeypatch.delenv("GOOGLE_CALENDAR_TIMEZONE", raising=False)
+
+        from prometheus.integrations.google_calendar import _load_project_dotenv, load_google_calendar_config
+        _load_project_dotenv(env_path=env_file)
+        cfg = load_google_calendar_config()
+        assert cfg.timezone == "UTC"
+
+    def test_values_with_equals_sign_in_value(self, tmp_path, monkeypatch):
+        """Values that contain '=' are parsed correctly (partition on first '=' only)."""
+        import os
+        env_file = tmp_path / ".env"
+        env_file.write_text("GOOGLE_CALENDAR_TIMEZONE=US/Eastern\n", encoding="utf-8")
+        monkeypatch.delenv("GOOGLE_CALENDAR_TIMEZONE", raising=False)
+
+        from prometheus.integrations.google_calendar import _load_project_dotenv
+        _load_project_dotenv(env_path=env_file)
+        assert os.environ.get("GOOGLE_CALENDAR_TIMEZONE") == "US/Eastern"
+
+    def test_load_project_dotenv_is_in_source(self):
+        """_load_project_dotenv is exported from the module."""
+        from prometheus.integrations.google_calendar import _load_project_dotenv
+        assert callable(_load_project_dotenv)
