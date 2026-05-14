@@ -204,9 +204,33 @@ class TestPrometheusAgents:
             LUMEN_ACCEPTED_DIR,
             LUMEN_REJECTED_DIR,
             PENDING_LUMEN_DIR,
+            REVIEWED_LUMEN_DIR,
         )
         assert LUMEN_ROOT.parent == PROMETHEUS_ECOSYSTEM_ROOT
         assert LUMEN_ROOT.name == "Lumen"
+        assert REVIEWED_LUMEN_DIR.parent.name == "reviewed"
+
+    def test_lumen_calendar_context_imports(self):
+        from prometheus.agents.lumen_calendar_context import (
+            google_event_to_lumen_event_dict,
+            google_events_to_lumen_event_dicts,
+            build_calendar_context_summary,
+        )
+        assert callable(google_event_to_lumen_event_dict)
+        assert callable(google_events_to_lumen_event_dicts)
+        assert callable(build_calendar_context_summary)
+
+    def test_lumen_calendar_router_imports(self):
+        from prometheus.agents.lumen_calendar_router import (
+            load_pending_lumen_proposal,
+            write_lumen_review_result,
+            list_reviewed_lumen_calendar_proposals,
+            review_lumen_proposal_dry_run,
+            review_pending_lumen_proposals_dry_run,
+        )
+        assert callable(load_pending_lumen_proposal)
+        assert callable(review_lumen_proposal_dry_run)
+        assert callable(review_pending_lumen_proposals_dry_run)
 
 
 # ── prometheus.planning.* namespace ──────────────────────────────────────────

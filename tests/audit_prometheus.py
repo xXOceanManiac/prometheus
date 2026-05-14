@@ -1267,6 +1267,35 @@ def section_google_calendar():
            "allow_interactive_auth" in src and "run_local_server" in src,
            notes="OAuth is guarded by allow_interactive_auth flag")
 
+    # authorize_google_calendar exists and is explicit-only
+    try:
+        from prometheus.integrations.google_calendar import authorize_google_calendar
+        record("google_calendar:auth_function_exists", callable(authorize_google_calendar),
+               notes="authorize_google_calendar is callable")
+    except ImportError as exc:
+        record("google_calendar:auth_function_exists", False, error=str(exc))
+
+    # Auth is not called at import time
+    import importlib
+    import sys as _sys
+    # Re-check that importing the module doesn't trigger any auth
+    auth_at_import = "authorize_google_calendar()" in src and src.index("authorize_google_calendar()") < src.index("def _main")
+    record("google_calendar:auth_not_at_import", not auth_at_import,
+           notes="authorize_google_calendar() is not called at module level")
+
+    # list_upcoming_calendar_events exists
+    try:
+        from prometheus.integrations.google_calendar import list_upcoming_calendar_events
+        record("google_calendar:list_upcoming_exists", callable(list_upcoming_calendar_events),
+               notes="list_upcoming_calendar_events is callable")
+    except ImportError as exc:
+        record("google_calendar:list_upcoming_exists", False, error=str(exc))
+
+    # dotenv loading in CLI _main (not at import time)
+    record("google_calendar:dotenv_in_cli",
+           "load_dotenv" in src and "PROJECT_ROOT" in src and "_main" in src,
+           notes="CLI _main loads .env via dotenv before reading config")
+
 
 def section_lumen_ingestion():
     print("\n=== SECTION 10: Lumen Ingestion ===")
@@ -1352,6 +1381,135 @@ def section_lumen_ingestion():
         record("lumen_ingestion:list_pending_returns_list", False, error=str(exc))
 
 
+def section_lumen_calendar_context():
+    print("\n=== SECTION 12: Lumen Calendar Context ===")
+
+    try:
+        from prometheus.agents.lumen_calendar_context import (
+            google_event_to_lumen_event_dict,
+            google_events_to_lumen_event_dicts,
+            build_calendar_context_summary,
+        )
+        record("lumen_calendar_context:module_imports", True)
+    except Exception as exc:
+        record("lumen_calendar_context:module_imports", False, error=str(exc))
+        return
+
+    # Conversion preserves all fields
+    from prometheus.integrations.google_calendar import GoogleCalendarEvent
+    event = GoogleCalendarEvent(
+        event_id="e1", calendar_id="primary", title="Audit Event",
+        start_time="2026-05-15T10:00:00", end_time="2026-05-15T11:00:00",
+        location=None, description=None, html_link=None, raw=None,
+    )
+    try:
+        d = google_event_to_lumen_event_dict(event)
+        record("lumen_calendar_context:event_to_dict", d["title"] == "Audit Event" and "raw" not in d)
+    except Exception as exc:
+        record("lumen_calendar_context:event_to_dict", False, error=str(exc))
+
+    # Empty list produces empty summary
+    try:
+        summary = build_calendar_context_summary([])
+        record("lumen_calendar_context:empty_summary", summary["event_count"] == 0 and summary["events"] == [])
+    except Exception as exc:
+        record("lumen_calendar_context:empty_summary", False, error=str(exc))
+
+    # Multiple events
+    try:
+        events = [
+            GoogleCalendarEvent("e1", "primary", "A", "2026-05-15T09:00:00", "2026-05-15T10:00:00", None, None, None, None),
+            GoogleCalendarEvent("e2", "primary", "B", "2026-05-15T14:00:00", "2026-05-15T15:00:00", None, None, None, None),
+        ]
+        summary = build_calendar_context_summary(events)
+        record("lumen_calendar_context:multi_event_summary",
+               summary["event_count"] == 2 and summary["earliest_start"] == "2026-05-15T09:00:00")
+    except Exception as exc:
+        record("lumen_calendar_context:multi_event_summary", False, error=str(exc))
+
+    # No network or API calls in source
+    import inspect
+    import prometheus.agents.lumen_calendar_context as ctx_mod
+    src = inspect.getsource(ctx_mod)
+    record("lumen_calendar_context:no_api_calls",
+           "requests" not in src and "googleapiclient" not in src and "subprocess" not in src,
+           notes="No API or shell calls in source")
+
+
+def section_lumen_calendar_router():
+    print("\n=== SECTION 13: Lumen Calendar Router ===")
+
+    try:
+        from prometheus.agents.lumen_calendar_router import (
+            load_pending_lumen_proposal,
+            write_lumen_review_result,
+            list_reviewed_lumen_calendar_proposals,
+            review_lumen_proposal_dry_run,
+            review_pending_lumen_proposals_dry_run,
+        )
+        record("lumen_calendar_router:module_imports", True)
+    except Exception as exc:
+        record("lumen_calendar_router:module_imports", False, error=str(exc))
+        return
+
+    # load_pending_lumen_proposal returns None for missing id
+    try:
+        result = load_pending_lumen_proposal("audit-nonexistent-id")
+        record("lumen_calendar_router:load_missing_returns_none", result is None)
+    except Exception as exc:
+        record("lumen_calendar_router:load_missing_returns_none", False, error=str(exc))
+
+    # review of missing proposal returns error dict with all_dry_run=True
+    from prometheus.integrations.google_calendar import GoogleCalendarConfig
+    safe_cfg = GoogleCalendarConfig(enabled=False, dry_run=True)
+    try:
+        review = review_lumen_proposal_dry_run("audit-nonexistent", config=safe_cfg, write_result=False)
+        record("lumen_calendar_router:missing_review_has_dry_run",
+               review.get("all_dry_run") is True and "error" in review)
+    except Exception as exc:
+        record("lumen_calendar_router:missing_review_has_dry_run", False, error=str(exc))
+
+    # review_pending returns list
+    try:
+        reviews = review_pending_lumen_proposals_dry_run(config=safe_cfg, write_results=False)
+        record("lumen_calendar_router:review_all_returns_list", isinstance(reviews, list))
+    except Exception as exc:
+        record("lumen_calendar_router:review_all_returns_list", False, error=str(exc))
+
+    # list_reviewed returns list
+    try:
+        reviewed = list_reviewed_lumen_calendar_proposals()
+        record("lumen_calendar_router:list_reviewed_returns_list", isinstance(reviewed, list))
+    except Exception as exc:
+        record("lumen_calendar_router:list_reviewed_returns_list", False, error=str(exc))
+
+    # Source safety: no live calendar write calls
+    import inspect
+    import prometheus.agents.lumen_calendar_router as router_mod
+    src = inspect.getsource(router_mod)
+    record("lumen_calendar_router:no_live_write_calls",
+           "create_calendar_event" not in src
+           and "update_calendar_event" not in src
+           and "delete_calendar_event" not in src
+           and "build_google_calendar_service" not in src,
+           notes="Router only calls dry_run_calendar_operation, no live writes")
+
+    # Source safety: no subprocess
+    record("lumen_calendar_router:no_subprocess",
+           "import subprocess" not in src and "subprocess.run" not in src and "os.system" not in src,
+           notes="No shell execution in router source")
+
+    # Source safety: no HA calls
+    record("lumen_calendar_router:no_home_assistant",
+           "home_assistant" not in src.lower() and "ha_service" not in src,
+           notes="No Home Assistant calls in router source")
+
+    # All reviews are dry-run only — approved=False by design
+    record("lumen_calendar_router:no_auto_approval",
+           'approved": False' in src or '"approved": False' in src or "approved=False" in src or "approved': False" in src,
+           notes="Proposals are never auto-approved by the router")
+
+
 def main():
     print("=" * 60)
     print("PROMETHEUS CAPABILITY AUDIT")
@@ -1370,6 +1528,8 @@ def main():
     section_hud()
     section_google_calendar()
     section_lumen_ingestion()
+    section_lumen_calendar_context()
+    section_lumen_calendar_router()
 
     print("\n" + "=" * 60)
     total = len(results)

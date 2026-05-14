@@ -383,6 +383,46 @@ def delete_calendar_event(
     )
 
 
+# ── Convenience read operations ───────────────────────────────────────────────
+
+def list_upcoming_calendar_events(
+    service,
+    config: GoogleCalendarConfig,
+    days_ahead: int = 7,
+    max_results: int = 20,
+    calendar_id: Optional[str] = None,
+) -> list[GoogleCalendarEvent]:
+    """List upcoming events from now through days_ahead. Read-only, no writes."""
+    from datetime import datetime, timezone, timedelta
+    now = datetime.now(timezone.utc)
+    time_min = now.isoformat()
+    time_max = (now + timedelta(days=days_ahead)).isoformat()
+    return list_calendar_events(
+        service=service,
+        config=config,
+        time_min=time_min,
+        time_max=time_max,
+        calendar_id=calendar_id,
+        max_results=max_results,
+    )
+
+
+# ── OAuth bootstrap (explicit-only, never called automatically) ───────────────
+
+def authorize_google_calendar(
+    config: GoogleCalendarConfig,
+    allow_interactive_auth: bool = True,
+) -> bool:
+    """
+    Run the OAuth flow once to generate a token file.
+
+    Only call this explicitly (e.g., via --auth CLI). Never called automatically.
+    Returns True if authorization succeeded.
+    """
+    service = build_google_calendar_service(config, allow_interactive_auth=allow_interactive_auth)
+    return service is not None
+
+
 # ── Dry-run operation helper (for Lumen proposal router) ──────────────────────
 
 _SUPPORTED_DRY_RUN_TYPES = frozenset({
@@ -483,11 +523,18 @@ def dry_run_calendar_operation(
 
 def _main(argv: list[str] | None = None) -> None:
     import json as _json
+    try:
+        from dotenv import load_dotenv as _load_dotenv
+        from prometheus.infra.paths import PROJECT_ROOT as _PROJECT_ROOT
+        _load_dotenv(_PROJECT_ROOT / ".env", override=False)
+    except ImportError:
+        pass
+
     args = argv if argv is not None else sys.argv[1:]
     if not args:
         print(
             "Usage: python -m prometheus.integrations.google_calendar "
-            "--config | --dry-run-create-sample"
+            "--config | --dry-run-create-sample | --auth | --list-upcoming [DAYS]"
         )
         sys.exit(1)
 
@@ -496,7 +543,6 @@ def _main(argv: list[str] | None = None) -> None:
     if cmd == "--config":
         config = load_google_calendar_config()
         d = dataclasses.asdict(config)
-        # Mask any sensitive fields that might be set
         if d.get("credentials_path"):
             d["credentials_path"] = "<set>"
         if d.get("token_path"):
@@ -505,7 +551,6 @@ def _main(argv: list[str] | None = None) -> None:
 
     elif cmd == "--dry-run-create-sample":
         config = load_google_calendar_config()
-        # Force dry_run for this sample regardless of env
         config = dataclasses.replace(config, dry_run=True)
         from datetime import date, timedelta
         tomorrow = (date.today() + timedelta(days=1)).isoformat()
@@ -520,6 +565,50 @@ def _main(argv: list[str] | None = None) -> None:
         result = dry_run_calendar_operation(op, config)
         d = dataclasses.asdict(result)
         print(_json.dumps(d, indent=2))
+
+    elif cmd == "--auth":
+        config = load_google_calendar_config()
+        print("Starting OAuth authorization flow...")
+        print(f"  credentials_path: {config.credentials_path or '(not set)'}")
+        print(f"  token_path: {config.token_path or '(not set)'}")
+        try:
+            ok = authorize_google_calendar(config, allow_interactive_auth=True)
+            if ok:
+                print("Authorization successful. Token saved.")
+            else:
+                print("Authorization returned no service object.", file=sys.stderr)
+                sys.exit(1)
+        except (ValueError, ImportError) as exc:
+            print(f"Authorization failed: {exc}", file=sys.stderr)
+            sys.exit(1)
+
+    elif cmd == "--list-upcoming":
+        days = int(args[1]) if len(args) > 1 else 7
+        config = load_google_calendar_config()
+        if not config.enabled:
+            print(
+                "Google Calendar is disabled. Set GOOGLE_CALENDAR_ENABLED=true to enable.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        try:
+            service = build_google_calendar_service(config, allow_interactive_auth=False)
+        except (ValueError, ImportError) as exc:
+            print(f"Cannot connect to Google Calendar: {exc}", file=sys.stderr)
+            sys.exit(1)
+        events = list_upcoming_calendar_events(service, config, days_ahead=days)
+        output = [
+            {
+                "event_id": e.event_id,
+                "title": e.title,
+                "start_time": e.start_time,
+                "end_time": e.end_time,
+                "calendar_id": e.calendar_id,
+                "location": e.location,
+            }
+            for e in events
+        ]
+        print(_json.dumps(output, indent=2))
 
     else:
         print(f"Unknown command: {cmd}")

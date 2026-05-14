@@ -16,4 +16,6 @@ logs/
 screenshots/
 
 # OS
-.DS_Store
+.DS_Storeruntime/secrets/
+**/calendar_credentials.json
+**/calendar_token.json
