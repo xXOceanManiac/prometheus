@@ -129,6 +129,54 @@ def _disabled_result(operation_type: str, calendar_id: str) -> GoogleCalendarRes
     )
 
 
+# ── Credential serialization ──────────────────────────────────────────────────
+
+def _serialize_google_credentials(creds) -> str:
+    """
+    Serialize Google OAuth2 Credentials to a JSON string suitable for
+    Credentials.from_authorized_user_file().
+
+    Tries creds.to_json() first (google-auth >= 2.x). Falls back to manual
+    serialization using well-known Credentials attributes when to_json() is
+    absent (older library versions or non-standard credential objects).
+    """
+    if hasattr(creds, "to_json") and callable(creds.to_json):
+        return creds.to_json()
+
+    # Manual fallback
+    from datetime import datetime as _dt
+    expiry = getattr(creds, "expiry", None)
+    if isinstance(expiry, _dt):
+        expiry = expiry.isoformat()
+
+    scopes = getattr(creds, "scopes", None)
+    if scopes is not None:
+        scopes = list(scopes)
+
+    data = {
+        "token": getattr(creds, "token", None),
+        "refresh_token": getattr(creds, "refresh_token", None),
+        "token_uri": getattr(creds, "token_uri", None),
+        "client_id": getattr(creds, "client_id", None),
+        "client_secret": getattr(creds, "client_secret", None),
+        "scopes": scopes,
+        "expiry": expiry,
+    }
+    return json.dumps({k: v for k, v in data.items() if v is not None})
+
+
+def _write_token(token_path, creds) -> None:
+    """Write serialized credentials to token_path; chmod 600; never prints secrets."""
+    from pathlib import Path as _Path
+    p = _Path(token_path)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(_serialize_google_credentials(creds), encoding="utf-8")
+    try:
+        p.chmod(0o600)
+    except OSError:
+        pass
+
+
 # ── Service builder ───────────────────────────────────────────────────────────
 
 def build_google_calendar_service(
@@ -167,7 +215,7 @@ def build_google_calendar_service(
         pass
     elif creds and creds.expired and creds.refresh_token:
         creds.refresh(_Request())
-        token_path.write_text(creds.to_json())
+        _write_token(token_path, creds)
     else:
         if not allow_interactive_auth:
             raise ValueError(
@@ -182,7 +230,7 @@ def build_google_calendar_service(
             )
         flow = _InstalledAppFlow.from_client_secrets_file(config.credentials_path, config.scopes)
         creds = flow.run_local_server(port=0)
-        token_path.write_text(creds.to_json())
+        _write_token(token_path, creds)
 
     return _google_build("calendar", "v3", credentials=creds)
 
@@ -417,10 +465,14 @@ def authorize_google_calendar(
     Run the OAuth flow once to generate a token file.
 
     Only call this explicitly (e.g., via --auth CLI). Never called automatically.
-    Returns True if authorization succeeded.
+    Returns True if authorization succeeded AND token file exists on disk.
+    Raises ValueError/ImportError on configuration or library errors.
     """
-    service = build_google_calendar_service(config, allow_interactive_auth=allow_interactive_auth)
-    return service is not None
+    from pathlib import Path as _Path
+    build_google_calendar_service(config, allow_interactive_auth=allow_interactive_auth)
+    if config.token_path and not _Path(config.token_path).exists():
+        return False
+    return True
 
 
 # ── Dry-run operation helper (for Lumen proposal router) ──────────────────────
@@ -624,9 +676,12 @@ def _main(argv: list[str] | None = None) -> None:
         try:
             ok = authorize_google_calendar(config, allow_interactive_auth=True)
             if ok:
-                print("Authorization successful. Token saved.")
+                print(f"Authorization successful. Token saved to: {config.token_path}")
             else:
-                print("Authorization returned no service object.", file=sys.stderr)
+                print(
+                    f"OAuth completed but token file was not written: {config.token_path}",
+                    file=sys.stderr,
+                )
                 sys.exit(1)
         except (ValueError, ImportError) as exc:
             print(f"Authorization failed: {exc}", file=sys.stderr)

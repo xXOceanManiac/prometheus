@@ -27,6 +27,7 @@ from prometheus.integrations.google_calendar import (
     update_calendar_event,
     delete_calendar_event,
     dry_run_calendar_operation,
+    authorize_google_calendar,
     _GOOGLE_AVAILABLE,
 )
 
@@ -401,6 +402,317 @@ class TestNoForbiddenDependencies:
         d = dataclasses.asdict(result)
         assert isinstance(d, dict)
         assert "success" in d
+
+
+# ── Credential serialization tests ───────────────────────────────────────────
+
+class TestSerializeGoogleCredentials:
+    def _import(self):
+        from prometheus.integrations.google_calendar import _serialize_google_credentials
+        return _serialize_google_credentials
+
+    def test_uses_to_json_when_present(self):
+        fn = self._import()
+        creds = MagicMock()
+        creds.to_json.return_value = '{"token": "abc"}'
+        result = fn(creds)
+        assert result == '{"token": "abc"}'
+        creds.to_json.assert_called_once()
+
+    def test_fallback_when_to_json_missing(self):
+        fn = self._import()
+        creds = MagicMock(spec=[
+            "token", "refresh_token", "token_uri",
+            "client_id", "client_secret", "scopes", "expiry",
+        ])
+        creds.token = "tok"
+        creds.refresh_token = "ref"
+        creds.token_uri = "https://oauth2.googleapis.com/token"
+        creds.client_id = "cid"
+        creds.client_secret = "csec"
+        creds.scopes = ["https://www.googleapis.com/auth/calendar"]
+        creds.expiry = None
+        result = fn(creds)
+        data = json.loads(result)
+        assert data["token"] == "tok"
+        assert data["refresh_token"] == "ref"
+
+    def test_manual_includes_all_required_fields(self):
+        fn = self._import()
+        creds = MagicMock(spec=[
+            "token", "refresh_token", "token_uri",
+            "client_id", "client_secret", "scopes", "expiry",
+        ])
+        creds.token = "t"
+        creds.refresh_token = "r"
+        creds.token_uri = "https://oauth2.googleapis.com/token"
+        creds.client_id = "cid"
+        creds.client_secret = "csec"
+        creds.scopes = ["https://www.googleapis.com/auth/calendar"]
+        creds.expiry = None
+        data = json.loads(fn(creds))
+        for field in ("token", "refresh_token", "token_uri", "client_id", "client_secret", "scopes"):
+            assert field in data, f"Missing field: {field}"
+
+    def test_datetime_expiry_serialized_as_iso_string(self):
+        from datetime import datetime, timezone
+        fn = self._import()
+        creds = MagicMock(spec=[
+            "token", "refresh_token", "token_uri",
+            "client_id", "client_secret", "scopes", "expiry",
+        ])
+        creds.token = "t"
+        creds.refresh_token = "r"
+        creds.token_uri = "https://oauth2.googleapis.com/token"
+        creds.client_id = "cid"
+        creds.client_secret = "csec"
+        creds.scopes = ["https://www.googleapis.com/auth/calendar"]
+        dt = datetime(2026, 5, 15, 12, 0, 0, tzinfo=timezone.utc)
+        creds.expiry = dt
+        data = json.loads(fn(creds))
+        assert "expiry" in data
+        assert isinstance(data["expiry"], str)
+        assert "2026-05-15" in data["expiry"]
+
+    def test_none_fields_omitted_from_fallback(self):
+        fn = self._import()
+        creds = MagicMock(spec=["token", "refresh_token", "token_uri",
+                                 "client_id", "client_secret", "scopes", "expiry"])
+        creds.token = "t"
+        creds.refresh_token = None
+        creds.token_uri = "https://oauth2.googleapis.com/token"
+        creds.client_id = "cid"
+        creds.client_secret = None
+        creds.scopes = None
+        creds.expiry = None
+        data = json.loads(fn(creds))
+        assert "refresh_token" not in data
+        assert "client_secret" not in data
+
+    def test_result_is_valid_json(self):
+        fn = self._import()
+        creds = MagicMock(spec=["token", "refresh_token", "token_uri",
+                                 "client_id", "client_secret", "scopes", "expiry"])
+        creds.token = "t"
+        creds.refresh_token = "r"
+        creds.token_uri = "https://oauth2.googleapis.com/token"
+        creds.client_id = "cid"
+        creds.client_secret = "sec"
+        creds.scopes = ["https://www.googleapis.com/auth/calendar"]
+        creds.expiry = None
+        result = fn(creds)
+        assert isinstance(result, str)
+        parsed = json.loads(result)
+        assert isinstance(parsed, dict)
+
+    def test_scopes_serialized_as_list(self):
+        fn = self._import()
+        creds = MagicMock(spec=["token", "refresh_token", "token_uri",
+                                 "client_id", "client_secret", "scopes", "expiry"])
+        creds.token = "t"
+        creds.refresh_token = "r"
+        creds.token_uri = "https://oauth2.googleapis.com/token"
+        creds.client_id = "cid"
+        creds.client_secret = "sec"
+        creds.scopes = frozenset(["https://www.googleapis.com/auth/calendar"])
+        creds.expiry = None
+        data = json.loads(fn(creds))
+        assert isinstance(data["scopes"], list)
+
+
+# ── authorize_google_calendar tests ──────────────────────────────────────────
+
+class TestAuthorizeGoogleCalendar:
+    def _make_config(self, tmp_path) -> "GoogleCalendarConfig":
+        secrets_dir = tmp_path / "secrets" / "google"
+        secrets_dir.mkdir(parents=True)
+        creds_file = secrets_dir / "credentials.json"
+        creds_file.write_text('{"installed": {}}', encoding="utf-8")
+        return GoogleCalendarConfig(
+            enabled=True,
+            dry_run=True,
+            credentials_path=str(creds_file),
+            token_path=str(tmp_path / "secrets" / "google" / "calendar_token.json"),
+        )
+
+    def _fake_creds(self):
+        creds = MagicMock()
+        creds.to_json.return_value = '{"token": "fake", "refresh_token": "ref"}'
+        creds.token = "fake"
+        creds.refresh_token = "ref"
+        creds.valid = True
+        return creds
+
+    def test_writes_token_after_successful_oauth(self, tmp_path):
+        config = self._make_config(tmp_path)
+        fake_creds = self._fake_creds()
+        fake_service = MagicMock()
+
+        with patch("prometheus.integrations.google_calendar._GOOGLE_AVAILABLE", True), \
+             patch("prometheus.integrations.google_calendar._OAUTHLIB_AVAILABLE", True), \
+             patch("prometheus.integrations.google_calendar._InstalledAppFlow", create=True) as mock_flow_cls, \
+             patch("prometheus.integrations.google_calendar._google_build", create=True, return_value=fake_service):
+            mock_flow = MagicMock()
+            mock_flow.run_local_server.return_value = fake_creds
+            mock_flow_cls.from_client_secrets_file.return_value = mock_flow
+
+            result = authorize_google_calendar(config, allow_interactive_auth=True)
+
+        assert result is True
+        assert Path(config.token_path).exists()
+
+    def test_token_file_contains_valid_json(self, tmp_path):
+        config = self._make_config(tmp_path)
+        fake_creds = self._fake_creds()
+        fake_service = MagicMock()
+
+        with patch("prometheus.integrations.google_calendar._GOOGLE_AVAILABLE", True), \
+             patch("prometheus.integrations.google_calendar._OAUTHLIB_AVAILABLE", True), \
+             patch("prometheus.integrations.google_calendar._InstalledAppFlow", create=True) as mock_flow_cls, \
+             patch("prometheus.integrations.google_calendar._google_build", create=True, return_value=fake_service):
+            mock_flow = MagicMock()
+            mock_flow.run_local_server.return_value = fake_creds
+            mock_flow_cls.from_client_secrets_file.return_value = mock_flow
+            authorize_google_calendar(config, allow_interactive_auth=True)
+
+        saved = json.loads(Path(config.token_path).read_text())
+        assert isinstance(saved, dict)
+
+    def test_returns_false_if_token_missing_after_auth(self, tmp_path):
+        config = self._make_config(tmp_path)
+        fake_service = MagicMock()
+
+        # Creds that have no to_json, and _write_token is patched to do nothing
+        fake_creds = MagicMock(spec=["token", "refresh_token"])
+        fake_creds.token = "t"
+        fake_creds.refresh_token = "r"
+
+        with patch("prometheus.integrations.google_calendar._GOOGLE_AVAILABLE", True), \
+             patch("prometheus.integrations.google_calendar._OAUTHLIB_AVAILABLE", True), \
+             patch("prometheus.integrations.google_calendar._InstalledAppFlow", create=True) as mock_flow_cls, \
+             patch("prometheus.integrations.google_calendar._google_build", create=True, return_value=fake_service), \
+             patch("prometheus.integrations.google_calendar._write_token"):  # write nothing
+            mock_flow = MagicMock()
+            mock_flow.run_local_server.return_value = fake_creds
+            mock_flow_cls.from_client_secrets_file.return_value = mock_flow
+
+            result = authorize_google_calendar(config, allow_interactive_auth=True)
+
+        assert result is False
+        assert not Path(config.token_path).exists()
+
+    def test_creates_parent_dir_for_token(self, tmp_path):
+        config = self._make_config(tmp_path)
+        # Put the token in a deeply nested dir that doesn't exist yet
+        deep_token = tmp_path / "deep" / "nested" / "dir" / "token.json"
+        config = GoogleCalendarConfig(
+            enabled=True, dry_run=True,
+            credentials_path=config.credentials_path,
+            token_path=str(deep_token),
+        )
+        fake_creds = self._fake_creds()
+        fake_service = MagicMock()
+
+        with patch("prometheus.integrations.google_calendar._GOOGLE_AVAILABLE", True), \
+             patch("prometheus.integrations.google_calendar._OAUTHLIB_AVAILABLE", True), \
+             patch("prometheus.integrations.google_calendar._InstalledAppFlow", create=True) as mock_flow_cls, \
+             patch("prometheus.integrations.google_calendar._google_build", create=True, return_value=fake_service):
+            mock_flow = MagicMock()
+            mock_flow.run_local_server.return_value = fake_creds
+            mock_flow_cls.from_client_secrets_file.return_value = mock_flow
+            authorize_google_calendar(config, allow_interactive_auth=True)
+
+        assert deep_token.exists()
+
+    def test_chmod_attempted_safely(self, tmp_path):
+        config = self._make_config(tmp_path)
+        fake_creds = self._fake_creds()
+        fake_service = MagicMock()
+
+        # Patch chmod to raise OSError — should not propagate
+        original_chmod = Path.chmod
+
+        def patched_chmod(self, mode):
+            raise OSError("chmod not supported")
+
+        with patch("prometheus.integrations.google_calendar._GOOGLE_AVAILABLE", True), \
+             patch("prometheus.integrations.google_calendar._OAUTHLIB_AVAILABLE", True), \
+             patch("prometheus.integrations.google_calendar._InstalledAppFlow", create=True) as mock_flow_cls, \
+             patch("prometheus.integrations.google_calendar._google_build", create=True, return_value=fake_service), \
+             patch.object(Path, "chmod", patched_chmod):
+            mock_flow = MagicMock()
+            mock_flow.run_local_server.return_value = fake_creds
+            mock_flow_cls.from_client_secrets_file.return_value = mock_flow
+            # Should not raise even though chmod fails
+            result = authorize_google_calendar(config, allow_interactive_auth=True)
+
+        assert result is True
+
+    def test_fallback_serializer_used_when_to_json_absent(self, tmp_path):
+        config = self._make_config(tmp_path)
+        # Build a creds object WITHOUT to_json
+        creds_without_to_json = MagicMock(spec=[
+            "token", "refresh_token", "token_uri",
+            "client_id", "client_secret", "scopes", "expiry",
+        ])
+        creds_without_to_json.token = "tok"
+        creds_without_to_json.refresh_token = "ref"
+        creds_without_to_json.token_uri = "https://oauth2.googleapis.com/token"
+        creds_without_to_json.client_id = "cid"
+        creds_without_to_json.client_secret = "csec"
+        creds_without_to_json.scopes = ["https://www.googleapis.com/auth/calendar"]
+        creds_without_to_json.expiry = None
+        fake_service = MagicMock()
+
+        with patch("prometheus.integrations.google_calendar._GOOGLE_AVAILABLE", True), \
+             patch("prometheus.integrations.google_calendar._OAUTHLIB_AVAILABLE", True), \
+             patch("prometheus.integrations.google_calendar._InstalledAppFlow", create=True) as mock_flow_cls, \
+             patch("prometheus.integrations.google_calendar._google_build", create=True, return_value=fake_service):
+            mock_flow = MagicMock()
+            mock_flow.run_local_server.return_value = creds_without_to_json
+            mock_flow_cls.from_client_secrets_file.return_value = mock_flow
+            result = authorize_google_calendar(config, allow_interactive_auth=True)
+
+        assert result is True
+        saved = json.loads(Path(config.token_path).read_text())
+        assert saved["token"] == "tok"
+        assert saved["refresh_token"] == "ref"
+
+    def test_auth_not_run_at_import(self):
+        src = (ROOT / "prometheus" / "integrations" / "google_calendar.py").read_text()
+        # authorize_google_calendar() must not be called at module level
+        import ast
+        tree = ast.parse(src)
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.Expr,)) and isinstance(node.value, ast.Call):
+                if isinstance(node.value.func, ast.Name):
+                    assert node.value.func.id != "authorize_google_calendar", \
+                        "authorize_google_calendar() called at module level"
+
+    def test_auth_does_not_create_calendar_events(self):
+        src = (ROOT / "prometheus" / "integrations" / "google_calendar.py").read_text()
+        import ast
+        tree = ast.parse(src)
+        fn_src = ""
+        for node in ast.walk(tree):
+            if isinstance(node, ast.FunctionDef) and node.name == "authorize_google_calendar":
+                fn_src = ast.get_source_segment(src, node) or ""
+                break
+        assert "create_calendar_event" not in fn_src
+        assert "update_calendar_event" not in fn_src
+        assert "delete_calendar_event" not in fn_src
+
+    def test_auth_does_not_call_home_assistant(self):
+        src = (ROOT / "prometheus" / "integrations" / "google_calendar.py").read_text()
+        import ast
+        tree = ast.parse(src)
+        fn_src = ""
+        for node in ast.walk(tree):
+            if isinstance(node, ast.FunctionDef) and node.name == "authorize_google_calendar":
+                fn_src = ast.get_source_segment(src, node) or ""
+                break
+        assert "home_assistant" not in fn_src.lower()
+        assert "ha_service" not in fn_src
 
 
 # ── CLI dotenv loading tests ──────────────────────────────────────────────────
