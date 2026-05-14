@@ -1,7 +1,7 @@
 # Prometheus Capability Audit
 
-**Generated:** 2026-05-14 01:59:18
-**Tests run:** 159  **Passed:** 159  **Failed:** 0  (100.0% pass rate)
+**Generated:** 2026-05-14 15:06:38
+**Tests run:** 204  **Passed:** 204  **Failed:** 0  (100.0% pass rate)
 
 ---
 
@@ -20,6 +20,7 @@ Key findings:
 - **LOGGING**: ✓ 6/6 passing
 - **HUD**: ✓ 11/11 passing
 - **OTHER**: ✓ 39/39 passing
+- **CALENDAR**: ✓ 45/45 passing
 
 ---
 
@@ -35,7 +36,7 @@ Key findings:
 | startup | ~/.jarvis/logs dir exists | PASS |  |  |
 | startup | ~/.jarvis/audio dir exists | PASS |  |  |
 | startup | ~/.jarvis/memory_v2 dir exists | PASS |  |  |
-| startup | tools.py imports cleanly | PASS | 109ms |  |
+| startup | tools.py imports cleanly | PASS | 106ms |  |
 | startup | memory.py imports cleanly | PASS | 0ms |  |
 | startup | working_memory.py imports cleanly | PASS | 0ms |  |
 | startup | planner.planner imports cleanly | PASS | 1ms |  |
@@ -54,11 +55,11 @@ Key findings:
 | tools | tool:write_file:content_correct | PASS |  |  |
 | tools | tool:screenshot:no_crash | PASS |  | ok=True: Screenshot saved to /home/tatel/Pictures/Screenshots/screens |
 | tools | tool:web_search:returns_result | PASS |  | Searched the web for prometheus audit test. |
-| tools | tool:list_windows:no_crash | PASS |  | ok=True windows=10 |
+| tools | tool:list_windows:no_crash | PASS |  | ok=True windows=11 |
 | tools | tool:get_active_window:no_crash | PASS |  | ok=True |
 | tools | tool:system_status | PASS |  | System status retrieved. |
 | tools | tool:system_status:has_active_project_key | PASS |  |  |
-| tools | tool:get_priorities:no_crash | PASS |  | ok=True Found 1 priorities. |
+| tools | tool:get_priorities:no_crash | PASS |  | ok=True Found 0 priorities. |
 | tools | tool:query_vault:vault_not_configured | PASS |  | vault_path not set — skipped; returns gracefully |
 | tools | tool:run_python:safe_snippet | PASS |  | prometheus_audit_ok |
 | tools | tool:run_python:blocks_os_system | PASS |  | run_python: blocked — command contains restricted patterns |
@@ -70,7 +71,7 @@ Key findings:
 | tools | tool:restart:requires_confirmation | PASS |  | Awaiting confirmation for restart. |
 | tools | tool:shutdown:requires_confirmation | PASS |  | Awaiting confirmation for shutdown. |
 | tools | tool:background_task:no_pool_gives_clear_error | PASS |  | Background worker pool is not running. |
-| tools | ACTION_ENUM all actions known (58 total) | PASS |  |  |
+| tools | ACTION_ENUM all actions known (65 total) | PASS |  |  |
 | sandbox | sandbox:write_inside_workspace_allowed | PASS |  | Wrote file: sandbox_test.txt |
 | sandbox | sandbox:write_outside_workspace_blocked | PASS |  | Write blocked: Path outside workspace is not allowed: /tmp/escape_attempt.txt |
 | sandbox | sandbox:run_python:blocks 'rm ' | PASS |  | run_python: blocked — command contains restricted patterns |
@@ -106,12 +107,12 @@ Key findings:
 | mission | mission:what_are_we_working_on_today:routable | PASS |  | 'today' variant type=direct_tool |
 | mission | mission:what_are_we_working_on:without_today_routable | PASS |  | GAP: short form requires LLM — direct override only covers '...today' suffix |
 | mission | mission:active_goal_appears_in_get_priorities | PASS |  | priorities=['Finish Prometheus audit report'] |
-| planning | planning:simple_one_step:builds_plan | PASS | 3ms | steps=1 conf=0.90 |
+| planning | planning:simple_one_step:builds_plan | PASS | 2ms | steps=1 conf=0.90 |
 | planning | planning:simple_one_step:valid_action | PASS |  | web_search |
 | planning | planning:plan_is_serializable | PASS |  |  |
 | planning | planning:low_confidence:triggers_clarification | PASS | 0ms | conf=0.20 q='Can you be more specific about what you'd like me to do?' |
 | planning | planning:multi_step:two_or_more_steps | PASS |  | steps=2 conf=0.82 |
-| planning | planning:executor:runs_safe_plan | PASS | 55ms | 2/2 steps succeeded. |
+| planning | planning:executor:runs_safe_plan | PASS | 56ms | 2/2 steps succeeded. |
 | planning | planning:executor:steps_in_order | PASS |  | first step: list_files |
 | planning | planning:executor:first_step_failure_recorded | PASS |  | 1/2 steps succeeded. |
 | planning | planning:verifier:passes_on_success | PASS |  | 2/2 steps succeeded. |
@@ -131,7 +132,7 @@ Key findings:
 | voice | voice:response_in_progress_guard_exists | PASS |  | Checked source for duplicate-response guard |
 | voice | voice:error_callback:fires | PASS |  |  |
 | logging | logging:log_file_created_today | PASS |  |  |
-| logging | logging:jsonl_lines_valid | PASS |  | Checked last 20 of 3913 lines |
+| logging | logging:jsonl_lines_valid | PASS |  | Checked last 20 of 4329 lines |
 | logging | logging:entries_have_ts | PASS |  |  |
 | logging | logging:entries_have_kind | PASS |  |  |
 | logging | logging:activity.jsonl_exists | PASS |  |  |
@@ -186,6 +187,51 @@ Key findings:
 |  | lumen_calendar_router:no_subprocess | PASS |  | No shell execution in router source |
 |  | lumen_calendar_router:no_home_assistant | PASS |  | No Home Assistant calls in router source |
 |  | lumen_calendar_router:no_auto_approval | PASS |  | Proposals are never auto-approved by the router |
+| calendar | calendar:module_imports_cleanly | PASS | 2ms |  |
+| calendar | calendar:function_exists:calendar_list_upcoming | PASS |  |  |
+| calendar | calendar:function_exists:calendar_get_today | PASS |  |  |
+| calendar | calendar:function_exists:calendar_get_tomorrow | PASS |  |  |
+| calendar | calendar:function_exists:calendar_get_date | PASS |  |  |
+| calendar | calendar:function_exists:calendar_next_event | PASS |  |  |
+| calendar | calendar:function_exists:calendar_summarize_day | PASS |  |  |
+| calendar | calendar:function_exists:calendar_find_free_blocks | PASS |  |  |
+| calendar | calendar:disabled_returns_error_dict | PASS |  |  |
+| calendar | calendar:disabled_has_error_key | PASS |  |  |
+| calendar | calendar:get_date:invalid_format_returns_error | PASS |  |  |
+| calendar | calendar:get_date:empty_string_returns_error | PASS |  |  |
+| calendar | calendar:find_free_blocks:invalid_date_returns_error | PASS |  |  |
+| calendar | calendar:find_free_blocks:returns_dict | PASS |  |  |
+| calendar | calendar:find_free_blocks:finds_gaps | PASS |  | Found 3 free blocks with 2 mocked busy events |
+| calendar | calendar:summarize_day:has_all_required_keys | PASS |  | Missing: set() |
+| calendar | calendar:summarize_day:summary_is_string | PASS |  |  |
+| calendar | calendar:next_event:has_ok_key | PASS |  |  |
+| calendar | calendar:next_event:has_next_timed_key | PASS |  |  |
+| calendar | calendar:next_event:has_all_day_key | PASS |  |  |
+| calendar | calendar:output_is_json_serializable | PASS |  |  |
+| calendar | calendar:no_home_assistant_calls | PASS |  |  |
+| calendar | calendar:no_subprocess_calls | PASS |  |  |
+| calendar | calendar:registry:calendar_list_upcoming:exists | PASS |  |  |
+| calendar | calendar:registry:calendar_list_upcoming:risk_is_none | PASS |  | risk=none |
+| calendar | calendar:registry:calendar_get_today:exists | PASS |  |  |
+| calendar | calendar:registry:calendar_get_today:risk_is_none | PASS |  | risk=none |
+| calendar | calendar:registry:calendar_get_tomorrow:exists | PASS |  |  |
+| calendar | calendar:registry:calendar_get_tomorrow:risk_is_none | PASS |  | risk=none |
+| calendar | calendar:registry:calendar_get_date:exists | PASS |  |  |
+| calendar | calendar:registry:calendar_get_date:risk_is_none | PASS |  | risk=none |
+| calendar | calendar:registry:calendar_next_event:exists | PASS |  |  |
+| calendar | calendar:registry:calendar_next_event:risk_is_none | PASS |  | risk=none |
+| calendar | calendar:registry:calendar_summarize_day:exists | PASS |  |  |
+| calendar | calendar:registry:calendar_summarize_day:risk_is_none | PASS |  | risk=none |
+| calendar | calendar:registry:calendar_find_free_blocks:exists | PASS |  |  |
+| calendar | calendar:registry:calendar_find_free_blocks:risk_is_none | PASS |  | risk=none |
+| calendar | calendar:no_write_tools_in_registry | PASS |  | Found: [] |
+| calendar | calendar:intent_override:'what's on my calendar today' | PASS |  | got=calendar_get_today, expected=calendar_get_today |
+| calendar | calendar:intent_override:'what do i have tomorrow' | PASS |  | got=calendar_get_tomorrow, expected=calendar_get_tomorrow |
+| calendar | calendar:intent_override:'what's my next event' | PASS |  | got=calendar_next_event, expected=calendar_next_event |
+| calendar | calendar:intent_override:'summarize my day' | PASS |  | got=calendar_summarize_day, expected=calendar_summarize_day |
+| calendar | calendar:intent_override:'do i have a free hour' | PASS |  | got=calendar_find_free_blocks, expected=calendar_find_free_blocks |
+| calendar | calendar:tool_registry:calendar_get_today:no_crash | PASS |  | ok=True msg=0 event(s) today (2026-05-14). |
+| calendar | calendar:tool_registry:disabled_returns_graceful_error | PASS |  | Google Calendar is disabled. Set GOOGLE_CALENDAR_ENABLED=true to enable. |
 
 ---
 

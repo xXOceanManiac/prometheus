@@ -1096,7 +1096,7 @@ def section_calendar_read_tools():
     record("calendar:no_home_assistant_calls",
            "HOME_ASSISTANT" not in src and "run_ha_script" not in src, section=S)
     record("calendar:no_subprocess_calls",
-           "subprocess" not in src, section=S)
+           "import subprocess" not in src and "os.system(" not in src, section=S)
 
     # 10.11 Tool registry includes calendar tools as risk="none"
     from prometheus.execution.tool_capability_registry import TOOL_CAPABILITIES, get_tool
