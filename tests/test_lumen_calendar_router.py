@@ -442,3 +442,88 @@ class TestRouterSafety:
             assert review["all_dry_run"] is True
             for op_result in review.get("results", []):
                 assert op_result["dry_run"] is True
+
+
+# ── original_operations preservation ─────────────────────────────────────────
+
+class TestReviewedFileIncludesOriginalOperations:
+    def test_reviewed_result_has_original_operations_key(self, monkeypatch, tmp_path):
+        pending, _ = _patch_router_dirs(monkeypatch, tmp_path)
+        _write_pending_proposal(pending, _make_proposal())
+
+        from prometheus.agents.lumen_calendar_router import review_lumen_proposal_dry_run
+        result = review_lumen_proposal_dry_run("req-test-001", config=_safe_config(), write_result=False)
+        assert "original_operations" in result
+
+    def test_original_operations_matches_proposal_operations(self, monkeypatch, tmp_path):
+        pending, _ = _patch_router_dirs(monkeypatch, tmp_path)
+        proposal = _make_proposal()
+        _write_pending_proposal(pending, proposal)
+
+        from prometheus.agents.lumen_calendar_router import review_lumen_proposal_dry_run
+        result = review_lumen_proposal_dry_run("req-test-001", config=_safe_config(), write_result=False)
+        assert result["original_operations"] == proposal.operations
+
+    def test_original_operations_is_list(self, monkeypatch, tmp_path):
+        pending, _ = _patch_router_dirs(monkeypatch, tmp_path)
+        _write_pending_proposal(pending, _make_proposal())
+
+        from prometheus.agents.lumen_calendar_router import review_lumen_proposal_dry_run
+        result = review_lumen_proposal_dry_run("req-test-001", config=_safe_config(), write_result=False)
+        assert isinstance(result["original_operations"], list)
+
+    def test_original_operations_preserved_in_written_file(self, monkeypatch, tmp_path):
+        pending, reviewed = _patch_router_dirs(monkeypatch, tmp_path)
+        proposal = _make_proposal()
+        _write_pending_proposal(pending, proposal)
+
+        from prometheus.agents.lumen_calendar_router import review_lumen_proposal_dry_run
+        review_lumen_proposal_dry_run("req-test-001", config=_safe_config(), write_result=True)
+        written = json.loads((reviewed / "reviewed_req-test-001.json").read_text())
+        assert "original_operations" in written
+        assert written["original_operations"] == proposal.operations
+
+    def test_original_operations_contains_full_payload(self, monkeypatch, tmp_path):
+        pending, _ = _patch_router_dirs(monkeypatch, tmp_path)
+        ops = [
+            {
+                "operation_type": "create_event",
+                "title": "Deep Work Block",
+                "start_time": "2026-05-15T10:00:00",
+                "end_time": "2026-05-15T12:00:00",
+                "calendar_id": "primary",
+                "location": "Home office",
+                "description": "No interruptions",
+                "dry_run": True,
+                "requires_prometheus_approval": True,
+            }
+        ]
+        proposal = _make_proposal(request_id="req-full", operations=ops)
+        _write_pending_proposal(pending, proposal)
+
+        from prometheus.agents.lumen_calendar_router import review_lumen_proposal_dry_run
+        result = review_lumen_proposal_dry_run("req-full", config=_safe_config(), write_result=False)
+        orig = result["original_operations"][0]
+        assert orig["title"] == "Deep Work Block"
+        assert orig["start_time"] == "2026-05-15T10:00:00"
+        assert orig["end_time"] == "2026-05-15T12:00:00"
+        assert orig["location"] == "Home office"
+        assert orig["dry_run"] is True
+        assert orig["requires_prometheus_approval"] is True
+
+    def test_reviewed_file_has_no_live_execution_flag(self, monkeypatch, tmp_path):
+        pending, _ = _patch_router_dirs(monkeypatch, tmp_path)
+        _write_pending_proposal(pending, _make_proposal())
+
+        from prometheus.agents.lumen_calendar_router import review_lumen_proposal_dry_run
+        result = review_lumen_proposal_dry_run("req-test-001", config=_safe_config(), write_result=False)
+        assert result.get("no_live_execution") is True
+
+    def test_original_operations_not_in_error_result(self, monkeypatch, tmp_path):
+        """Error result for missing proposal should not have original_operations."""
+        _patch_router_dirs(monkeypatch, tmp_path)
+
+        from prometheus.agents.lumen_calendar_router import review_lumen_proposal_dry_run
+        result = review_lumen_proposal_dry_run("nonexistent", config=_safe_config(), write_result=False)
+        assert "error" in result
+        # original_operations not required in error case — just don't assert on it

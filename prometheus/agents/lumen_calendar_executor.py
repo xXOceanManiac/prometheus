@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import re as _re
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
@@ -54,6 +55,22 @@ _SUSPICIOUS_KEYS = frozenset({
     "command", "shell", "subprocess", "exec", "eval",
     "url", "token", "api_key", "home_assistant", "ha_service",
 })
+
+
+# ── Datetime helpers ──────────────────────────────────────────────────────────
+
+def _parse_naive_dt(dt_str: str) -> datetime:
+    """Parse a datetime string for comparison, stripping timezone offset.
+
+    Handles: YYYY-MM-DDTHH:MM, YYYY-MM-DDTHH:MM:SS, same with Z/±HH:MM suffix.
+    Raises ValueError if unparseable.
+    """
+    # Strip timezone suffix
+    normalized = _re.sub(r'(Z|[+-]\d{2}:\d{2})$', '', dt_str.strip())
+    # Add seconds if missing (HH:MM → HH:MM:SS)
+    if _re.match(r'^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$', normalized):
+        normalized += ':00'
+    return datetime.fromisoformat(normalized)
 
 
 # ── Data loading ──────────────────────────────────────────────────────────────
@@ -257,10 +274,24 @@ def _validate_operations(operations: list[dict]) -> tuple[bool, str]:
                 return False, f"Operation {i} (create_event) missing required field: start_time"
             if not op.get("end_time"):
                 return False, f"Operation {i} (create_event) missing required field: end_time"
+            try:
+                start_dt = _parse_naive_dt(op["start_time"])
+                end_dt = _parse_naive_dt(op["end_time"])
+            except ValueError as exc:
+                return False, f"Operation {i} (create_event): unparseable datetime — {exc}"
+            if end_dt <= start_dt:
+                return False, (
+                    f"Operation {i} (create_event): end_time must be after start_time "
+                    f"(got start={op['start_time']!r}, end={op['end_time']!r})"
+                )
 
         elif op_type == "update_event":
             if not op.get("event_id"):
                 return False, f"Operation {i} (update_event) missing required field: event_id"
+            update_fields = {k for k in ("title", "start_time", "end_time", "location", "description")
+                             if op.get(k) is not None}
+            if not update_fields:
+                return False, f"Operation {i} (update_event) has no fields to update"
 
         elif op_type == "delete_event":
             if not op.get("event_id"):
@@ -383,14 +414,16 @@ def execute_approved_calendar_request(request_id: str) -> dict:
     if not reviewed.get("all_dry_run"):
         return _fail("Reviewed result missing all_dry_run=true. Refusing to execute.")
 
-    # 3. Load pending proposal (contains actual operation details)
-    pending = _load_pending_proposal_raw(request_id)
-    if pending is None:
-        return _fail(f"Pending proposal not found for {request_id!r}.")
-
-    operations: list[dict] = pending.get("operations", [])
-    if not operations:
-        return _fail("Pending proposal has no operations.")
+    # 3. Load operations from original_operations preserved during dry-run review
+    operations = reviewed.get("original_operations")
+    if operations is None:
+        return _fail(
+            "Reviewed request is missing original_operations. "
+            "Rerun dry-run review before execution: "
+            f"python -m prometheus.agents.lumen_calendar_router --dry-run-request {request_id}"
+        )
+    if not isinstance(operations, list) or len(operations) == 0:
+        return _fail("Reviewed request has no operations in original_operations.")
 
     # 4. Load and check config
     config = load_google_calendar_config()
@@ -435,12 +468,32 @@ def execute_approved_calendar_request(request_id: str) -> dict:
             if not gcal_result.success:
                 overall_success = False
         except Exception as exc:
+            status_code = None
+            error_detail = str(exc)
+            try:
+                if hasattr(exc, 'resp') and hasattr(exc, 'content'):
+                    status_code = getattr(exc.resp, 'status', None)
+                    raw_content = exc.content
+                    if isinstance(raw_content, bytes):
+                        raw_content = raw_content.decode('utf-8', errors='replace')
+                    try:
+                        err_body = json.loads(raw_content)
+                        error_detail = err_body.get('error', {}).get('message', str(exc))
+                    except (json.JSONDecodeError, AttributeError):
+                        error_detail = raw_content[:300]
+            except Exception:
+                pass
+            msg = (
+                f"HTTP {status_code}: {error_detail}"
+                if status_code else f"Exception: {error_detail}"
+            )
             op_results.append({
                 "operation_index": i,
                 "operation_type": op_type,
                 "success": False,
                 "dry_run": False,
-                "message": f"Exception: {exc}",
+                "message": msg,
+                "status_code": status_code,
                 "event_id": None,
                 "calendar_id": op.get("calendar_id", config.default_calendar_id),
             })

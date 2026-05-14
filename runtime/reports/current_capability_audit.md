@@ -1,6 +1,6 @@
 # Prometheus Capability Audit
 
-**Generated:** 2026-05-14 15:49:54
+**Generated:** 2026-05-14 15:58:48
 **Tests run:** 241  **Passed:** 241  **Failed:** 0  (100.0% pass rate)
 
 ---
@@ -37,7 +37,7 @@ Key findings:
 | startup | ~/.jarvis/logs dir exists | PASS |  |  |
 | startup | ~/.jarvis/audio dir exists | PASS |  |  |
 | startup | ~/.jarvis/memory_v2 dir exists | PASS |  |  |
-| startup | tools.py imports cleanly | PASS | 107ms |  |
+| startup | tools.py imports cleanly | PASS | 105ms |  |
 | startup | memory.py imports cleanly | PASS | 0ms |  |
 | startup | working_memory.py imports cleanly | PASS | 0ms |  |
 | startup | planner.planner imports cleanly | PASS | 1ms |  |
@@ -113,7 +113,7 @@ Key findings:
 | planning | planning:plan_is_serializable | PASS |  |  |
 | planning | planning:low_confidence:triggers_clarification | PASS | 0ms | conf=0.20 q='Can you be more specific about what you'd like me to do?' |
 | planning | planning:multi_step:two_or_more_steps | PASS |  | steps=2 conf=0.82 |
-| planning | planning:executor:runs_safe_plan | PASS | 50ms | 2/2 steps succeeded. |
+| planning | planning:executor:runs_safe_plan | PASS | 53ms | 2/2 steps succeeded. |
 | planning | planning:executor:steps_in_order | PASS |  | first step: list_files |
 | planning | planning:executor:first_step_failure_recorded | PASS |  | 1/2 steps succeeded. |
 | planning | planning:verifier:passes_on_success | PASS |  | 2/2 steps succeeded. |
@@ -133,7 +133,7 @@ Key findings:
 | voice | voice:response_in_progress_guard_exists | PASS |  | Checked source for duplicate-response guard |
 | voice | voice:error_callback:fires | PASS |  |  |
 | logging | logging:log_file_created_today | PASS |  |  |
-| logging | logging:jsonl_lines_valid | PASS |  | Checked last 20 of 7619 lines |
+| logging | logging:jsonl_lines_valid | PASS |  | Checked last 20 of 8056 lines |
 | logging | logging:entries_have_ts | PASS |  |  |
 | logging | logging:entries_have_kind | PASS |  |  |
 | logging | logging:activity.jsonl_exists | PASS |  |  |
@@ -188,7 +188,7 @@ Key findings:
 |  | lumen_calendar_router:no_subprocess | PASS |  | No shell execution in router source |
 |  | lumen_calendar_router:no_home_assistant | PASS |  | No Home Assistant calls in router source |
 |  | lumen_calendar_router:no_auto_approval | PASS |  | Proposals are never auto-approved by the router |
-| calendar | calendar:module_imports_cleanly | PASS | 3ms |  |
+| calendar | calendar:module_imports_cleanly | PASS | 2ms |  |
 | calendar | calendar:function_exists:calendar_list_upcoming | PASS |  |  |
 | calendar | calendar:function_exists:calendar_get_today | PASS |  |  |
 | calendar | calendar:function_exists:calendar_get_tomorrow | PASS |  |  |

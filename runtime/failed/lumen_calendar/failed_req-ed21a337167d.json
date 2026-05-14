@@ -1,8 +1,8 @@
 {
   "request_id": "req-ed21a337167d",
-  "executed_at": "2026-05-14T19:50:07.683340+00:00",
+  "executed_at": "2026-05-14T20:15:46.480738+00:00",
   "success": false,
-  "reason": "Calendar execution is blocked: GOOGLE_CALENDAR_ENABLED is not true. Set GOOGLE_CALENDAR_ENABLED=true in your environment to enable writes.",
+  "reason": "Calendar execution is blocked because GOOGLE_CALENDAR_DRY_RUN=true. Set GOOGLE_CALENDAR_DRY_RUN=false to allow live writes.",
   "operation_count": 0,
   "operation_results": []
 }

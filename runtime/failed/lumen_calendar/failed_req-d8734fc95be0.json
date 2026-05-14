@@ -1,8 +1,18 @@
 {
   "request_id": "req-d8734fc95be0",
-  "executed_at": "2026-05-14T19:57:51.700001+00:00",
+  "executed_at": "2026-05-14T20:12:54.660938+00:00",
   "success": false,
-  "reason": "Calendar execution is blocked because GOOGLE_CALENDAR_DRY_RUN=true. Set GOOGLE_CALENDAR_DRY_RUN=false to allow live writes.",
-  "operation_count": 0,
-  "operation_results": []
+  "operation_count": 1,
+  "operation_results": [
+    {
+      "operation_index": 0,
+      "operation_type": "create_event",
+      "success": false,
+      "dry_run": false,
+      "message": "Exception: <HttpError 400 when requesting https://www.googleapis.com/calendar/v3/calendars/primary/events?alt=json returned \"Bad Request\">",
+      "event_id": null,
+      "calendar_id": "primary"
+    }
+  ],
+  "message": "One or more operations failed during execution."
 }

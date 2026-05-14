@@ -126,7 +126,9 @@ def review_lumen_proposal_dry_run(
         "operation_count": proposal.operation_count,
         "all_dry_run": True,
         "approved": False,
+        "original_operations": proposal.operations,
         "results": op_results,
+        "no_live_execution": True,
     }
 
     if write_result:
@@ -165,6 +167,9 @@ def review_pending_lumen_proposals_dry_run(
 # ── CLI entry point ───────────────────────────────────────────────────────────
 
 def _main(argv: list[str] | None = None) -> None:
+    from prometheus.integrations.google_calendar import _load_project_dotenv
+    _load_project_dotenv()
+
     args = argv if argv is not None else sys.argv[1:]
     if not args:
         print(

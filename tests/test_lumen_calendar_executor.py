@@ -27,8 +27,9 @@ def _write_pending(pending_dir: Path, request_id: str, data: dict) -> None:
     (pending_dir / f"pending_{request_id}.json").write_text(json.dumps(data), encoding="utf-8")
 
 
-def _make_reviewed(request_id: str, all_dry_run: bool = True, all_success: bool = True) -> dict:
-    return {
+def _make_reviewed(request_id: str, all_dry_run: bool = True, all_success: bool = True,
+                   include_original_ops: bool = True) -> dict:
+    result: dict = {
         "request_id": request_id,
         "reviewed_at": "2026-05-14T05:00:00+00:00",
         "proposal_reason": "Test",
@@ -47,7 +48,21 @@ def _make_reviewed(request_id: str, all_dry_run: bool = True, all_success: bool 
                 "event_id": None,
             }
         ],
+        "no_live_execution": True,
     }
+    if include_original_ops:
+        result["original_operations"] = [
+            {
+                "operation_type": "create_event",
+                "title": "Test event",
+                "start_time": "2026-05-15T14:00:00",
+                "end_time": "2026-05-15T15:00:00",
+                "calendar_id": "primary",
+                "requires_prometheus_approval": True,
+                "dry_run": True,
+            }
+        ]
+    return result
 
 
 def _make_pending(request_id: str, op_type: str = "create_event",
@@ -372,15 +387,16 @@ class TestExecuteApproved:
         pending_dir = tmp_path / "pending"
         approved_dir = tmp_path / "approved"
 
-        # Create a pending request with a create_event missing title
+        # Reviewed file has a create_event with missing required fields in original_operations
         bad_op = {
-            "operation_id": "op-bad",
             "operation_type": "create_event",
             "calendar_id": "primary",
             "requires_prometheus_approval": True,
             "dry_run": True,
             # Missing title/start_time/end_time
         }
+        bad_reviewed = _make_reviewed("req-bad")
+        bad_reviewed["original_operations"] = [bad_op]
         bad_pending = {
             "request_id": "req-bad",
             "source": "lumen",
@@ -388,8 +404,7 @@ class TestExecuteApproved:
             "operation_count": 1,
             "operations": [bad_op],
         }
-        reviewed = _make_reviewed("req-bad")
-        _write_reviewed(reviewed_dir, "req-bad", reviewed)
+        _write_reviewed(reviewed_dir, "req-bad", bad_reviewed)
         _write_pending(pending_dir, "req-bad", bad_pending)
         approval = {"request_id": "req-bad", "approved": True, "approved_by": "user",
                     "approved_at": "2026-05-14T...", "operation_count": 1,
@@ -773,3 +788,530 @@ class TestDotenvLoading:
             for k in ("GOOGLE_CALENDAR_ENABLED", "GOOGLE_CALENDAR_DRY_RUN"):
                 os.environ.pop(k, None)
             os.environ.update(saved)
+
+
+# ── original_operations: executor uses reviewed file, not pending ─────────────
+
+class TestOriginalOperations:
+    """Executor must read operations from reviewed['original_operations'], not from pending."""
+
+    def _approval(self, request_id: str) -> dict:
+        return {
+            "request_id": request_id,
+            "approved": True,
+            "approved_by": "user",
+            "approved_at": "2026-05-14T00:00:00+00:00",
+            "operation_count": 1,
+            "explicit_user_approval_required": True,
+        }
+
+    def _dirs(self, tmp_path):
+        return dict(
+            REVIEWED_LUMEN_DIR=tmp_path / "reviewed",
+            PENDING_LUMEN_DIR=tmp_path / "pending",
+            APPROVED_LUMEN_DIR=tmp_path / "approved",
+            COMPLETED_LUMEN_DIR=tmp_path / "completed",
+            FAILED_LUMEN_DIR=tmp_path / "failed",
+        )
+
+    def test_old_reviewed_file_missing_original_ops_fails_clearly(self, tmp_path):
+        """Reviewed file without original_operations fails with instructive message."""
+        reviewed_dir = tmp_path / "reviewed"
+        approved_dir = tmp_path / "approved"
+        # Old-style reviewed file — no original_operations
+        old_reviewed = _make_reviewed("req-old", include_original_ops=False)
+        _write_reviewed(reviewed_dir, "req-old", old_reviewed)
+        approved_dir.mkdir(parents=True)
+        (approved_dir / "approved_req-old.json").write_text(
+            json.dumps(self._approval("req-old"))
+        )
+
+        mock_config = MagicMock()
+        mock_config.enabled = True
+        mock_config.dry_run = False
+        mock_config.default_calendar_id = "primary"
+
+        with (
+            patch.multiple("prometheus.agents.lumen_calendar_executor", **self._dirs(tmp_path)),
+            patch("prometheus.agents.lumen_calendar_executor.load_google_calendar_config",
+                  return_value=mock_config),
+        ):
+            from prometheus.agents import lumen_calendar_executor as ex
+            result = ex.execute_approved_calendar_request("req-old")
+
+        assert not result["success"]
+        assert "original_operations" in result["reason"]
+        assert "dry-run" in result["reason"].lower() or "rerun" in result["reason"].lower()
+
+    def test_executor_does_not_guess_from_dry_run_results(self, tmp_path):
+        """Executor must NOT reconstruct operations from dry-run results summaries."""
+        reviewed_dir = tmp_path / "reviewed"
+        approved_dir = tmp_path / "approved"
+        # Reviewed file with results but no original_operations
+        old_reviewed = _make_reviewed("req-old2", include_original_ops=False)
+        _write_reviewed(reviewed_dir, "req-old2", old_reviewed)
+        approved_dir.mkdir(parents=True)
+        (approved_dir / "approved_req-old2.json").write_text(
+            json.dumps(self._approval("req-old2"))
+        )
+
+        mock_config = MagicMock()
+        mock_config.enabled = True
+        mock_config.dry_run = False
+
+        with (
+            patch.multiple("prometheus.agents.lumen_calendar_executor", **self._dirs(tmp_path)),
+            patch("prometheus.agents.lumen_calendar_executor.load_google_calendar_config",
+                  return_value=mock_config),
+            patch("prometheus.agents.lumen_calendar_executor.create_calendar_event") as mock_create,
+        ):
+            from prometheus.agents import lumen_calendar_executor as ex
+            result = ex.execute_approved_calendar_request("req-old2")
+
+        # Must have failed — no guessing from dry-run results
+        assert not result["success"]
+        mock_create.assert_not_called()
+
+    def test_executor_uses_original_operations_from_reviewed_file(self, tmp_path):
+        """Executor reads operations from reviewed['original_operations'], not from pending."""
+        reviewed_dir = tmp_path / "reviewed"
+        pending_dir = tmp_path / "pending"
+        approved_dir = tmp_path / "approved"
+
+        # Reviewed file has a specific title in original_operations
+        reviewed = _make_reviewed("req-ops")
+        reviewed["original_operations"] = [
+            {
+                "operation_type": "create_event",
+                "title": "FROM_REVIEWED_NOT_PENDING",
+                "start_time": "2026-06-01T09:00:00",
+                "end_time": "2026-06-01T10:00:00",
+                "calendar_id": "primary",
+                "requires_prometheus_approval": True,
+                "dry_run": True,
+            }
+        ]
+        _write_reviewed(reviewed_dir, "req-ops", reviewed)
+
+        # Pending has a different title — executor must NOT use this
+        pending = _make_pending("req-ops")
+        pending["operations"][0]["title"] = "FROM_PENDING_SHOULD_NOT_USE"
+        _write_pending(pending_dir, "req-ops", pending)
+
+        approved_dir.mkdir(parents=True)
+        (approved_dir / "approved_req-ops.json").write_text(
+            json.dumps(self._approval("req-ops"))
+        )
+
+        mock_config = MagicMock()
+        mock_config.enabled = True
+        mock_config.dry_run = False
+        mock_config.default_calendar_id = "primary"
+        mock_config.timezone = "UTC"
+
+        captured_calls = []
+
+        def fake_create(**kwargs):
+            captured_calls.append(kwargs)
+            r = MagicMock()
+            r.success = True
+            r.dry_run = False
+            r.message = "ok"
+            r.event_id = "evt-1"
+            r.calendar_id = "primary"
+            return r
+
+        with (
+            patch.multiple("prometheus.agents.lumen_calendar_executor", **self._dirs(tmp_path)),
+            patch("prometheus.agents.lumen_calendar_executor.load_google_calendar_config",
+                  return_value=mock_config),
+            patch("prometheus.agents.lumen_calendar_executor.build_google_calendar_service",
+                  return_value=MagicMock()),
+            patch("prometheus.agents.lumen_calendar_executor.create_calendar_event",
+                  side_effect=fake_create),
+        ):
+            from prometheus.agents import lumen_calendar_executor as ex
+            result = ex.execute_approved_calendar_request("req-ops")
+
+        assert result["success"], result.get("reason")
+        assert captured_calls, "create_calendar_event was not called"
+        assert captured_calls[0]["title"] == "FROM_REVIEWED_NOT_PENDING"
+
+    def test_original_operations_empty_list_fails(self, tmp_path):
+        reviewed_dir = tmp_path / "reviewed"
+        approved_dir = tmp_path / "approved"
+        reviewed = _make_reviewed("req-empty")
+        reviewed["original_operations"] = []
+        _write_reviewed(reviewed_dir, "req-empty", reviewed)
+        approved_dir.mkdir(parents=True)
+        (approved_dir / "approved_req-empty.json").write_text(
+            json.dumps(self._approval("req-empty"))
+        )
+
+        mock_config = MagicMock()
+        mock_config.enabled = True
+        mock_config.dry_run = False
+
+        with (
+            patch.multiple("prometheus.agents.lumen_calendar_executor", **self._dirs(tmp_path)),
+            patch("prometheus.agents.lumen_calendar_executor.load_google_calendar_config",
+                  return_value=mock_config),
+        ):
+            from prometheus.agents import lumen_calendar_executor as ex
+            result = ex.execute_approved_calendar_request("req-empty")
+
+        assert not result["success"]
+        assert "no operations" in result["reason"].lower()
+
+
+# ── Validation improvements ───────────────────────────────────────────────────
+
+class TestValidationImprovements:
+    def test_create_event_missing_title_fails(self):
+        from prometheus.agents.lumen_calendar_executor import _validate_operations
+        ok, msg = _validate_operations([{
+            "operation_type": "create_event",
+            "start_time": "2026-06-01T09:00:00",
+            "end_time": "2026-06-01T10:00:00",
+        }])
+        assert not ok
+        assert "title" in msg.lower()
+
+    def test_create_event_missing_start_time_fails(self):
+        from prometheus.agents.lumen_calendar_executor import _validate_operations
+        ok, msg = _validate_operations([{
+            "operation_type": "create_event",
+            "title": "Test",
+            "end_time": "2026-06-01T10:00:00",
+        }])
+        assert not ok
+        assert "start_time" in msg.lower()
+
+    def test_create_event_missing_end_time_fails(self):
+        from prometheus.agents.lumen_calendar_executor import _validate_operations
+        ok, msg = _validate_operations([{
+            "operation_type": "create_event",
+            "title": "Test",
+            "start_time": "2026-06-01T09:00:00",
+        }])
+        assert not ok
+        assert "end_time" in msg.lower()
+
+    def test_create_event_end_before_start_fails(self):
+        from prometheus.agents.lumen_calendar_executor import _validate_operations
+        ok, msg = _validate_operations([{
+            "operation_type": "create_event",
+            "title": "Test",
+            "start_time": "2026-06-01T15:00:00",
+            "end_time": "2026-06-01T10:00:00",
+        }])
+        assert not ok
+        assert "end_time" in msg.lower() or "after" in msg.lower()
+
+    def test_create_event_same_start_end_fails(self):
+        from prometheus.agents.lumen_calendar_executor import _validate_operations
+        ok, msg = _validate_operations([{
+            "operation_type": "create_event",
+            "title": "Test",
+            "start_time": "2026-06-01T10:00:00",
+            "end_time": "2026-06-01T10:00:00",
+        }])
+        assert not ok
+
+    def test_create_event_valid_passes(self):
+        from prometheus.agents.lumen_calendar_executor import _validate_operations
+        ok, msg = _validate_operations([{
+            "operation_type": "create_event",
+            "title": "Test event",
+            "start_time": "2026-06-01T09:00:00",
+            "end_time": "2026-06-01T10:00:00",
+        }])
+        assert ok, msg
+
+    def test_create_event_short_datetime_format_passes(self):
+        """HH:MM format without seconds should be parseable."""
+        from prometheus.agents.lumen_calendar_executor import _validate_operations
+        ok, msg = _validate_operations([{
+            "operation_type": "create_event",
+            "title": "Test",
+            "start_time": "2026-06-01T09:00",
+            "end_time": "2026-06-01T10:00",
+        }])
+        assert ok, msg
+
+    def test_update_event_missing_event_id_fails(self):
+        from prometheus.agents.lumen_calendar_executor import _validate_operations
+        ok, msg = _validate_operations([{
+            "operation_type": "update_event",
+            "title": "New title",
+        }])
+        assert not ok
+        assert "event_id" in msg.lower()
+
+    def test_update_event_no_update_fields_fails(self):
+        from prometheus.agents.lumen_calendar_executor import _validate_operations
+        ok, msg = _validate_operations([{
+            "operation_type": "update_event",
+            "event_id": "evt-abc",
+        }])
+        assert not ok
+        assert "update" in msg.lower() or "fields" in msg.lower()
+
+    def test_update_event_with_title_passes(self):
+        from prometheus.agents.lumen_calendar_executor import _validate_operations
+        ok, msg = _validate_operations([{
+            "operation_type": "update_event",
+            "event_id": "evt-abc",
+            "title": "Updated",
+        }])
+        assert ok, msg
+
+    def test_create_event_unparseable_datetime_fails(self):
+        from prometheus.agents.lumen_calendar_executor import _validate_operations
+        ok, msg = _validate_operations([{
+            "operation_type": "create_event",
+            "title": "Test",
+            "start_time": "not-a-date",
+            "end_time": "2026-06-01T10:00:00",
+        }])
+        assert not ok
+        assert "datetime" in msg.lower() or "parseable" in msg.lower()
+
+
+# ── Google Calendar payload structure ─────────────────────────────────────────
+
+class TestGoogleCalendarPayload:
+    def test_create_event_live_body_uses_summary_not_title(self):
+        """Google API body must use 'summary', not raw Lumen 'title' field name."""
+        from prometheus.integrations.google_calendar import create_calendar_event, GoogleCalendarConfig
+
+        mock_service = MagicMock()
+        mock_service.events.return_value.insert.return_value.execute.return_value = {
+            "id": "new-evt-id",
+            "summary": "Test Event",
+        }
+        config = GoogleCalendarConfig(
+            enabled=True, dry_run=False,
+            default_calendar_id="primary",
+            timezone="America/New_York",
+        )
+        create_calendar_event(
+            service=mock_service,
+            config=config,
+            title="Test Event",
+            start_time="2026-06-01T09:00:00",
+            end_time="2026-06-01T10:00:00",
+        )
+        call_kwargs = mock_service.events.return_value.insert.call_args
+        body = call_kwargs.kwargs.get("body") or (call_kwargs.args[1] if len(call_kwargs.args) > 1 else None)
+        # Fallback: check keyword args
+        if body is None:
+            body = {k: v for k, v in call_kwargs.kwargs.items() if k == "body"}.get("body")
+        assert body is not None, "Could not find body in insert call"
+        assert "summary" in body
+        assert body["summary"] == "Test Event"
+        assert "title" not in body
+
+    def test_create_event_body_has_start_end_with_datetime_key(self):
+        from prometheus.integrations.google_calendar import create_calendar_event, GoogleCalendarConfig
+
+        mock_service = MagicMock()
+        mock_service.events.return_value.insert.return_value.execute.return_value = {
+            "id": "evt-1", "summary": "Test",
+        }
+        config = GoogleCalendarConfig(
+            enabled=True, dry_run=False,
+            default_calendar_id="primary",
+            timezone="America/New_York",
+        )
+        create_calendar_event(
+            service=mock_service, config=config,
+            title="Test", start_time="2026-06-01T09:00:00",
+            end_time="2026-06-01T10:00:00",
+        )
+        call_kwargs = mock_service.events.return_value.insert.call_args
+        body = call_kwargs.kwargs["body"]
+        assert "start" in body
+        assert "dateTime" in body["start"]
+        assert "end" in body
+        assert "dateTime" in body["end"]
+
+    def test_create_event_body_excludes_none_location(self):
+        from prometheus.integrations.google_calendar import create_calendar_event, GoogleCalendarConfig
+
+        mock_service = MagicMock()
+        mock_service.events.return_value.insert.return_value.execute.return_value = {
+            "id": "evt-1", "summary": "Test",
+        }
+        config = GoogleCalendarConfig(
+            enabled=True, dry_run=False,
+            default_calendar_id="primary",
+            timezone="America/New_York",
+        )
+        create_calendar_event(
+            service=mock_service, config=config,
+            title="Test", start_time="2026-06-01T09:00:00",
+            end_time="2026-06-01T10:00:00",
+            location=None, description=None,
+        )
+        call_kwargs = mock_service.events.return_value.insert.call_args
+        body = call_kwargs.kwargs["body"]
+        assert "location" not in body
+        assert "description" not in body
+
+    def test_normalize_dt_adds_seconds(self):
+        from prometheus.integrations.google_calendar import _normalize_dt
+        assert _normalize_dt("2026-05-15T14:00") == "2026-05-15T14:00:00"
+        assert _normalize_dt("2026-05-15T14:00+05:00") == "2026-05-15T14:00:00+05:00"
+        assert _normalize_dt("2026-05-15T14:00Z") == "2026-05-15T14:00:00Z"
+
+    def test_normalize_dt_leaves_complete_timestamps_unchanged(self):
+        from prometheus.integrations.google_calendar import _normalize_dt
+        assert _normalize_dt("2026-05-15T14:00:00") == "2026-05-15T14:00:00"
+        assert _normalize_dt("2026-05-15T14:00:00-05:00") == "2026-05-15T14:00:00-05:00"
+
+    def test_create_event_normalizes_short_datetime_in_body(self):
+        """'2026-05-15T14:00' must become '2026-05-15T14:00:00' in the API body."""
+        from prometheus.integrations.google_calendar import create_calendar_event, GoogleCalendarConfig
+
+        mock_service = MagicMock()
+        mock_service.events.return_value.insert.return_value.execute.return_value = {
+            "id": "evt-1", "summary": "Test",
+        }
+        config = GoogleCalendarConfig(
+            enabled=True, dry_run=False,
+            default_calendar_id="primary",
+            timezone="America/New_York",
+        )
+        create_calendar_event(
+            service=mock_service, config=config,
+            title="Test", start_time="2026-05-15T14:00",
+            end_time="2026-05-15T15:00",
+        )
+        call_kwargs = mock_service.events.return_value.insert.call_args
+        body = call_kwargs.kwargs["body"]
+        assert body["start"]["dateTime"] == "2026-05-15T14:00:00"
+        assert body["end"]["dateTime"] == "2026-05-15T15:00:00"
+
+
+# ── HttpError reporting ───────────────────────────────────────────────────────
+
+class TestHttpErrorReporting:
+    class FakeHttpError(Exception):
+        def __init__(self, status: int, message: str) -> None:
+            super().__init__(f"HttpError {status}: {message}")
+            self.resp = MagicMock(status=status)
+            self.content = json.dumps({"error": {"message": message}}).encode("utf-8")
+
+    def _make_setup(self, tmp_path):
+        reviewed_dir = tmp_path / "reviewed"
+        pending_dir = tmp_path / "pending"
+        approved_dir = tmp_path / "approved"
+        reviewed = _make_reviewed("req-http")
+        _write_reviewed(reviewed_dir, "req-http", reviewed)
+        _write_pending(pending_dir, "req-http", _make_pending("req-http"))
+        approval = {
+            "request_id": "req-http",
+            "approved": True, "approved_by": "user",
+            "approved_at": "2026-05-14T00:00:00+00:00",
+            "operation_count": 1, "explicit_user_approval_required": True,
+        }
+        approved_dir.mkdir(parents=True)
+        (approved_dir / "approved_req-http.json").write_text(json.dumps(approval))
+        return reviewed_dir, pending_dir, approved_dir
+
+    def test_http_error_400_includes_status_code(self, tmp_path):
+        reviewed_dir, pending_dir, approved_dir = self._make_setup(tmp_path)
+
+        mock_config = MagicMock()
+        mock_config.enabled = True
+        mock_config.dry_run = False
+        mock_config.default_calendar_id = "primary"
+        mock_config.timezone = "UTC"
+
+        err = self.FakeHttpError(400, "Invalid datetime value")
+
+        with (
+            patch("prometheus.agents.lumen_calendar_executor.REVIEWED_LUMEN_DIR", reviewed_dir),
+            patch("prometheus.agents.lumen_calendar_executor.PENDING_LUMEN_DIR", pending_dir),
+            patch("prometheus.agents.lumen_calendar_executor.APPROVED_LUMEN_DIR", approved_dir),
+            patch("prometheus.agents.lumen_calendar_executor.COMPLETED_LUMEN_DIR", tmp_path / "completed"),
+            patch("prometheus.agents.lumen_calendar_executor.FAILED_LUMEN_DIR", tmp_path / "failed"),
+            patch("prometheus.agents.lumen_calendar_executor.load_google_calendar_config",
+                  return_value=mock_config),
+            patch("prometheus.agents.lumen_calendar_executor.build_google_calendar_service",
+                  return_value=MagicMock()),
+            patch("prometheus.agents.lumen_calendar_executor.create_calendar_event",
+                  side_effect=err),
+        ):
+            from prometheus.agents import lumen_calendar_executor as ex
+            result = ex.execute_approved_calendar_request("req-http")
+
+        assert not result["success"]
+        op = result["operation_results"][0]
+        assert op["status_code"] == 400
+        assert "400" in op["message"] or "Invalid datetime" in op["message"]
+
+    def test_http_error_message_extracted_from_json_body(self, tmp_path):
+        reviewed_dir, pending_dir, approved_dir = self._make_setup(tmp_path)
+
+        mock_config = MagicMock()
+        mock_config.enabled = True
+        mock_config.dry_run = False
+        mock_config.default_calendar_id = "primary"
+        mock_config.timezone = "UTC"
+
+        err = self.FakeHttpError(400, "Invalid value for: start")
+
+        with (
+            patch("prometheus.agents.lumen_calendar_executor.REVIEWED_LUMEN_DIR", reviewed_dir),
+            patch("prometheus.agents.lumen_calendar_executor.PENDING_LUMEN_DIR", pending_dir),
+            patch("prometheus.agents.lumen_calendar_executor.APPROVED_LUMEN_DIR", approved_dir),
+            patch("prometheus.agents.lumen_calendar_executor.COMPLETED_LUMEN_DIR", tmp_path / "completed"),
+            patch("prometheus.agents.lumen_calendar_executor.FAILED_LUMEN_DIR", tmp_path / "failed"),
+            patch("prometheus.agents.lumen_calendar_executor.load_google_calendar_config",
+                  return_value=mock_config),
+            patch("prometheus.agents.lumen_calendar_executor.build_google_calendar_service",
+                  return_value=MagicMock()),
+            patch("prometheus.agents.lumen_calendar_executor.create_calendar_event",
+                  side_effect=err),
+        ):
+            from prometheus.agents import lumen_calendar_executor as ex
+            result = ex.execute_approved_calendar_request("req-http")
+
+        op = result["operation_results"][0]
+        assert "Invalid value for: start" in op["message"]
+
+    def test_http_error_does_not_expose_credentials(self, tmp_path):
+        """Error message must not contain credential-like strings."""
+        reviewed_dir, pending_dir, approved_dir = self._make_setup(tmp_path)
+
+        mock_config = MagicMock()
+        mock_config.enabled = True
+        mock_config.dry_run = False
+        mock_config.default_calendar_id = "primary"
+        mock_config.timezone = "UTC"
+
+        err = self.FakeHttpError(403, "Forbidden")
+
+        with (
+            patch("prometheus.agents.lumen_calendar_executor.REVIEWED_LUMEN_DIR", reviewed_dir),
+            patch("prometheus.agents.lumen_calendar_executor.PENDING_LUMEN_DIR", pending_dir),
+            patch("prometheus.agents.lumen_calendar_executor.APPROVED_LUMEN_DIR", approved_dir),
+            patch("prometheus.agents.lumen_calendar_executor.COMPLETED_LUMEN_DIR", tmp_path / "completed"),
+            patch("prometheus.agents.lumen_calendar_executor.FAILED_LUMEN_DIR", tmp_path / "failed"),
+            patch("prometheus.agents.lumen_calendar_executor.load_google_calendar_config",
+                  return_value=mock_config),
+            patch("prometheus.agents.lumen_calendar_executor.build_google_calendar_service",
+                  return_value=MagicMock()),
+            patch("prometheus.agents.lumen_calendar_executor.create_calendar_event",
+                  side_effect=err),
+        ):
+            from prometheus.agents import lumen_calendar_executor as ex
+            result = ex.execute_approved_calendar_request("req-http")
+
+        op = result["operation_results"][0]
+        msg = op["message"]
+        assert "api_key" not in msg.lower()
+        assert "token" not in msg.lower()
+        assert "credentials" not in msg.lower()

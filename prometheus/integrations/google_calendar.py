@@ -98,6 +98,22 @@ def _calendar_id(config: GoogleCalendarConfig, override: Optional[str]) -> str:
     return override or config.default_calendar_id
 
 
+def _normalize_dt(dt_str: str) -> str:
+    """Ensure datetime string has a seconds component (Google Calendar API requires HH:MM:SS).
+
+    "2026-05-15T14:00"       → "2026-05-15T14:00:00"
+    "2026-05-15T14:00-05:00" → "2026-05-15T14:00:00-05:00"
+    "2026-05-15T14:00:00Z"   → unchanged
+    """
+    if not dt_str:
+        return dt_str
+    import re as _re
+    m = _re.match(r'^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2})(Z|[+-]\d{2}:\d{2})?$', dt_str)
+    if m:
+        return m.group(1) + ':00' + (m.group(2) or '')
+    return dt_str
+
+
 def _event_from_google(raw: dict, calendar_id: str) -> GoogleCalendarEvent:
     start = raw.get("start", {})
     end = raw.get("end", {})
@@ -303,6 +319,8 @@ def create_calendar_event(
 
     cal_id = _calendar_id(config, calendar_id)
     tz = timezone or config.timezone
+    start_time = _normalize_dt(start_time)
+    end_time = _normalize_dt(end_time)
 
     if not config.enabled:
         return _disabled_result("create_event", cal_id)
@@ -370,6 +388,10 @@ def update_calendar_event(
 
     cal_id = _calendar_id(config, calendar_id)
     tz = timezone or config.timezone
+    if start_time is not None:
+        start_time = _normalize_dt(start_time)
+    if end_time is not None:
+        end_time = _normalize_dt(end_time)
 
     if not config.enabled:
         return _disabled_result("update_event", cal_id)
