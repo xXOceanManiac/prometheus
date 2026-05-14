@@ -161,6 +161,34 @@ class TestPrometheusInfra:
         assert callable(chat_completion)
 
 
+# ── prometheus.agents.* namespace ────────────────────────────────────────────
+
+class TestPrometheusAgents:
+    def test_lumen_ingestion_imports(self):
+        from prometheus.agents.lumen_ingestion import (
+            LumenIngestionResult,
+            PendingCalendarProposal,
+            validate_lumen_calendar_request,
+            ingest_lumen_outbox_once,
+            list_pending_lumen_calendar_proposals,
+        )
+        assert callable(validate_lumen_calendar_request)
+        assert callable(ingest_lumen_outbox_once)
+        assert callable(list_pending_lumen_calendar_proposals)
+
+    def test_lumen_paths_in_infra(self):
+        from prometheus.infra.paths import (
+            PROMETHEUS_ECOSYSTEM_ROOT,
+            LUMEN_ROOT,
+            LUMEN_OUTBOX_DIR,
+            LUMEN_ACCEPTED_DIR,
+            LUMEN_REJECTED_DIR,
+            PENDING_LUMEN_DIR,
+        )
+        assert LUMEN_ROOT.parent == PROMETHEUS_ECOSYSTEM_ROOT
+        assert LUMEN_ROOT.name == "Lumen"
+
+
 # ── prometheus.planning.* namespace ──────────────────────────────────────────
 
 class TestPrometheusPlanning:
