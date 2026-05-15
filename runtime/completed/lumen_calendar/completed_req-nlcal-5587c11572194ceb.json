@@ -1,0 +1,18 @@
+{
+  "request_id": "req-nlcal-5587c11572194ceb",
+  "executed_at": "2026-05-15T04:34:21.316971+00:00",
+  "success": true,
+  "operation_count": 1,
+  "operation_results": [
+    {
+      "operation_index": 0,
+      "operation_type": "create_event",
+      "success": true,
+      "dry_run": false,
+      "message": "Event 'Meeting With The Bishop' created.",
+      "event_id": "e7qrn0lbr9mt3nbkfu93e6vcgk",
+      "calendar_id": "primary"
+    }
+  ],
+  "message": "Executed 1 operation(s) successfully."
+}

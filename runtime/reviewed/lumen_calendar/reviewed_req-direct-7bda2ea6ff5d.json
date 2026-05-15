@@ -1,0 +1,21 @@
+{
+  "request_id": "req-direct-7bda2ea6ff5d",
+  "reviewed_at": "2026-05-15T04:33:07.383350+00:00",
+  "all_dry_run": true,
+  "approved": false,
+  "original_operations": [
+    {
+      "operation_type": "create_event",
+      "title": "Nap Or Party Starting",
+      "start_time": "2026-05-15T19:00:00",
+      "end_time": "2026-05-15T20:00:00",
+      "calendar_id": "primary",
+      "requires_prometheus_approval": true,
+      "dry_run": true
+    }
+  ],
+  "results": [],
+  "no_live_execution": true,
+  "source": "nl_calendar_create_direct",
+  "approval_mode": "direct_user_command"
+}

@@ -1,0 +1,18 @@
+{
+  "request_id": "req-direct-295845f4e102",
+  "executed_at": "2026-05-15T04:31:59.800996+00:00",
+  "success": true,
+  "operation_count": 1,
+  "operation_results": [
+    {
+      "operation_index": 0,
+      "operation_type": "create_event",
+      "success": true,
+      "dry_run": false,
+      "message": "Event 'End Of Year Party' created.",
+      "event_id": "vtvt7tmvkf75klt65fnqa5mdd0",
+      "calendar_id": "primary"
+    }
+  ],
+  "message": "Executed 1 operation(s) successfully."
+}

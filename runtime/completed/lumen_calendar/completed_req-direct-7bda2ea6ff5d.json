@@ -1,0 +1,18 @@
+{
+  "request_id": "req-direct-7bda2ea6ff5d",
+  "executed_at": "2026-05-15T04:33:07.383690+00:00",
+  "success": true,
+  "operation_count": 1,
+  "operation_results": [
+    {
+      "operation_index": 0,
+      "operation_type": "create_event",
+      "success": true,
+      "dry_run": false,
+      "message": "Event 'Nap Or Party Starting' created.",
+      "event_id": "dtnpuecb7lgckrvkoumlib0lrc",
+      "calendar_id": "primary"
+    }
+  ],
+  "message": "Executed 1 operation(s) successfully."
+}

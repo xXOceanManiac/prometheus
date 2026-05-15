@@ -1,0 +1,20 @@
+{
+  "request_id": "req-nlcal-5587c11572194ceb",
+  "reviewed_at": "2026-05-15T04:34:21.316628+00:00",
+  "all_dry_run": true,
+  "approved": false,
+  "original_operations": [
+    {
+      "operation_type": "create_event",
+      "title": "Meeting With The Bishop",
+      "start_time": "2026-05-17T08:30:00",
+      "end_time": "2026-05-17T09:30:00",
+      "calendar_id": "primary",
+      "requires_prometheus_approval": true,
+      "dry_run": true
+    }
+  ],
+  "results": [],
+  "no_live_execution": true,
+  "source": "nl_calendar_create"
+}

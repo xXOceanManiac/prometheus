@@ -1,0 +1,18 @@
+{
+  "request_id": "req-direct-7a6be0752d13",
+  "executed_at": "2026-05-15T04:28:37.877835+00:00",
+  "success": true,
+  "operation_count": 1,
+  "operation_results": [
+    {
+      "operation_index": 0,
+      "operation_type": "create_event",
+      "success": true,
+      "dry_run": false,
+      "message": "Event 'Test Focus Block' created.",
+      "event_id": "rej9av3t6dk28t4p26258jf114",
+      "calendar_id": "primary"
+    }
+  ],
+  "message": "Executed 1 operation(s) successfully."
+}
