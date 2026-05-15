@@ -1,7 +1,7 @@
 # Prometheus Capability Audit
 
-**Generated:** 2026-05-14 22:27:23
-**Tests run:** 265  **Passed:** 265  **Failed:** 0  (100.0% pass rate)
+**Generated:** 2026-05-15 00:22:57
+**Tests run:** 273  **Passed:** 273  **Failed:** 0  (100.0% pass rate)
 
 ---
 
@@ -19,7 +19,7 @@ Key findings:
 - **VOICE**: ✓ 12/12 passing
 - **LOGGING**: ✓ 6/6 passing
 - **HUD**: ✓ 11/11 passing
-- **OTHER**: ✓ 82/82 passing
+- **OTHER**: ✓ 90/90 passing
 - **CALENDAR**: ✓ 45/45 passing
 - **RESPONSE_VAULT_LOGS**: ✓ 18/18 passing
 
@@ -37,7 +37,7 @@ Key findings:
 | startup | ~/.jarvis/logs dir exists | PASS |  |  |
 | startup | ~/.jarvis/audio dir exists | PASS |  |  |
 | startup | ~/.jarvis/memory_v2 dir exists | PASS |  |  |
-| startup | tools.py imports cleanly | PASS | 107ms |  |
+| startup | tools.py imports cleanly | PASS | 112ms |  |
 | startup | memory.py imports cleanly | PASS | 0ms |  |
 | startup | working_memory.py imports cleanly | PASS | 0ms |  |
 | startup | planner.planner imports cleanly | PASS | 1ms |  |
@@ -56,7 +56,7 @@ Key findings:
 | tools | tool:write_file:content_correct | PASS |  |  |
 | tools | tool:screenshot:no_crash | PASS |  | ok=True: Screenshot saved to /home/tatel/Pictures/Screenshots/screens |
 | tools | tool:web_search:returns_result | PASS |  | Searched the web for prometheus audit test. |
-| tools | tool:list_windows:no_crash | PASS |  | ok=True windows=10 |
+| tools | tool:list_windows:no_crash | PASS |  | ok=True windows=9 |
 | tools | tool:get_active_window:no_crash | PASS |  | ok=True |
 | tools | tool:system_status | PASS |  | System status retrieved. |
 | tools | tool:system_status:has_active_project_key | PASS |  |  |
@@ -113,7 +113,7 @@ Key findings:
 | planning | planning:plan_is_serializable | PASS |  |  |
 | planning | planning:low_confidence:triggers_clarification | PASS | 0ms | conf=0.20 q='Can you be more specific about what you'd like me to do?' |
 | planning | planning:multi_step:two_or_more_steps | PASS |  | steps=2 conf=0.82 |
-| planning | planning:executor:runs_safe_plan | PASS | 58ms | 2/2 steps succeeded. |
+| planning | planning:executor:runs_safe_plan | PASS | 53ms | 2/2 steps succeeded. |
 | planning | planning:executor:steps_in_order | PASS |  | first step: list_files |
 | planning | planning:executor:first_step_failure_recorded | PASS |  | 1/2 steps succeeded. |
 | planning | planning:verifier:passes_on_success | PASS |  | 2/2 steps succeeded. |
@@ -133,13 +133,13 @@ Key findings:
 | voice | voice:response_in_progress_guard_exists | PASS |  | Checked source for duplicate-response guard |
 | voice | voice:error_callback:fires | PASS |  |  |
 | logging | logging:log_file_created_today | PASS |  |  |
-| logging | logging:jsonl_lines_valid | PASS |  | Checked last 20 of 8898 lines |
+| logging | logging:jsonl_lines_valid | PASS |  | Checked last 20 of 1476 lines |
 | logging | logging:entries_have_ts | PASS |  |  |
 | logging | logging:entries_have_kind | PASS |  |  |
 | logging | logging:activity.jsonl_exists | PASS |  |  |
 | logging | logging:tool_errors_logged | PASS |  |  |
 | hud | hud:jarvis_desktop_hud.py_exists | PASS |  |  |
-| hud | hud:imports_cleanly | PASS | 37ms |  |
+| hud | hud:imports_cleanly | PASS | 42ms |  |
 | hud | hud:Store:instantiates | PASS |  |  |
 | hud | hud:Store:has_chat_history | PASS |  |  |
 | hud | hud:Store:has_active_tab | PASS |  |  |
@@ -188,7 +188,7 @@ Key findings:
 |  | lumen_calendar_router:no_subprocess | PASS |  | No shell execution in router source |
 |  | lumen_calendar_router:no_home_assistant | PASS |  | No Home Assistant calls in router source |
 |  | lumen_calendar_router:no_auto_approval | PASS |  | Proposals are never auto-approved by the router |
-| calendar | calendar:module_imports_cleanly | PASS | 2ms |  |
+| calendar | calendar:module_imports_cleanly | PASS | 3ms |  |
 | calendar | calendar:function_exists:calendar_list_upcoming | PASS |  |  |
 | calendar | calendar:function_exists:calendar_get_today | PASS |  |  |
 | calendar | calendar:function_exists:calendar_get_tomorrow | PASS |  |  |
@@ -231,7 +231,7 @@ Key findings:
 | calendar | calendar:intent_override:'what's my next event' | PASS |  | got=calendar_next_event, expected=calendar_next_event |
 | calendar | calendar:intent_override:'summarize my day' | PASS |  | got=calendar_summarize_day, expected=calendar_summarize_day |
 | calendar | calendar:intent_override:'do i have a free hour' | PASS |  | got=calendar_find_free_blocks, expected=calendar_find_free_blocks |
-| calendar | calendar:tool_registry:calendar_get_today:no_crash | PASS |  | ok=True msg=0 event(s) today (2026-05-14). |
+| calendar | calendar:tool_registry:calendar_get_today:no_crash | PASS |  | ok=True msg=0 event(s) today (2026-05-15). |
 | calendar | calendar:tool_registry:disabled_returns_graceful_error | PASS |  | Google Calendar is disabled. Set GOOGLE_CALENDAR_ENABLED=true to enable. |
 | response_vault_logs | response_vault_logs:response_synthesizer_imports | PASS |  |  |
 | response_vault_logs | response_vault_logs:all_7_calendar_actions_in_set | PASS |  | missing=set() |
@@ -294,6 +294,14 @@ Key findings:
 |  | calendar_create_flow:proposal_risk_is_none | PASS |  |  |
 |  | calendar_create_flow:confirm_risk_is_high | PASS |  |  |
 |  | calendar_create_flow:cancel_risk_is_none | PASS |  |  |
+|  | calendar_create_flow:auto_execute_fn_callable | PASS |  |  |
+|  | calendar_create_flow:auto_execute_low_risk_ok | PASS |  |  |
+|  | calendar_create_flow:auto_execute_blocks_sleep_hours | PASS |  |  |
+|  | calendar_create_flow:auto_execute_blocks_recurring | PASS |  |  |
+|  | calendar_create_flow:direct_create_uses_req_direct_prefix | PASS |  |  |
+|  | calendar_create_flow:explicit_duration_extraction | PASS |  |  |
+|  | calendar_create_flow:compound_on_my_calendar_routes_to_proposal | PASS |  |  |
+|  | calendar_create_flow:synthesizer_handles_executed_status | PASS |  |  |
 
 ---
 
@@ -414,7 +422,7 @@ Tools tested via direct `ToolRegistry._execute_one_inner()` calls.
 
 ## Raw Log Location
 
-- Prometheus logs: `~/.jarvis/logs/2026-05-14.jsonl`
+- Prometheus logs: `~/.jarvis/logs/2026-05-15.jsonl`
 - This report: `/home/tatel/Desktop/PROMETHEUS/Prometheus_Main/runtime/reports/current_capability_audit.md`
 - Working memory: `~/.jarvis/memory_v2/working_memory.json`
 - Visual state: `~/.jarvis/visual_state.json`

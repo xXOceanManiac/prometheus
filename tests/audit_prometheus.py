@@ -2523,7 +2523,7 @@ def section_calendar_create_flow():
                 "date_hint": "tomorrow", "date_str": "2026-05-15",
                 "start_time": "2026-05-15T14:00:00", "end_time": "2026-05-15T15:30:00",
             }
-            result_text = synthesize_tool_response("calendar_create_proposal", ToolResult(ok=True, data=data))
+            result_text = synthesize_tool_response("calendar_create_proposal", ToolResult(ok=True, message="ok", data=data))
             ok = "Focus Block" in result_text or "14:00" in result_text or "done" in result_text.lower()
             record("calendar_create_flow:synthesizer_handles_executed_status", ok)
         else:

@@ -285,12 +285,15 @@ def _extract_title(text: str) -> str:
             if rest.startswith(article):
                 rest = rest[len(article):]
                 break
-        # Collect words until a stop word
+        # Collect words until a stop word or time-like token
         words = rest.split()
         title_words = []
         for word in words:
             clean = word.strip(".,?!")
             if clean in _DATE_STOP_WORDS:
+                break
+            # Stop at bare time tokens: "4pm", "10am", "14:00"
+            if re.match(r'^\d{1,2}(?::\d{2})?\s*(?:am|pm)$', clean.lower()):
                 break
             title_words.append(clean)
         if title_words:
