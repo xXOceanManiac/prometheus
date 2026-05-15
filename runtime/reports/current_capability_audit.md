@@ -1,7 +1,7 @@
 # Prometheus Capability Audit
 
-**Generated:** 2026-05-14 16:26:24
-**Tests run:** 245  **Passed:** 245  **Failed:** 0  (100.0% pass rate)
+**Generated:** 2026-05-14 22:27:23
+**Tests run:** 265  **Passed:** 265  **Failed:** 0  (100.0% pass rate)
 
 ---
 
@@ -19,7 +19,7 @@ Key findings:
 - **VOICE**: ✓ 12/12 passing
 - **LOGGING**: ✓ 6/6 passing
 - **HUD**: ✓ 11/11 passing
-- **OTHER**: ✓ 62/62 passing
+- **OTHER**: ✓ 82/82 passing
 - **CALENDAR**: ✓ 45/45 passing
 - **RESPONSE_VAULT_LOGS**: ✓ 18/18 passing
 
@@ -37,7 +37,7 @@ Key findings:
 | startup | ~/.jarvis/logs dir exists | PASS |  |  |
 | startup | ~/.jarvis/audio dir exists | PASS |  |  |
 | startup | ~/.jarvis/memory_v2 dir exists | PASS |  |  |
-| startup | tools.py imports cleanly | PASS | 115ms |  |
+| startup | tools.py imports cleanly | PASS | 107ms |  |
 | startup | memory.py imports cleanly | PASS | 0ms |  |
 | startup | working_memory.py imports cleanly | PASS | 0ms |  |
 | startup | planner.planner imports cleanly | PASS | 1ms |  |
@@ -60,7 +60,7 @@ Key findings:
 | tools | tool:get_active_window:no_crash | PASS |  | ok=True |
 | tools | tool:system_status | PASS |  | System status retrieved. |
 | tools | tool:system_status:has_active_project_key | PASS |  |  |
-| tools | tool:get_priorities:no_crash | PASS |  | ok=True Found 1 priorities. |
+| tools | tool:get_priorities:no_crash | PASS |  | ok=True Found 0 priorities. |
 | tools | tool:query_vault:vault_not_configured | PASS |  | vault_path not set — skipped; returns gracefully |
 | tools | tool:run_python:safe_snippet | PASS |  | prometheus_audit_ok |
 | tools | tool:run_python:blocks_os_system | PASS |  | run_python: blocked — command contains restricted patterns |
@@ -72,7 +72,7 @@ Key findings:
 | tools | tool:restart:requires_confirmation | PASS |  | Awaiting confirmation for restart. |
 | tools | tool:shutdown:requires_confirmation | PASS |  | Awaiting confirmation for shutdown. |
 | tools | tool:background_task:no_pool_gives_clear_error | PASS |  | Background worker pool is not running. |
-| tools | ACTION_ENUM all actions known (68 total) | PASS |  |  |
+| tools | ACTION_ENUM all actions known (71 total) | PASS |  |  |
 | sandbox | sandbox:write_inside_workspace_allowed | PASS |  | Wrote file: sandbox_test.txt |
 | sandbox | sandbox:write_outside_workspace_blocked | PASS |  | Write blocked: Path outside workspace is not allowed: /tmp/escape_attempt.txt |
 | sandbox | sandbox:run_python:blocks 'rm ' | PASS |  | run_python: blocked — command contains restricted patterns |
@@ -133,13 +133,13 @@ Key findings:
 | voice | voice:response_in_progress_guard_exists | PASS |  | Checked source for duplicate-response guard |
 | voice | voice:error_callback:fires | PASS |  |  |
 | logging | logging:log_file_created_today | PASS |  |  |
-| logging | logging:jsonl_lines_valid | PASS |  | Checked last 20 of 8394 lines |
+| logging | logging:jsonl_lines_valid | PASS |  | Checked last 20 of 8898 lines |
 | logging | logging:entries_have_ts | PASS |  |  |
 | logging | logging:entries_have_kind | PASS |  |  |
 | logging | logging:activity.jsonl_exists | PASS |  |  |
 | logging | logging:tool_errors_logged | PASS |  |  |
 | hud | hud:jarvis_desktop_hud.py_exists | PASS |  |  |
-| hud | hud:imports_cleanly | PASS | 38ms |  |
+| hud | hud:imports_cleanly | PASS | 37ms |  |
 | hud | hud:Store:instantiates | PASS |  |  |
 | hud | hud:Store:has_chat_history | PASS |  |  |
 | hud | hud:Store:has_active_tab | PASS |  |  |
@@ -274,6 +274,26 @@ Key findings:
 |  | show_logs:direct_intent_override | PASS |  | 'show me the logs' routes to show_logs via direct intent override |
 |  | show_logs:check_logs_phrase | PASS |  |  |
 |  | show_logs:synthesizer_handles_show_logs | PASS |  |  |
+|  | calendar_create_flow:module_imports | PASS |  |  |
+|  | calendar_create_flow:pending_dir_in_paths | PASS |  |  |
+|  | calendar_create_flow:parse_focus_block_tomorrow_at_2 | PASS |  |  |
+|  | calendar_create_flow:missing_date_detected | PASS |  |  |
+|  | calendar_create_flow:missing_time_detected | PASS |  |  |
+|  | calendar_create_flow:operation_has_safety_flags | PASS |  |  |
+|  | calendar_create_flow:no_home_assistant_calls | PASS |  |  |
+|  | calendar_create_flow:no_direct_gcal_calls | PASS |  | Module must route through executor, not call GCal API directly |
+|  | calendar_create_flow:needs_input_for_incomplete | PASS |  |  |
+|  | calendar_create_flow:has_pending_false_when_empty | PASS |  |  |
+|  | calendar_create_flow:create_phrase_routes_to_proposal | PASS |  |  |
+|  | calendar_create_flow:block_off_routes_to_proposal | PASS |  |  |
+|  | calendar_create_flow:reads_not_affected_by_create | PASS |  |  |
+|  | calendar_create_flow:all_in_followup_actions | PASS |  |  |
+|  | calendar_create_flow:synthesizer_handles_all_three | PASS |  |  |
+|  | calendar_create_flow:all_in_tool_capabilities | PASS |  |  |
+|  | calendar_create_flow:all_in_action_enum | PASS |  |  |
+|  | calendar_create_flow:proposal_risk_is_none | PASS |  |  |
+|  | calendar_create_flow:confirm_risk_is_high | PASS |  |  |
+|  | calendar_create_flow:cancel_risk_is_none | PASS |  |  |
 
 ---
 

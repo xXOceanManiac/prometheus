@@ -355,6 +355,8 @@ def section_tools():
         # Calendar write execution
         "calendar_list_reviewed_requests", "calendar_approve_request",
         "calendar_execute_approved_request",
+        # NL calendar creation flow
+        "calendar_create_proposal", "calendar_confirm_create", "calendar_cancel_create",
     }
     unhandled = [a for a in ACTION_ENUM if a not in known_handled]
     record(f"ACTION_ENUM all actions known ({len(ACTION_ENUM)} total)",
