@@ -47,4 +47,8 @@ FOLLOWUP_ACTIONS: frozenset[str] = frozenset({
     "calendar_list_reviewed_requests",
     "calendar_approve_request",
     "calendar_execute_approved_request",
+    # NL calendar creation flow — always produce spoken result
+    "calendar_create_proposal",
+    "calendar_confirm_create",
+    "calendar_cancel_create",
 })

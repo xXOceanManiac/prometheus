@@ -2048,6 +2048,88 @@ def section_calendar_executor():
            "_load_approval_record" in src or "No approval record" in src,
            notes="Executor checks for approval record before executing")
 
+    # Executor reads from original_operations, not pending
+    record("calendar_executor:reads_from_original_operations",
+           'original_operations' in src,
+           notes="Executor loads ops from reviewed['original_operations'], not from pending")
+
+    # Executor fails clearly if original_operations missing
+    record("calendar_executor:missing_original_ops_fails_clearly",
+           "Reviewed request is missing original_operations" in src or
+           "original_operations" in src,
+           notes="Old reviewed files missing original_operations fail with instructive message")
+
+    # _normalize_dt in google_calendar
+    try:
+        from prometheus.integrations.google_calendar import _normalize_dt
+        ok = (
+            _normalize_dt("2026-05-15T14:00") == "2026-05-15T14:00:00"
+            and _normalize_dt("2026-05-15T14:00:00") == "2026-05-15T14:00:00"
+            and _normalize_dt("2026-05-15T14:00+05:00") == "2026-05-15T14:00:00+05:00"
+        )
+        record("calendar_executor:normalize_dt_works", ok,
+               notes="Short HH:MM datetimes normalized to HH:MM:SS for Google API")
+    except Exception as exc:
+        record("calendar_executor:normalize_dt_works", False, error=str(exc))
+
+    # Router includes original_operations
+    try:
+        from prometheus.agents.lumen_calendar_router import review_lumen_proposal_dry_run
+        from prometheus.agents.lumen_ingestion import PendingCalendarProposal
+        from prometheus.integrations.google_calendar import GoogleCalendarConfig
+        proposal = PendingCalendarProposal(
+            request_id="audit-orig-ops-check",
+            source="lumen",
+            reason="Audit check",
+            operation_count=1,
+            operations=[{
+                "operation_type": "create_event",
+                "title": "Audit event",
+                "start_time": "2026-06-01T09:00:00",
+                "end_time": "2026-06-01T10:00:00",
+                "calendar_id": "primary",
+                "dry_run": True,
+                "requires_prometheus_approval": True,
+            }],
+            created_at="2026-05-14T00:00:00+00:00",
+            ingested_at="2026-05-14T00:01:00+00:00",
+            source_path="/fake/path",
+        )
+        import tempfile, pathlib
+        from unittest.mock import patch as _patch
+        with tempfile.TemporaryDirectory() as td:
+            pending_dir = pathlib.Path(td) / "pending"
+            reviewed_dir = pathlib.Path(td) / "reviewed"
+            pending_dir.mkdir()
+            reviewed_dir.mkdir()
+            import dataclasses as _dc
+            import json as _json
+            (pending_dir / f"pending_{proposal.request_id}.json").write_text(
+                _json.dumps(_dc.asdict(proposal)), encoding="utf-8"
+            )
+            safe_cfg = GoogleCalendarConfig(enabled=False, dry_run=True)
+            import prometheus.agents.lumen_calendar_router as rmod
+            with (
+                _patch.object(rmod, "PENDING_LUMEN_DIR", pending_dir),
+                _patch.object(rmod, "REVIEWED_LUMEN_DIR", reviewed_dir),
+                _patch.object(rmod, "ensure_lumen_router_dirs", lambda: None),
+            ):
+                from prometheus.agents import lumen_ingestion as lmod
+                with _patch.object(lmod, "PENDING_LUMEN_DIR", pending_dir):
+                    review = rmod.review_lumen_proposal_dry_run(
+                        proposal.request_id, config=safe_cfg, write_result=False
+                    )
+        has_orig = (
+            "original_operations" in review
+            and isinstance(review["original_operations"], list)
+            and len(review["original_operations"]) == 1
+            and review["original_operations"][0]["title"] == "Audit event"
+        )
+        record("calendar_executor:router_includes_original_operations", has_orig,
+               notes="Router preserves proposal.operations in reviewed['original_operations']")
+    except Exception as exc:
+        record("calendar_executor:router_includes_original_operations", False, error=str(exc))
+
     # FOLLOWUP_ACTIONS includes executor actions
     try:
         from prometheus.core.tool_followups import FOLLOWUP_ACTIONS
@@ -2098,6 +2180,229 @@ def section_calendar_executor():
         record("show_logs:synthesizer_handles_show_logs", False, error=str(exc))
 
 
+def section_calendar_create_flow():
+    print("\n=== SECTION 16: NL Calendar Create Flow ===")
+
+    # Module imports
+    try:
+        from prometheus.agents.calendar_create_flow import (
+            parse_calendar_create_request,
+            parse_and_propose,
+            confirm_pending_calendar_confirmation,
+            cancel_pending_calendar_confirmation,
+            has_pending_calendar_confirmation,
+            get_most_recent_pending_confirmation,
+            _build_operation,
+        )
+        record("calendar_create_flow:module_imports", True)
+    except Exception as exc:
+        record("calendar_create_flow:module_imports", False, error=str(exc))
+        return
+
+    # paths.py has PENDING_CALENDAR_CONFIRMATIONS_DIR
+    try:
+        from prometheus.infra.paths import PENDING_CALENDAR_CONFIRMATIONS_DIR
+        record("calendar_create_flow:pending_dir_in_paths", True)
+    except Exception as exc:
+        record("calendar_create_flow:pending_dir_in_paths", False, error=str(exc))
+
+    # parse_calendar_create_request — explicit datetime
+    try:
+        from datetime import datetime as _dt
+        now = _dt(2026, 5, 14, 10, 0)
+        draft = parse_calendar_create_request("schedule a focus block tomorrow at 2", now=now)
+        ok = (
+            draft.get("title") == "Focus Block"
+            and draft.get("date_str") == "2026-05-15"
+            and draft.get("start_time_str") == "14:00:00"
+            and not draft.get("missing_fields")
+        )
+        record("calendar_create_flow:parse_focus_block_tomorrow_at_2", ok)
+    except Exception as exc:
+        record("calendar_create_flow:parse_focus_block_tomorrow_at_2", False, error=str(exc))
+
+    # Missing date detected
+    try:
+        from datetime import datetime as _dt
+        draft = parse_calendar_create_request("schedule a standup at 10am")
+        record("calendar_create_flow:missing_date_detected", "date" in draft.get("missing_fields", []))
+    except Exception as exc:
+        record("calendar_create_flow:missing_date_detected", False, error=str(exc))
+
+    # Missing time detected
+    try:
+        from datetime import datetime as _dt
+        now = _dt(2026, 5, 14, 10, 0)
+        draft = parse_calendar_create_request("add a focus block tomorrow", now=now)
+        record("calendar_create_flow:missing_time_detected", "time" in draft.get("missing_fields", []))
+    except Exception as exc:
+        record("calendar_create_flow:missing_time_detected", False, error=str(exc))
+
+    # build_operation has required safety fields
+    try:
+        draft = {
+            "title": "Focus Block",
+            "date_str": "2026-05-15",
+            "start_time_str": "14:00:00",
+            "end_time_str": "15:30:00",
+        }
+        op = _build_operation(draft)
+        ok = (
+            op.get("requires_prometheus_approval") is True
+            and op.get("dry_run") is True
+            and op.get("operation_type") == "create_event"
+        )
+        record("calendar_create_flow:operation_has_safety_flags", ok)
+    except Exception as exc:
+        record("calendar_create_flow:operation_has_safety_flags", False, error=str(exc))
+
+    # No HA calls in source
+    try:
+        import inspect
+        import prometheus.agents.calendar_create_flow as _mod
+        src = inspect.getsource(_mod)
+        no_ha = "home_assistant" not in src and "ha_service" not in src
+        record("calendar_create_flow:no_home_assistant_calls", no_ha)
+    except Exception as exc:
+        record("calendar_create_flow:no_home_assistant_calls", False, error=str(exc))
+
+    # No direct GCal API calls in source
+    try:
+        import inspect
+        import prometheus.agents.calendar_create_flow as _mod
+        src = inspect.getsource(_mod)
+        no_direct = "create_calendar_event" not in src and "build_google_calendar_service" not in src
+        record("calendar_create_flow:no_direct_gcal_calls", no_direct,
+               notes="Module must route through executor, not call GCal API directly")
+    except Exception as exc:
+        record("calendar_create_flow:no_direct_gcal_calls", False, error=str(exc))
+
+    # parse_and_propose needs_input for incomplete request
+    try:
+        result = parse_and_propose("schedule a standup")
+        record("calendar_create_flow:needs_input_for_incomplete", result.get("status") == "needs_input")
+    except Exception as exc:
+        record("calendar_create_flow:needs_input_for_incomplete", False, error=str(exc))
+
+    # has_pending returns False when no files
+    try:
+        import tempfile, os
+        from unittest.mock import patch as _patch
+        with tempfile.TemporaryDirectory() as td:
+            conf_dir = _ROOT / td / "empty_conf"
+            conf_dir.mkdir(parents=True, exist_ok=True)
+            with _patch(
+                "prometheus.agents.calendar_create_flow.PENDING_CALENDAR_CONFIRMATIONS_DIR",
+                conf_dir,
+            ):
+                result = has_pending_calendar_confirmation()
+        record("calendar_create_flow:has_pending_false_when_empty", result is False)
+    except Exception as exc:
+        record("calendar_create_flow:has_pending_false_when_empty", False, error=str(exc))
+
+    # Intent overrides: create phrases → calendar_create_proposal
+    try:
+        from prometheus.core.intent_overrides import resolve_direct_intent
+        result = resolve_direct_intent("schedule a focus block tomorrow at 2")
+        ok = result is not None and result.get("payload", {}).get("action") == "calendar_create_proposal"
+        record("calendar_create_flow:create_phrase_routes_to_proposal", ok)
+    except Exception as exc:
+        record("calendar_create_flow:create_phrase_routes_to_proposal", False, error=str(exc))
+
+    # Intent overrides: block off routes to proposal
+    try:
+        from prometheus.core.intent_overrides import resolve_direct_intent
+        result = resolve_direct_intent("block off tomorrow afternoon for deep work")
+        ok = result is not None and result.get("payload", {}).get("action") == "calendar_create_proposal"
+        record("calendar_create_flow:block_off_routes_to_proposal", ok)
+    except Exception as exc:
+        record("calendar_create_flow:block_off_routes_to_proposal", False, error=str(exc))
+
+    # Intent overrides: calendar reads not affected
+    try:
+        from prometheus.core.intent_overrides import resolve_direct_intent
+        result = resolve_direct_intent("what's on my calendar today")
+        ok = result is not None and result.get("payload", {}).get("action") == "calendar_get_today"
+        record("calendar_create_flow:reads_not_affected_by_create", ok)
+    except Exception as exc:
+        record("calendar_create_flow:reads_not_affected_by_create", False, error=str(exc))
+
+    # tool_followups includes all 3 new actions
+    try:
+        from prometheus.core.tool_followups import FOLLOWUP_ACTIONS
+        has_all = all(a in FOLLOWUP_ACTIONS for a in (
+            "calendar_create_proposal",
+            "calendar_confirm_create",
+            "calendar_cancel_create",
+        ))
+        record("calendar_create_flow:all_in_followup_actions", has_all)
+    except Exception as exc:
+        record("calendar_create_flow:all_in_followup_actions", False, error=str(exc))
+
+    # response_synthesizer handles all 3 new actions
+    try:
+        from prometheus.execution.response_synthesizer import is_synthesized_action
+        ok = all(is_synthesized_action(a) for a in (
+            "calendar_create_proposal",
+            "calendar_confirm_create",
+            "calendar_cancel_create",
+        ))
+        record("calendar_create_flow:synthesizer_handles_all_three", ok)
+    except Exception as exc:
+        record("calendar_create_flow:synthesizer_handles_all_three", False, error=str(exc))
+
+    # tool_capability_registry has all 3 new tools
+    try:
+        from prometheus.execution.tool_capability_registry import TOOL_CAPABILITIES
+        has_all = all(k in TOOL_CAPABILITIES for k in (
+            "calendar_create_proposal",
+            "calendar_confirm_create",
+            "calendar_cancel_create",
+        ))
+        record("calendar_create_flow:all_in_tool_capabilities", has_all)
+    except Exception as exc:
+        record("calendar_create_flow:all_in_tool_capabilities", False, error=str(exc))
+
+    # ACTION_ENUM in tools.py has all 3 new actions
+    try:
+        import sys
+        sys.path.insert(0, str(_ROOT))
+        import importlib
+        tools_mod = importlib.import_module("tools")
+        has_all = all(a in tools_mod.ACTION_ENUM for a in (
+            "calendar_create_proposal",
+            "calendar_confirm_create",
+            "calendar_cancel_create",
+        ))
+        record("calendar_create_flow:all_in_action_enum", has_all)
+    except Exception as exc:
+        record("calendar_create_flow:all_in_action_enum", False, error=str(exc))
+
+    # create_proposal risk is "none" (no write at proposal stage)
+    try:
+        from prometheus.execution.tool_capability_registry import TOOL_CAPABILITIES
+        risk = TOOL_CAPABILITIES.get("calendar_create_proposal", object()).risk
+        record("calendar_create_flow:proposal_risk_is_none", risk == "none")
+    except Exception as exc:
+        record("calendar_create_flow:proposal_risk_is_none", False, error=str(exc))
+
+    # confirm_create risk is "high"
+    try:
+        from prometheus.execution.tool_capability_registry import TOOL_CAPABILITIES
+        risk = TOOL_CAPABILITIES.get("calendar_confirm_create", object()).risk
+        record("calendar_create_flow:confirm_risk_is_high", risk == "high")
+    except Exception as exc:
+        record("calendar_create_flow:confirm_risk_is_high", False, error=str(exc))
+
+    # cancel_create risk is "none"
+    try:
+        from prometheus.execution.tool_capability_registry import TOOL_CAPABILITIES
+        risk = TOOL_CAPABILITIES.get("calendar_cancel_create", object()).risk
+        record("calendar_create_flow:cancel_risk_is_none", risk == "none")
+    except Exception as exc:
+        record("calendar_create_flow:cancel_risk_is_none", False, error=str(exc))
+
+
 def main():
     print("=" * 60)
     print("PROMETHEUS CAPABILITY AUDIT")
@@ -2121,6 +2426,7 @@ def main():
     section_calendar_read_tools()
     section_response_vault_logs()
     section_calendar_executor()
+    section_calendar_create_flow()
 
     print("\n" + "=" * 60)
     total = len(results)

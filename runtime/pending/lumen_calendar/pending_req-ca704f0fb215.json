@@ -1,0 +1,26 @@
+{
+  "request_id": "req-ca704f0fb215",
+  "source": "lumen",
+  "reason": "Sample focus block creation request.",
+  "operation_count": 1,
+  "operations": [
+    {
+      "operation_id": "op-75310ad207ae",
+      "operation_type": "create_event",
+      "calendar_id": "primary",
+      "title": "Focus block",
+      "start_time": "2026-05-15T14:00",
+      "end_time": "2026-05-15T15:30",
+      "event_id": null,
+      "location": null,
+      "description": "Protected focus time.",
+      "reason": "Prometheus requested a focus block.",
+      "requires_prometheus_approval": true,
+      "dry_run": true,
+      "created_at": "2026-05-14T20:27:47.517168+00:00"
+    }
+  ],
+  "created_at": "2026-05-14T20:27:47.517183+00:00",
+  "ingested_at": "2026-05-14T20:27:47.574084+00:00",
+  "source_path": "/home/tatel/Desktop/PROMETHEUS/Lumen/runtime/outbox/lumen_calendar_request_20260514T202747_req-ca704f0fb215.json"
+}

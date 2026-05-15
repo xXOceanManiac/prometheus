@@ -26,6 +26,7 @@ LUMEN_ACCEPTED_DIR = LUMEN_ROOT / "runtime" / "accepted"
 LUMEN_REJECTED_DIR = LUMEN_ROOT / "runtime" / "rejected"
 LUMEN_ARCHIVE_DIR = LUMEN_ROOT / "runtime" / "archive"
 PENDING_LUMEN_DIR = RUNTIME_ROOT / "pending" / "lumen_calendar"
+PENDING_CALENDAR_CONFIRMATIONS_DIR = RUNTIME_ROOT / "pending" / "calendar_confirmations"
 REVIEWED_LUMEN_DIR = RUNTIME_ROOT / "reviewed" / "lumen_calendar"
 APPROVED_LUMEN_DIR = RUNTIME_ROOT / "approved" / "lumen_calendar"
 COMPLETED_LUMEN_DIR = RUNTIME_ROOT / "completed" / "lumen_calendar"
@@ -51,3 +52,7 @@ def ensure_lumen_router_dirs() -> None:
 def ensure_lumen_executor_dirs() -> None:
     for path in (APPROVED_LUMEN_DIR, COMPLETED_LUMEN_DIR, FAILED_LUMEN_DIR):
         path.mkdir(parents=True, exist_ok=True)
+
+
+def ensure_calendar_confirmation_dir() -> None:
+    PENDING_CALENDAR_CONFIRMATIONS_DIR.mkdir(parents=True, exist_ok=True)

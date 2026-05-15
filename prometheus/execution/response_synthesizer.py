@@ -27,6 +27,12 @@ _EXECUTOR_ACTIONS: frozenset[str] = frozenset({
     "calendar_execute_approved_request",
 })
 
+_CALENDAR_CREATE_ACTIONS: frozenset[str] = frozenset({
+    "calendar_create_proposal",
+    "calendar_confirm_create",
+    "calendar_cancel_create",
+})
+
 
 def synthesize_tool_response(
     action: str,
@@ -75,6 +81,9 @@ def synthesize_tool_response(
     if action in _EXECUTOR_ACTIONS:
         return _calendar_executor(action, data)
 
+    if action in _CALENDAR_CREATE_ACTIONS:
+        return _calendar_create_flow(action, data)
+
     return (
         "Briefly report the result in one or two sentences. Do not add preamble."
     )
@@ -86,7 +95,12 @@ def is_calendar_action(action: str) -> bool:
 
 def is_synthesized_action(action: str) -> bool:
     """Return True for any action handled by this synthesizer."""
-    return action in _CALENDAR_ACTIONS or action in _EXECUTOR_ACTIONS or action == "show_logs"
+    return (
+        action in _CALENDAR_ACTIONS
+        or action in _EXECUTOR_ACTIONS
+        or action in _CALENDAR_CREATE_ACTIONS
+        or action == "show_logs"
+    )
 
 
 # ── Private formatters ────────────────────────────────────────────────────────
@@ -263,3 +277,67 @@ def _calendar_executor(action: str, data: dict) -> str:
         )
 
     return "Briefly report the calendar operation result. No filler."
+
+
+def _calendar_create_flow(action: str, data: dict) -> str:
+    if action == "calendar_create_proposal":
+        status = str(data.get("status", ""))
+        human_summary = str(data.get("human_summary", ""))
+        missing_fields = data.get("missing_fields", [])
+
+        if status == "needs_input":
+            missing = missing_fields[0] if missing_fields else "details"
+            return (
+                f"The user wants to schedule an event but we need more information. "
+                f"Ask them: '{human_summary}'"
+            )
+        if status == "no_availability":
+            return (
+                f"Tell the user: '{human_summary}' Ask if they'd like a different time."
+            )
+        if status == "pending":
+            return (
+                f"Say exactly: '{human_summary}' "
+                "Wait for the user to confirm or cancel. Do not add the event yet. No filler."
+            )
+        return "Tell the user their calendar request could not be processed. One sentence."
+
+    if action == "calendar_confirm_create":
+        no_pending = bool(data.get("no_pending"))
+        success = bool(data.get("success"))
+        blocked = bool(data.get("blocked"))
+        title = str(data.get("title", "the event"))
+        start = str(data.get("start_time", ""))
+        reason = str(data.get("reason") or "")
+
+        if no_pending:
+            return "Tell the user there is no pending calendar event to confirm."
+        if blocked:
+            return (
+                "Tell the user: 'Calendar write is blocked because dry-run mode is on. "
+                "Set GOOGLE_CALENDAR_DRY_RUN to false to allow live calendar writes.'"
+            )
+        if success:
+            time_label = f" at {start[11:16]}" if "T" in start and start[11:16] else ""
+            return (
+                f"Confirmed. Tell the user '{title}' has been added to their calendar"
+                f"{time_label}. One sentence. No filler."
+            )
+        return (
+            f"Tell the user the calendar write failed: {reason}. "
+            "One sentence. No filler."
+        )
+
+    if action == "calendar_cancel_create":
+        canceled = bool(data.get("canceled"))
+        no_pending = bool(data.get("no_pending"))
+        title = str(data.get("title", ""))
+
+        if no_pending:
+            return "Tell the user there is nothing pending to cancel."
+        if canceled:
+            cancel_msg = f"Okay, I won't add '{title}'." if title else "Canceled."
+            return f"Say: '{cancel_msg}' One sentence only."
+        return "Tell the user the cancel did not complete."
+
+    return "Briefly report the calendar create result. No filler."

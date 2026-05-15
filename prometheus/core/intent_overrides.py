@@ -463,6 +463,89 @@ _SHOW_LOGS_PHRASES = (
     "activity log",
 )
 
+# Calendar create — NL scheduling phrases (triggers parse_and_propose)
+_CALENDAR_CREATE_PHRASES = (
+    "schedule a ",
+    "schedule an ",
+    "block off ",
+    "book a ",
+    "book an ",
+    "create a meeting",
+    "create an event",
+    "create a session",
+    "create a block",
+    "set up a meeting",
+    "set up a call",
+    "set up a sync",
+    "add a meeting",
+    "add a session",
+    "add a workout",
+    "add a standup",
+    "add a sync",
+    "add a block",
+    "add a focus",
+    "add a call",
+    "add a lunch",
+    "add a 1:1",
+    "add an event",
+    "add an appointment",
+    "put a meeting",
+    "put a session",
+    "put a workout",
+    "put a standup",
+    "put an event",
+    "put it on my calendar",
+    "put that on my calendar",
+    "add it to my calendar",
+    "add to my calendar",
+    "put on my calendar",
+)
+
+# Calendar confirm — only routed when a pending confirmation exists
+_CALENDAR_CONFIRM_PHRASES = (
+    "yes",
+    "confirm",
+    "do it",
+    "go ahead",
+    "sounds good",
+    "looks good",
+    "add it",
+    "yeah",
+    "yep",
+    "yes please",
+    "let's do it",
+    "lets do it",
+    "go for it",
+    "approved",
+    "execute it",
+    "run it",
+    "that works",
+    "that's good",
+    "thats good",
+    "put it on",
+    "add that",
+    "do that",
+)
+
+# Calendar cancel — only routed when a pending confirmation exists
+_CALENDAR_CANCEL_PHRASES = (
+    "no",
+    "cancel",
+    "never mind",
+    "forget it",
+    "don't add it",
+    "don't add that",
+    "nevermind",
+    "nope",
+    "no thanks",
+    "skip it",
+    "cancel that",
+    "cancel it",
+    "not now",
+    "discard",
+    "abort",
+)
+
 
 # ── Standalone intent resolvers ───────────────────────────────────────────────
 
@@ -656,6 +739,42 @@ def resolve_direct_intent(transcript: str) -> dict[str, Any] | None:
         return {
             "type": "direct_tool",
             "payload": {"action": "smart_action", "request_text": transcript},
+        }
+
+    # Calendar confirm/cancel — checked BEFORE create so "yes" with pending
+    # confirmation doesn't fall through to LLM or create a duplicate proposal.
+    # Only active when a pending calendar confirmation exists in the filesystem.
+    if any(p == text or text.startswith(p) for p in _CALENDAR_CONFIRM_PHRASES):
+        try:
+            from prometheus.agents.calendar_create_flow import has_pending_calendar_confirmation
+            if has_pending_calendar_confirmation():
+                return {
+                    "type": "direct_tool",
+                    "payload": {"action": "calendar_confirm_create", "request_text": transcript},
+                }
+        except Exception:
+            pass
+
+    if any(p == text or text.startswith(p) for p in _CALENDAR_CANCEL_PHRASES):
+        try:
+            from prometheus.agents.calendar_create_flow import has_pending_calendar_confirmation
+            if has_pending_calendar_confirmation():
+                return {
+                    "type": "direct_tool",
+                    "payload": {"action": "calendar_cancel_create", "request_text": transcript},
+                }
+        except Exception:
+            pass
+
+    # Calendar create — NL scheduling requests
+    if any(p in text for p in _CALENDAR_CREATE_PHRASES):
+        return {
+            "type": "direct_tool",
+            "payload": {
+                "action": "calendar_create_proposal",
+                "user_request": transcript,
+                "request_text": transcript,
+            },
         }
 
     # Calendar reads — checked before web_search so "today"/"tomorrow" keywords

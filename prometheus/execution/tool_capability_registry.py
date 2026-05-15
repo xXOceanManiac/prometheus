@@ -1072,6 +1072,65 @@ TOOL_CAPABILITIES: dict[str, ToolCapability] = {
         supports_verification=True,
         workflow_tags=[],
     ),
+
+    # ── NL calendar creation (confirmation-gated) ─────────────────────────────
+
+    "calendar_create_proposal": ToolCapability(
+        tool_name="calendar_create_proposal",
+        description=(
+            "Parse a natural-language calendar creation request and propose an event "
+            "for user confirmation. Does NOT write to calendar."
+        ),
+        examples=[
+            "schedule a focus block tomorrow at 2",
+            "add a workout this afternoon",
+            "put a standup on my calendar Friday at 10",
+        ],
+        required_slots=["user_request"],
+        optional_slots=[],
+        safe_when=["always safe — no calendar write occurs at this stage"],
+        bad_for=["recurring events", "calendar updates or deletes"],
+        risk="none",
+        validates="returns human_summary string asking user to confirm; writes pending confirmation file",
+        supports_verification=True,
+        workflow_tags=[],
+    ),
+
+    "calendar_confirm_create": ToolCapability(
+        tool_name="calendar_confirm_create",
+        description=(
+            "Execute the pending calendar event proposal after user confirms. "
+            "Routes through the approved executor pipeline."
+        ),
+        examples=["yes", "confirm", "do it", "go ahead"],
+        required_slots=[],
+        optional_slots=["confirmation_id"],
+        safe_when=[
+            "pending confirmation exists",
+            "user has explicitly confirmed",
+            "GOOGLE_CALENDAR_ENABLED=true",
+            "GOOGLE_CALENDAR_DRY_RUN=false",
+        ],
+        bad_for=["when no pending confirmation exists", "when GOOGLE_CALENDAR_DRY_RUN=true"],
+        risk="high",
+        validates="event created on Google Calendar; result written to completed dir",
+        supports_verification=True,
+        workflow_tags=[],
+    ),
+
+    "calendar_cancel_create": ToolCapability(
+        tool_name="calendar_cancel_create",
+        description="Cancel a pending calendar event proposal before it is confirmed.",
+        examples=["no", "cancel", "never mind", "forget it"],
+        required_slots=[],
+        optional_slots=["confirmation_id"],
+        safe_when=["always safe — no calendar write occurred"],
+        bad_for=["when no pending confirmation exists"],
+        risk="none",
+        validates="pending confirmation file marked as canceled",
+        supports_verification=False,
+        workflow_tags=[],
+    ),
 }
 
 

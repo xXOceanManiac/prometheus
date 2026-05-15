@@ -1,0 +1,18 @@
+{
+  "request_id": "req-828aa9d2d71e",
+  "executed_at": "2026-05-14T20:28:19.181823+00:00",
+  "success": true,
+  "operation_count": 1,
+  "operation_results": [
+    {
+      "operation_index": 0,
+      "operation_type": "create_event",
+      "success": true,
+      "dry_run": false,
+      "message": "Event 'Focus block' created.",
+      "event_id": "v2l9hcsb53nl8a1q3mgm5niav4",
+      "calendar_id": "primary"
+    }
+  ],
+  "message": "Executed 1 operation(s) successfully."
+}

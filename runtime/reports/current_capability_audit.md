@@ -1,7 +1,7 @@
 # Prometheus Capability Audit
 
-**Generated:** 2026-05-14 15:58:48
-**Tests run:** 241  **Passed:** 241  **Failed:** 0  (100.0% pass rate)
+**Generated:** 2026-05-14 16:26:24
+**Tests run:** 245  **Passed:** 245  **Failed:** 0  (100.0% pass rate)
 
 ---
 
@@ -19,7 +19,7 @@ Key findings:
 - **VOICE**: ✓ 12/12 passing
 - **LOGGING**: ✓ 6/6 passing
 - **HUD**: ✓ 11/11 passing
-- **OTHER**: ✓ 58/58 passing
+- **OTHER**: ✓ 62/62 passing
 - **CALENDAR**: ✓ 45/45 passing
 - **RESPONSE_VAULT_LOGS**: ✓ 18/18 passing
 
@@ -37,7 +37,7 @@ Key findings:
 | startup | ~/.jarvis/logs dir exists | PASS |  |  |
 | startup | ~/.jarvis/audio dir exists | PASS |  |  |
 | startup | ~/.jarvis/memory_v2 dir exists | PASS |  |  |
-| startup | tools.py imports cleanly | PASS | 105ms |  |
+| startup | tools.py imports cleanly | PASS | 115ms |  |
 | startup | memory.py imports cleanly | PASS | 0ms |  |
 | startup | working_memory.py imports cleanly | PASS | 0ms |  |
 | startup | planner.planner imports cleanly | PASS | 1ms |  |
@@ -56,7 +56,7 @@ Key findings:
 | tools | tool:write_file:content_correct | PASS |  |  |
 | tools | tool:screenshot:no_crash | PASS |  | ok=True: Screenshot saved to /home/tatel/Pictures/Screenshots/screens |
 | tools | tool:web_search:returns_result | PASS |  | Searched the web for prometheus audit test. |
-| tools | tool:list_windows:no_crash | PASS |  | ok=True windows=9 |
+| tools | tool:list_windows:no_crash | PASS |  | ok=True windows=10 |
 | tools | tool:get_active_window:no_crash | PASS |  | ok=True |
 | tools | tool:system_status | PASS |  | System status retrieved. |
 | tools | tool:system_status:has_active_project_key | PASS |  |  |
@@ -113,7 +113,7 @@ Key findings:
 | planning | planning:plan_is_serializable | PASS |  |  |
 | planning | planning:low_confidence:triggers_clarification | PASS | 0ms | conf=0.20 q='Can you be more specific about what you'd like me to do?' |
 | planning | planning:multi_step:two_or_more_steps | PASS |  | steps=2 conf=0.82 |
-| planning | planning:executor:runs_safe_plan | PASS | 53ms | 2/2 steps succeeded. |
+| planning | planning:executor:runs_safe_plan | PASS | 58ms | 2/2 steps succeeded. |
 | planning | planning:executor:steps_in_order | PASS |  | first step: list_files |
 | planning | planning:executor:first_step_failure_recorded | PASS |  | 1/2 steps succeeded. |
 | planning | planning:verifier:passes_on_success | PASS |  | 2/2 steps succeeded. |
@@ -133,7 +133,7 @@ Key findings:
 | voice | voice:response_in_progress_guard_exists | PASS |  | Checked source for duplicate-response guard |
 | voice | voice:error_callback:fires | PASS |  |  |
 | logging | logging:log_file_created_today | PASS |  |  |
-| logging | logging:jsonl_lines_valid | PASS |  | Checked last 20 of 8056 lines |
+| logging | logging:jsonl_lines_valid | PASS |  | Checked last 20 of 8394 lines |
 | logging | logging:entries_have_ts | PASS |  |  |
 | logging | logging:entries_have_kind | PASS |  |  |
 | logging | logging:activity.jsonl_exists | PASS |  |  |
@@ -265,6 +265,10 @@ Key findings:
 |  | calendar_executor:no_home_assistant_calls | PASS |  | No HA integration calls in executor |
 |  | calendar_executor:has_suspicious_key_check | PASS |  | Executor validates operations against suspicious key blocklist |
 |  | calendar_executor:execute_requires_approval_record | PASS |  | Executor checks for approval record before executing |
+|  | calendar_executor:reads_from_original_operations | PASS |  | Executor loads ops from reviewed['original_operations'], not from pending |
+|  | calendar_executor:missing_original_ops_fails_clearly | PASS |  | Old reviewed files missing original_operations fail with instructive message |
+|  | calendar_executor:normalize_dt_works | PASS |  | Short HH:MM datetimes normalized to HH:MM:SS for Google API |
+|  | calendar_executor:router_includes_original_operations | PASS |  | Router preserves proposal.operations in reviewed['original_operations'] |
 |  | calendar_executor:all_in_followup_actions | PASS |  |  |
 |  | calendar_executor:synthesizer_handles_all_three | PASS |  |  |
 |  | show_logs:direct_intent_override | PASS |  | 'show me the logs' routes to show_logs via direct intent override |

@@ -224,6 +224,10 @@ ACTION_ENUM = [
     "calendar_list_reviewed_requests",
     "calendar_approve_request",
     "calendar_execute_approved_request",
+    # Natural-language calendar creation (confirmation-gated)
+    "calendar_create_proposal",
+    "calendar_confirm_create",
+    "calendar_cancel_create",
 ]
 
 
@@ -1680,6 +1684,63 @@ class ToolRegistry:
 
         return ToolResult(False, f"Unknown calendar write action: {action}")
 
+    def _execute_calendar_create_flow(self, action: str, payload: dict[str, Any]) -> ToolResult:
+        try:
+            from prometheus.agents.calendar_create_flow import (
+                parse_and_propose,
+                confirm_pending_calendar_confirmation,
+                cancel_pending_calendar_confirmation,
+            )
+
+            if action == "calendar_create_proposal":
+                user_request = str(payload.get("user_request") or payload.get("request_text") or "").strip()
+                if not user_request:
+                    return ToolResult(False, "calendar_create_proposal: user_request is required.")
+                result = parse_and_propose(user_request)
+                status = result.get("status", "")
+                log_event("calendar_create_proposal", {
+                    "status": status,
+                    "confirmation_id": result.get("confirmation_id"),
+                })
+                ok = status in ("pending", "needs_input", "no_availability")
+                msg = result.get("human_summary", f"Calendar proposal status: {status}")
+                return ToolResult(ok, msg, result)
+
+            if action == "calendar_confirm_create":
+                confirmation_id = str(payload.get("confirmation_id") or "").strip() or None
+                result = confirm_pending_calendar_confirmation(confirmation_id)
+                success = bool(result.get("success"))
+                no_pending = bool(result.get("no_pending"))
+                blocked = bool(result.get("blocked"))
+                if no_pending:
+                    msg = "No pending calendar confirmation to execute."
+                elif blocked:
+                    msg = "Blocked: GOOGLE_CALENDAR_DRY_RUN=true. Set to false to allow live writes."
+                elif success:
+                    msg = f"Added '{result.get('title', 'event')}' to your calendar."
+                else:
+                    msg = f"Failed to add event: {result.get('reason', 'unknown error')}"
+                log_event("calendar_confirm_create", {
+                    "success": success,
+                    "blocked": blocked,
+                    "title": result.get("title", ""),
+                })
+                return ToolResult(success or no_pending or blocked, msg, result)
+
+            if action == "calendar_cancel_create":
+                confirmation_id = str(payload.get("confirmation_id") or "").strip() or None
+                result = cancel_pending_calendar_confirmation(confirmation_id)
+                canceled = bool(result.get("canceled"))
+                msg = "Canceled." if canceled else "Nothing pending to cancel."
+                log_event("calendar_cancel_create", {"canceled": canceled})
+                return ToolResult(True, msg, result)
+
+        except Exception as exc:
+            log_event("calendar_create_flow_error", {"action": action, "error": str(exc)[:120]})
+            return ToolResult(False, f"calendar_create_flow error: {exc}")
+
+        return ToolResult(False, f"Unknown calendar create flow action: {action}")
+
     def _execute_one_inner(self, payload: dict[str, Any]) -> ToolResult:
         action = str(payload.get("action", "")).strip()
         if action == "confirm_pending":
@@ -3118,5 +3179,12 @@ class ToolRegistry:
             "calendar_execute_approved_request",
         }:
             return self._execute_calendar_write(action, payload)
+
+        if action in {
+            "calendar_create_proposal",
+            "calendar_confirm_create",
+            "calendar_cancel_create",
+        }:
+            return self._execute_calendar_create_flow(action, payload)
 
         return ToolResult(False, f"Unknown action: {action}")
