@@ -465,8 +465,7 @@ _SHOW_LOGS_PHRASES = (
 
 # Calendar create — NL scheduling phrases (triggers parse_and_propose)
 _CALENDAR_CREATE_PHRASES = (
-    "schedule a ",
-    "schedule an ",
+    "schedule ",      # broad: "schedule a meeting", "schedule workout", "schedule church..."
     "block off ",
     "book a ",
     "book an ",
@@ -499,7 +498,17 @@ _CALENDAR_CREATE_PHRASES = (
     "add it to my calendar",
     "add to my calendar",
     "put on my calendar",
+    "make a meeting",
+    "make a call",
+    "make a session",
+    "make a sync",
+    "make an appointment",
+    "log a ",
+    "plan a ",
 )
+
+# Verbs that, combined with "on my calendar" / "to my calendar", mean calendar create
+_CALENDAR_CREATE_VERBS = ("put ", "add ", "schedule ", "book ", "create ", "log ", "plan ")
 
 # Calendar confirm — only routed when a pending confirmation exists
 _CALENDAR_CONFIRM_PHRASES = (
@@ -765,6 +774,21 @@ def resolve_direct_intent(transcript: str) -> dict[str, Any] | None:
                 }
         except Exception:
             pass
+
+    # Compound calendar create: "put church meeting on my calendar Sunday at 10"
+    # Catches any "<verb> X on/to my calendar" pattern not covered by phrase list.
+    if any(
+        marker in text
+        for marker in ("on my calendar", "to my calendar", "on the calendar")
+    ) and any(text.startswith(v) for v in _CALENDAR_CREATE_VERBS):
+        return {
+            "type": "direct_tool",
+            "payload": {
+                "action": "calendar_create_proposal",
+                "user_request": transcript,
+                "request_text": transcript,
+            },
+        }
 
     # Calendar create — NL scheduling requests
     if any(p in text for p in _CALENDAR_CREATE_PHRASES):

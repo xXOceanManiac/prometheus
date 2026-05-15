@@ -37,8 +37,12 @@ from prometheus.agents.calendar_create_flow import (
     _resolve_date,
     _resolve_time,
     _default_duration,
+    _extract_explicit_duration,
     _human_summary,
     _build_operation,
+    should_auto_execute_calendar_create,
+    _check_conflict,
+    _direct_create_calendar_event,
 )
 
 
@@ -527,16 +531,25 @@ class TestPendingConfirmation:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 class TestParseAndPropose:
-    def test_returns_pending_for_complete_request(self):
-        result = parse_and_propose(
-            "schedule a focus block tomorrow at 2",
-            # NOW is available via parse_and_propose using datetime.now() internally,
-            # but we rely on the fixture dir for file writes.
-        )
-        assert result["status"] == "pending"
-        assert result["confirmation_id"] is not None
-        assert "Confirm?" in result["human_summary"]
-        assert result["missing_fields"] == []
+    def test_returns_executed_for_complete_request(self, _patch_confirm_dir, _patch_executor_dirs):
+        mock_exec_result = {
+            "success": True,
+            "message": "Executed 1 operation(s) successfully.",
+            "operation_count": 1,
+            "operation_results": [{"success": True}],
+        }
+        with patch(
+            "prometheus.agents.calendar_create_flow.execute_approved_calendar_request",
+            return_value=mock_exec_result,
+        ):
+            with patch(
+                "prometheus.agents.calendar_create_flow._calendar_get_date_fn",
+                return_value={"ok": True, "events": []},
+            ):
+                result = parse_and_propose("schedule a focus block tomorrow at 2")
+        assert result["status"] == "executed"
+        assert result.get("title") == "Focus Block"
+        assert "request_id" in result
 
     def test_returns_needs_input_for_missing_date(self):
         result = parse_and_propose("schedule a standup at 10am")
@@ -779,24 +792,31 @@ class TestSafetyConstraints:
         import inspect
         import prometheus.agents.calendar_create_flow as mod
         src = inspect.getsource(mod)
-        # Should not directly call create_calendar_event or build_google_calendar_service
-        for forbidden in ("create_calendar_event", "build_google_calendar_service", "update_calendar_event"):
-            assert forbidden not in src, f"Found direct GCal call: {forbidden}"
+        # Should not import or call raw GCal API helpers directly (bypassing executor)
+        # Note: "_direct_create_calendar_event" is our own function name — allowed.
+        for forbidden in ("build_google_calendar_service", "update_calendar_event", "googleapiclient"):
+            assert forbidden not in src, f"Found direct GCal reference: {forbidden}"
 
-    def test_propose_does_not_write_to_calendar(self, _patch_confirm_dir):
+    def test_propose_does_not_write_to_calendar_when_no_slot(self, _patch_confirm_dir):
+        # Window-based request with no available slot → no executor call
         with patch(
-            "prometheus.agents.calendar_create_flow.execute_approved_calendar_request",
-            side_effect=AssertionError("Should not call executor during propose"),
+            "prometheus.agents.calendar_create_flow._find_availability_slot",
+            return_value=None,
         ):
-            parse_and_propose("schedule a focus block tomorrow at 2")
-        # No AssertionError raised → executor was not called
+            with patch(
+                "prometheus.agents.calendar_create_flow.execute_approved_calendar_request",
+                side_effect=AssertionError("Should not call executor when no slot"),
+            ):
+                result = parse_and_propose("add a workout this afternoon")
+        assert result["status"] == "no_availability"
 
-    def test_no_passive_scheduling(self, _patch_confirm_dir):
-        # Calling parse_and_propose must never execute a calendar write
+    def test_no_passive_scheduling_for_incomplete_request(self, _patch_confirm_dir):
+        # Missing-field requests must never call the executor
         with patch(
             "prometheus.agents.calendar_create_flow.execute_approved_calendar_request",
         ) as mock_exec:
-            parse_and_propose("schedule a standup tomorrow at 10am")
+            result = parse_and_propose("schedule a standup")  # no date, no time
+        assert result["status"] == "needs_input"
         mock_exec.assert_not_called()
 
     def test_operation_has_dry_run_true(self):
@@ -890,3 +910,527 @@ class TestIntentOverrideRouting:
         result = resolve_direct_intent("what's on my calendar tomorrow")
         assert result is not None
         assert result["payload"]["action"] != "calendar_create_proposal"
+
+    def test_put_church_meeting_on_calendar_routes_to_proposal(self):
+        from prometheus.core.intent_overrides import resolve_direct_intent
+        result = resolve_direct_intent("put church meeting on my calendar sunday at 10")
+        assert result is not None
+        assert result["payload"]["action"] == "calendar_create_proposal"
+
+    def test_add_event_to_calendar_routes_to_proposal(self):
+        from prometheus.core.intent_overrides import resolve_direct_intent
+        result = resolve_direct_intent("add team lunch to my calendar friday at noon")
+        assert result is not None
+        assert result["payload"]["action"] == "calendar_create_proposal"
+
+    def test_schedule_broad_routes_to_proposal(self):
+        from prometheus.core.intent_overrides import resolve_direct_intent
+        result = resolve_direct_intent("schedule church meeting tomorrow at 10am")
+        assert result is not None
+        assert result["payload"]["action"] == "calendar_create_proposal"
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Section 16 — Explicit duration extraction
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class TestExtractExplicitDuration:
+    def test_90_minutes(self):
+        assert _extract_explicit_duration("block off 90 minutes for work") == 90
+
+    def test_30_min(self):
+        assert _extract_explicit_duration("schedule a 30 min standup") == 30
+
+    def test_1_hour(self):
+        assert _extract_explicit_duration("add a 1 hour workout") == 60
+
+    def test_2_hours(self):
+        assert _extract_explicit_duration("block off 2 hours for deep work") == 120
+
+    def test_half_an_hour(self):
+        assert _extract_explicit_duration("add a half an hour check-in") == 30
+
+    def test_half_hour(self):
+        assert _extract_explicit_duration("schedule a half hour meeting") == 30
+
+    def test_an_hour(self):
+        assert _extract_explicit_duration("block off an hour for focus") == 60
+
+    def test_and_a_half_hours(self):
+        assert _extract_explicit_duration("block off 1 and a half hours") == 90
+
+    def test_no_duration_returns_none(self):
+        assert _extract_explicit_duration("schedule a standup tomorrow at 10") is None
+
+    def test_duration_overrides_title_default(self):
+        # standup default is 30 min, but explicit "90 minutes" overrides
+        draft = parse_calendar_create_request(
+            "schedule a standup tomorrow at 10am for 90 minutes", now=NOW
+        )
+        assert draft["duration_minutes"] == 90
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Section 17 — Updated time hint extraction (bare time, bare number after date)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class TestExtractTimeHintV2:
+    def test_bare_pm_without_at(self):
+        # "4pm tomorrow" → captures "4pm"
+        time_hint, window = _extract_time_hint("add a workout 4pm tomorrow")
+        assert "4pm" in time_hint
+        assert window == ""
+
+    def test_bare_am_without_at(self):
+        time_hint, window = _extract_time_hint("standup 10am friday")
+        assert "10am" in time_hint
+
+    def test_bare_number_after_tomorrow(self):
+        # "tomorrow 2" → captures "2"
+        time_hint, window = _extract_time_hint("schedule a focus block tomorrow 2")
+        assert time_hint == "2"
+        assert window == ""
+
+    def test_bare_number_after_friday(self):
+        time_hint, window = _extract_time_hint("create an event called call knox friday 3")
+        assert time_hint == "3"
+
+    def test_at_takes_precedence(self):
+        # "tomorrow at 2" → "at 2" wins over bare-number path
+        time_hint, window = _extract_time_hint("schedule a focus block tomorrow at 2")
+        assert "at 2" in time_hint
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Section 18 — should_auto_execute_calendar_create
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class TestShouldAutoExecute:
+    def _draft(self, **overrides):
+        base = {
+            "title": "Focus Block",
+            "date_str": "2026-05-15",
+            "date_hint": "tomorrow",
+            "start_time_str": "14:00:00",
+            "end_time_str": "15:30:00",
+            "duration_minutes": 90,
+            "needs_availability_search": False,
+            "missing_fields": [],
+        }
+        base.update(overrides)
+        return base
+
+    def test_fully_specified_low_risk_ok(self):
+        ok, reason = should_auto_execute_calendar_create(
+            self._draft(), "schedule a focus block tomorrow at 2"
+        )
+        assert ok is True
+        assert reason == ""
+
+    def test_missing_fields_blocks(self):
+        ok, _ = should_auto_execute_calendar_create(
+            self._draft(missing_fields=["date"]), "schedule a focus block"
+        )
+        assert ok is False
+
+    def test_window_based_blocks(self):
+        ok, _ = should_auto_execute_calendar_create(
+            self._draft(needs_availability_search=True), "schedule a focus block this afternoon"
+        )
+        assert ok is False
+
+    def test_duration_over_240_blocks(self):
+        ok, _ = should_auto_execute_calendar_create(
+            self._draft(duration_minutes=300), "schedule a 5 hour workshop tomorrow at 9"
+        )
+        assert ok is False
+
+    def test_recurring_blocks(self):
+        ok, _ = should_auto_execute_calendar_create(
+            self._draft(), "schedule a standup every monday at 10"
+        )
+        assert ok is False
+
+    def test_all_day_blocks(self):
+        ok, _ = should_auto_execute_calendar_create(
+            self._draft(), "add a focus day all day tomorrow"
+        )
+        assert ok is False
+
+    def test_with_attendees_blocks(self):
+        ok, _ = should_auto_execute_calendar_create(
+            self._draft(), "schedule a meeting with jake tomorrow at 2"
+        )
+        assert ok is False
+
+    def test_sleep_hours_before_6am_blocks(self):
+        ok, _ = should_auto_execute_calendar_create(
+            self._draft(start_time_str="05:00:00"), "schedule a run tomorrow at 5am"
+        )
+        assert ok is False
+
+    def test_sleep_hours_at_11pm_blocks(self):
+        ok, _ = should_auto_execute_calendar_create(
+            self._draft(start_time_str="23:00:00"), "schedule something tomorrow at 11pm"
+        )
+        assert ok is False
+
+    def test_time_6am_is_ok(self):
+        ok, _ = should_auto_execute_calendar_create(
+            self._draft(start_time_str="06:00:00"), "schedule a run tomorrow at 6am"
+        )
+        assert ok is True
+
+    def test_reschedule_blocks(self):
+        ok, _ = should_auto_execute_calendar_create(
+            self._draft(), "reschedule the standup to tomorrow at 2"
+        )
+        assert ok is False
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Section 19 — _check_conflict
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class TestCheckConflict:
+    def _draft(self):
+        return {
+            "date_str": "2026-05-15",
+            "start_time_str": "14:00:00",
+            "end_time_str": "15:30:00",
+        }
+
+    def test_no_conflict_when_calendar_empty(self):
+        with patch(
+            "prometheus.agents.calendar_create_flow._calendar_get_date_fn",
+            return_value={"ok": True, "events": []},
+        ):
+            assert _check_conflict(self._draft()) is None
+
+    def test_conflict_detected(self):
+        events = [
+            {
+                "summary": "Morning Standup",
+                "start": "2026-05-15T14:30:00",
+                "end": "2026-05-15T15:00:00",
+            }
+        ]
+        with patch(
+            "prometheus.agents.calendar_create_flow._calendar_get_date_fn",
+            return_value={"ok": True, "events": events},
+        ):
+            result = _check_conflict(self._draft())
+        assert result == "Morning Standup"
+
+    def test_no_conflict_when_adjacent(self):
+        # Event ends at 14:00 exactly → no overlap with 14:00 start
+        events = [
+            {
+                "summary": "Early Meeting",
+                "start": "2026-05-15T13:00:00",
+                "end": "2026-05-15T14:00:00",
+            }
+        ]
+        with patch(
+            "prometheus.agents.calendar_create_flow._calendar_get_date_fn",
+            return_value={"ok": True, "events": events},
+        ):
+            assert _check_conflict(self._draft()) is None
+
+    def test_all_day_events_skipped(self):
+        events = [{"summary": "Holiday", "start": "2026-05-15", "end": "2026-05-16"}]
+        with patch(
+            "prometheus.agents.calendar_create_flow._calendar_get_date_fn",
+            return_value={"ok": True, "events": events},
+        ):
+            assert _check_conflict(self._draft()) is None
+
+    def test_failure_returns_none(self):
+        with patch(
+            "prometheus.agents.calendar_create_flow._calendar_get_date_fn",
+            side_effect=RuntimeError("API down"),
+        ):
+            assert _check_conflict(self._draft()) is None
+
+    def test_none_fn_returns_none(self):
+        with patch("prometheus.agents.calendar_create_flow._calendar_get_date_fn", None):
+            assert _check_conflict(self._draft()) is None
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Section 20 — _direct_create_calendar_event
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class TestDirectCreateCalendarEvent:
+    def _draft(self):
+        return {
+            "title": "Focus Block",
+            "date_str": "2026-05-15",
+            "date_hint": "tomorrow",
+            "start_time_str": "14:00:00",
+            "end_time_str": "15:30:00",
+            "duration_minutes": 90,
+        }
+
+    def test_success_returns_executed(self, _patch_executor_dirs):
+        with patch(
+            "prometheus.agents.calendar_create_flow.execute_approved_calendar_request",
+            return_value={"success": True, "operation_count": 1},
+        ):
+            result = _direct_create_calendar_event("schedule a focus block tomorrow at 2", self._draft())
+        assert result["status"] == "executed"
+        assert result["title"] == "Focus Block"
+        assert "start_time" in result
+        assert result["request_id"].startswith("req-direct-")
+
+    def test_dry_run_blocked_returns_blocked(self, _patch_executor_dirs):
+        with patch(
+            "prometheus.agents.calendar_create_flow.execute_approved_calendar_request",
+            return_value={
+                "success": False,
+                "reason": "Calendar execution is blocked because GOOGLE_CALENDAR_DRY_RUN=true.",
+            },
+        ):
+            result = _direct_create_calendar_event("schedule a focus block tomorrow at 2", self._draft())
+        assert result["status"] == "blocked"
+
+    def test_executor_error_returns_failed(self, _patch_executor_dirs):
+        with patch(
+            "prometheus.agents.calendar_create_flow.execute_approved_calendar_request",
+            side_effect=RuntimeError("network error"),
+        ):
+            result = _direct_create_calendar_event("schedule a focus block tomorrow at 2", self._draft())
+        assert result["status"] == "failed"
+
+    def test_writes_reviewed_file(self, _patch_executor_dirs):
+        with patch(
+            "prometheus.agents.calendar_create_flow.execute_approved_calendar_request",
+            return_value={"success": True, "operation_count": 1},
+        ):
+            result = _direct_create_calendar_event("schedule a focus block tomorrow at 2", self._draft())
+        req_id = result["request_id"]
+        reviewed = _patch_executor_dirs["reviewed"] / f"reviewed_{req_id}.json"
+        assert reviewed.exists()
+        data = json.loads(reviewed.read_text())
+        assert data["approval_mode"] == "direct_user_command"
+
+    def test_writes_approval_file(self, _patch_executor_dirs):
+        with patch(
+            "prometheus.agents.calendar_create_flow.execute_approved_calendar_request",
+            return_value={"success": True, "operation_count": 1},
+        ):
+            result = _direct_create_calendar_event("schedule a focus block tomorrow at 2", self._draft())
+        req_id = result["request_id"]
+        approval = _patch_executor_dirs["approved"] / f"approved_{req_id}.json"
+        assert approval.exists()
+        data = json.loads(approval.read_text())
+        assert data["approval_mode"] == "direct_user_command"
+        assert data["explicit_user_approval_required"] is False
+
+    def test_does_not_write_pending_file(self, _patch_confirm_dir, _patch_executor_dirs):
+        with patch(
+            "prometheus.agents.calendar_create_flow.execute_approved_calendar_request",
+            return_value={"success": True, "operation_count": 1},
+        ):
+            _direct_create_calendar_event("schedule a focus block tomorrow at 2", self._draft())
+        pending_files = list(_patch_confirm_dir.glob("pending_cal_confirm_*.json"))
+        assert pending_files == []
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Section 21 — parse_and_propose auto-execute integration
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class TestParseAndProposeAutoExecute:
+    def test_explicit_request_auto_executes(self, _patch_confirm_dir, _patch_executor_dirs):
+        with patch(
+            "prometheus.agents.calendar_create_flow.execute_approved_calendar_request",
+            return_value={"success": True, "operation_count": 1},
+        ):
+            with patch(
+                "prometheus.agents.calendar_create_flow._calendar_get_date_fn",
+                return_value={"ok": True, "events": []},
+            ):
+                result = parse_and_propose("add a workout tomorrow at 4")
+        assert result["status"] == "executed"
+
+    def test_window_based_still_asks_confirmation(self, _patch_confirm_dir):
+        mock_slot = {"start_time_str": "13:00:00", "end_time_str": "14:00:00"}
+        with patch("prometheus.agents.calendar_create_flow._find_availability_slot", return_value=mock_slot):
+            result = parse_and_propose("add a workout this afternoon")
+        assert result["status"] == "pending"
+        assert result["confirmation_id"] is not None
+
+    def test_with_attendees_goes_to_pending(self, _patch_confirm_dir):
+        with patch(
+            "prometheus.agents.calendar_create_flow._calendar_get_date_fn",
+            return_value={"ok": True, "events": []},
+        ):
+            result = parse_and_propose("schedule a meeting with jake tomorrow at 2pm")
+        assert result["status"] == "pending"
+
+    def test_conflict_goes_to_conflict_status(self, _patch_confirm_dir):
+        events = [
+            {
+                "summary": "Other Meeting",
+                "start": "2026-05-15T14:30:00",
+                "end": "2026-05-15T15:00:00",
+            }
+        ]
+        with patch(
+            "prometheus.agents.calendar_create_flow._calendar_get_date_fn",
+            return_value={"ok": True, "events": events},
+        ):
+            result = parse_and_propose("schedule a focus block tomorrow at 2")
+        assert result["status"] == "conflict"
+        assert result["conflict_event"] == "Other Meeting"
+        assert result["confirmation_id"] is not None  # pending file written
+
+    def test_conflict_writes_pending_file(self, _patch_confirm_dir):
+        events = [
+            {
+                "summary": "Other Meeting",
+                "start": "2026-05-15T14:30:00",
+                "end": "2026-05-15T15:00:00",
+            }
+        ]
+        with patch(
+            "prometheus.agents.calendar_create_flow._calendar_get_date_fn",
+            return_value={"ok": True, "events": events},
+        ):
+            result = parse_and_propose("schedule a focus block tomorrow at 2")
+        conf_id = result["confirmation_id"]
+        path = _patch_confirm_dir / f"pending_cal_confirm_{conf_id}.json"
+        assert path.exists()
+
+    def test_dry_run_blocked_returns_blocked_status(self, _patch_confirm_dir, _patch_executor_dirs):
+        with patch(
+            "prometheus.agents.calendar_create_flow.execute_approved_calendar_request",
+            return_value={
+                "success": False,
+                "reason": "Calendar execution is blocked because GOOGLE_CALENDAR_DRY_RUN=true.",
+            },
+        ):
+            with patch(
+                "prometheus.agents.calendar_create_flow._calendar_get_date_fn",
+                return_value={"ok": True, "events": []},
+            ):
+                result = parse_and_propose("schedule a focus block tomorrow at 2")
+        assert result["status"] == "blocked"
+
+    def test_recurring_goes_to_pending(self, _patch_confirm_dir):
+        result = parse_and_propose("schedule a standup every monday at 10am")
+        # Recurring → pending (or needs_input if date resolution fails)
+        assert result["status"] in ("pending", "needs_input")
+
+    def test_no_pending_file_for_direct_executed(self, _patch_confirm_dir, _patch_executor_dirs):
+        with patch(
+            "prometheus.agents.calendar_create_flow.execute_approved_calendar_request",
+            return_value={"success": True, "operation_count": 1},
+        ):
+            with patch(
+                "prometheus.agents.calendar_create_flow._calendar_get_date_fn",
+                return_value={"ok": True, "events": []},
+            ):
+                result = parse_and_propose("schedule a focus block tomorrow at 2")
+        assert result["status"] == "executed"
+        pending_files = list(_patch_confirm_dir.glob("pending_cal_confirm_*.json"))
+        assert pending_files == []
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Section 22 — Parser improvements (4pm, tomorrow 2, explicit duration in parse)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class TestParserImprovements:
+    def test_4pm_tomorrow_no_at(self):
+        draft = parse_calendar_create_request("add a workout 4pm tomorrow", now=NOW)
+        assert draft["start_time_str"] == "16:00:00"
+
+    def test_tomorrow_bare_number(self):
+        draft = parse_calendar_create_request("schedule a focus block tomorrow 2", now=NOW)
+        assert draft["start_time_str"] == "14:00:00"
+
+    def test_friday_at_3(self):
+        draft = parse_calendar_create_request("create an event called call knox friday at 3", now=NOW)
+        assert draft["start_time_str"] == "15:00:00"
+        assert "Knox" in draft["title"] or "Call Knox" in draft["title"]
+
+    def test_sunday_at_10(self):
+        draft = parse_calendar_create_request(
+            "put church meeting on my calendar sunday at 10", now=NOW
+        )
+        assert draft["start_time_str"] == "10:00:00"
+        assert draft["date_str"] != ""
+
+    def test_explicit_90_minutes_overrides_default(self):
+        draft = parse_calendar_create_request(
+            "block off 90 minutes for work tomorrow at 2", now=NOW
+        )
+        assert draft["duration_minutes"] == 90
+        assert draft["end_time_str"] == "15:30:00"
+
+    def test_1_hour_overrides_standup_default(self):
+        draft = parse_calendar_create_request(
+            "schedule a standup tomorrow at 10am for 1 hour", now=NOW
+        )
+        # standup default 30 → overridden to 60
+        assert draft["duration_minutes"] == 60
+
+    def test_church_meeting_title(self):
+        draft = parse_calendar_create_request(
+            "put church meeting on my calendar sunday at 10", now=NOW
+        )
+        assert "church" in draft["title"].lower() or "Church" in draft["title"]
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Section 23 — Response synthesizer new statuses
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class TestResponseSynthesizerCalendarCreate:
+    def _synth(self, action, data):
+        from prometheus.execution.response_synthesizer import synthesize_tool_response
+        from tools import ToolResult  # type: ignore[import]
+        tr = ToolResult(ok=True, message="ok", data=data)
+        return synthesize_tool_response(action, tr)
+
+    def test_executed_status_mentions_done(self):
+        data = {
+            "status": "executed",
+            "title": "Focus Block",
+            "date_hint": "tomorrow",
+            "date_str": "2026-05-15",
+            "start_time": "2026-05-15T14:00:00",
+            "end_time": "2026-05-15T15:30:00",
+        }
+        result = self._synth("calendar_create_proposal", data)
+        assert "Focus Block" in result
+        assert "14:00" in result or "done" in result.lower() or "Done" in result
+
+    def test_blocked_status_mentions_dry_run(self):
+        data = {"status": "blocked", "title": "Focus Block"}
+        result = self._synth("calendar_create_proposal", data)
+        assert "DRY_RUN" in result or "dry-run" in result.lower() or "blocked" in result.lower()
+
+    def test_failed_status_mentions_failure(self):
+        data = {"status": "failed", "title": "Focus Block", "reason": "API timeout"}
+        result = self._synth("calendar_create_proposal", data)
+        assert "Focus Block" in result or "failed" in result.lower() or "not be added" in result.lower()
+
+    def test_conflict_status_mentions_conflict(self):
+        data = {
+            "status": "conflict",
+            "conflict_event": "Morning Standup",
+            "human_summary": "I can add 'Focus Block' tomorrow from 2–3:30 PM. Confirm?",
+        }
+        result = self._synth("calendar_create_proposal", data)
+        assert "Morning Standup" in result or "overlap" in result.lower() or "conflict" in result.lower()
+
+    def test_pending_status_asks_confirm(self):
+        data = {
+            "status": "pending",
+            "human_summary": "I can add 'Focus Block' tomorrow from 2–3:30 PM. Confirm?",
+        }
+        result = self._synth("calendar_create_proposal", data)
+        assert "Confirm?" in result or "confirm" in result.lower()

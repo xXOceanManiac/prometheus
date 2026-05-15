@@ -1,10 +1,15 @@
 """
 calendar_create_flow.py — Natural-language calendar creation flow.
 
-Lifecycle:
+Lifecycle (low-friction path — fully-specified, low-risk requests):
+  parse_and_propose(user_request)
+      → auto-executes via _direct_create_calendar_event()
+      → returns status "executed" | "blocked" | "failed" | "conflict"
+
+Lifecycle (confirmation path — ambiguous / high-risk requests):
   parse_and_propose(user_request)
       → pending confirmation file written
-      → returns human_summary for user confirmation
+      → returns status "pending" with human_summary for user confirmation
 
   confirm_pending_calendar_confirmation()
       → writes reviewed + approval records
@@ -14,12 +19,13 @@ Lifecycle:
       → marks pending file as canceled
 
 Hard constraints enforced here:
-- No passive scheduling — never writes without explicit user confirmation.
+- No passive scheduling — only writes on explicit user command.
+- Window-based requests (morning/afternoon) always ask confirmation after availability search.
 - No recurring events.
 - No calendar update/delete via NL in this module.
 - No Home Assistant calls.
 - No direct Google Calendar API calls — routes through approved executor pipeline.
-- Even with GOOGLE_CALENDAR_DRY_RUN=false, live writes require explicit user confirm.
+- GOOGLE_CALENDAR_ENABLED and GOOGLE_CALENDAR_DRY_RUN=false enforced by executor.
 """
 from __future__ import annotations
 
@@ -43,6 +49,12 @@ try:
     from prometheus.agents.lumen_calendar_executor import execute_approved_calendar_request
 except Exception:
     execute_approved_calendar_request = None  # type: ignore[assignment]
+
+# Module-level reference for conflict checking; tests can patch it directly.
+try:
+    from prometheus.agents.calendar_read_tools import calendar_get_date as _calendar_get_date_fn
+except Exception:
+    _calendar_get_date_fn = None  # type: ignore[assignment]
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -102,6 +114,24 @@ def _default_duration(title: str) -> int:
     return 60
 
 
+def _extract_explicit_duration(text: str) -> Optional[int]:
+    """Extract an explicit duration stated in text. Returns minutes, or None."""
+    if re.search(r'\bhalf\s+(?:an\s+)?hour\b', text):
+        return 30
+    m = re.search(r'\b(\d+)\s+and\s+a\s+half\s+hours?\b', text)
+    if m:
+        return int(m.group(1)) * 60 + 30
+    m = re.search(r'\b(\d+)\s*hours?\b', text)
+    if m:
+        return int(m.group(1)) * 60
+    m = re.search(r'\b(\d+)\s*min(?:utes?)?\b', text)
+    if m:
+        return int(m.group(1))
+    if re.search(r'\ban\s+hour\b', text):
+        return 60
+    return None
+
+
 def _extract_date_hint(text: str) -> str:
     """Extract date hint string from normalized text."""
     # Look for "next <weekday>"
@@ -139,13 +169,26 @@ def _extract_date_hint(text: str) -> str:
 def _extract_time_hint(text: str) -> tuple[str, str]:
     """Extract (time_hint, window_hint) from normalized text.
 
-    time_hint: e.g. "at 2", "at 4pm", "at 14:00"  (empty if window-based)
+    time_hint: e.g. "at 2", "at 4pm", "4pm", "2"  (empty if window-based)
     window_hint: e.g. "afternoon" (empty if explicit time)
     """
-    # Explicit time: "at HH:MM am/pm", "at H am/pm", "at H"
+    # Explicit time with "at": "at HH:MM am/pm", "at H am/pm", "at H"
     m = re.search(r'\bat\s+(\d{1,2}(?::\d{2})?\s*(?:am|pm)?)\b', text)
     if m:
-        return (m.group(0).strip(), "")  # full "at X" match
+        return (m.group(0).strip(), "")
+
+    # Bare time with am/pm but no "at": "4pm", "10am", "2:30pm"
+    m = re.search(r'\b(\d{1,2}(?::\d{2})?\s*(?:am|pm))\b', text)
+    if m:
+        return (m.group(0).strip(), "")
+
+    # Bare hour number immediately after a date word: "tomorrow 2", "friday 3"
+    m = re.search(
+        r'\b(?:tomorrow|today|monday|tuesday|wednesday|thursday|friday|saturday|sunday)\s+(\d{1,2})\b',
+        text,
+    )
+    if m:
+        return (m.group(1), "")
 
     # Window keywords
     for window in ("morning", "afternoon", "evening", "tonight"):
@@ -284,6 +327,10 @@ def parse_calendar_create_request(
 
     # Resolve time or mark as window-based
     duration_minutes = _default_duration(title) if title else 60
+    # Override with explicit duration if stated ("90 minutes", "1 hour", etc.)
+    explicit_dur = _extract_explicit_duration(text)
+    if explicit_dur is not None:
+        duration_minutes = explicit_dur
     start_time_str = ""
     end_time_str = ""
     needs_availability_search = False
@@ -381,6 +428,204 @@ def _find_availability_slot(draft: dict) -> Optional[dict]:
     end_time_str = f"{end_h:02d}:{end_m:02d}:00"
 
     return {"start_time_str": start_time_str, "end_time_str": end_time_str}
+
+
+# ── Auto-execute classification ───────────────────────────────────────────────
+
+def should_auto_execute_calendar_create(
+    draft: dict,
+    user_message: str,
+) -> tuple[bool, str]:
+    """Return (True, "") if the request is safe to direct-create without confirmation.
+
+    Returns (False, reason) if the request should use the pending confirmation flow.
+    """
+    text = user_message.strip().lower()
+
+    # Window-based requests always need the availability search → pending path
+    if draft.get("needs_availability_search"):
+        return False, "window-based time requires availability search"
+
+    # Must have all fields resolved
+    if draft.get("missing_fields"):
+        return False, f"missing fields: {draft['missing_fields']}"
+
+    # Duration safety cap: >4 hours → confirm
+    if draft.get("duration_minutes", 60) > 240:
+        return False, "event duration over 4 hours"
+
+    # Recurring indicators
+    for word in ("every ", "recurring", "weekly", "daily", "repeat", "each "):
+        if word in text:
+            return False, "recurring event detected"
+
+    # All-day event
+    for phrase in ("all day", "all-day", "full day"):
+        if phrase in text:
+            return False, "all-day event"
+
+    # Multi-day range
+    for word in (" through ", " until ", " thru "):
+        if word in text:
+            return False, "potential multi-day event"
+
+    # Invite attendees — "with " is a proxy; catches "meeting with Jake"
+    if " with " in text:
+        return False, "event may include attendees"
+
+    # Destructive ops that should never auto-fire
+    for word in ("move", "reschedule", "delete", "cancel", "update", "change"):
+        if word in text:
+            return False, "update/reschedule/delete detected"
+
+    # Sleep hours: before 6 AM or at/after 11 PM
+    start_time_str = draft.get("start_time_str", "")
+    if start_time_str:
+        try:
+            h = int(start_time_str[:2])
+            if h < 6 or h >= 23:
+                return False, "event during sleep hours"
+        except (ValueError, IndexError):
+            pass
+
+    return True, ""
+
+
+def _check_conflict(draft: dict) -> Optional[str]:
+    """Check the calendar for an overlapping event. Returns conflicting title or None.
+
+    On any failure (API unavailable, import error, parse error), returns None so
+    the caller can proceed with the direct create.
+    """
+    try:
+        get_date_fn = _calendar_get_date_fn
+        if get_date_fn is None:
+            return None
+        date_str = draft.get("date_str", "")
+        start_str = draft.get("start_time_str", "")
+        end_str = draft.get("end_time_str", "")
+        if not date_str or not start_str or not end_str:
+            return None
+
+        result = get_date_fn(date_str)
+        if not result.get("ok"):
+            return None
+
+        def to_mins(t: str) -> int:
+            return int(t[:2]) * 60 + int(t[3:5])
+
+        new_start = to_mins(start_str)
+        new_end = to_mins(end_str)
+
+        for ev in result.get("events", []):
+            ev_start_iso = str(ev.get("start", ""))
+            ev_end_iso = str(ev.get("end", ev_start_iso))
+            if "T" not in ev_start_iso:
+                continue  # skip all-day events
+            ev_start = to_mins(ev_start_iso[11:19])
+            ev_end = to_mins(ev_end_iso[11:19]) if "T" in ev_end_iso else ev_start + 60
+            if not (new_end <= ev_start or new_start >= ev_end):
+                return str(ev.get("summary", "an existing event"))
+    except Exception:
+        return None
+    return None
+
+
+def _direct_create_calendar_event(user_request: str, draft: dict) -> dict:
+    """Execute a calendar create directly without a pending confirmation file.
+
+    Uses approval_mode 'direct_user_command' — the explicit user statement IS
+    the approval. Env gates (GOOGLE_CALENDAR_ENABLED, DRY_RUN) are still
+    enforced by the executor.
+    """
+    operation = _build_operation(draft)
+    request_id = f"req-direct-{uuid.uuid4().hex[:12]}"
+
+    ensure_lumen_executor_dirs()
+
+    now_utc = datetime.now(timezone.utc).isoformat()
+
+    # Write reviewed record
+    reviewed = {
+        "request_id": request_id,
+        "reviewed_at": now_utc,
+        "all_dry_run": True,
+        "approved": False,
+        "original_operations": [operation],
+        "results": [],
+        "no_live_execution": True,
+        "source": "nl_calendar_create_direct",
+        "approval_mode": "direct_user_command",
+    }
+    reviewed_path = REVIEWED_LUMEN_DIR / f"reviewed_{request_id}.json"
+    reviewed_path.parent.mkdir(parents=True, exist_ok=True)
+    reviewed_path.write_text(json.dumps(reviewed, indent=2), encoding="utf-8")
+
+    # Write approval record — user's explicit command is the approval
+    approval = {
+        "request_id": request_id,
+        "approved": True,
+        "approved_by": "user_voice",
+        "approved_at": now_utc,
+        "reviewed_path": str(reviewed_path),
+        "operation_count": 1,
+        "explicit_user_approval_required": False,
+        "approval_mode": "direct_user_command",
+        "source": "nl_calendar_create_direct",
+    }
+    approval_path = APPROVED_LUMEN_DIR / f"approved_{request_id}.json"
+    approval_path.parent.mkdir(parents=True, exist_ok=True)
+    approval_path.write_text(json.dumps(approval, indent=2), encoding="utf-8")
+
+    # Execute through existing pipeline
+    try:
+        exec_fn = execute_approved_calendar_request
+        if exec_fn is None:
+            from prometheus.agents.lumen_calendar_executor import execute_approved_calendar_request as _exec  # noqa: F821
+            exec_fn = _exec
+        exec_result = exec_fn(request_id)
+    except Exception as exc:
+        return {
+            "status": "failed",
+            "error": f"Executor error: {exc}",
+            "title": draft.get("title", ""),
+            "request_id": request_id,
+        }
+
+    success = bool(exec_result.get("success"))
+    reason = exec_result.get("reason") or exec_result.get("message", "")
+
+    blocked = (
+        not success
+        and reason is not None
+        and "GOOGLE_CALENDAR_DRY_RUN" in str(reason)
+    )
+
+    if blocked:
+        return {
+            "status": "blocked",
+            "reason": reason,
+            "title": draft.get("title", ""),
+            "request_id": request_id,
+        }
+
+    if not success:
+        return {
+            "status": "failed",
+            "reason": reason,
+            "title": draft.get("title", ""),
+            "request_id": request_id,
+        }
+
+    return {
+        "status": "executed",
+        "title": draft.get("title", ""),
+        "start_time": operation.get("start_time", ""),
+        "end_time": operation.get("end_time", ""),
+        "request_id": request_id,
+        "date_hint": draft.get("date_hint", ""),
+        "date_str": draft.get("date_str", ""),
+    }
 
 
 # ── Summary building ──────────────────────────────────────────────────────────
@@ -560,14 +805,16 @@ def _mark_confirmation_status(confirmation_id: str, status: str) -> None:
 
 def parse_and_propose(user_request: str) -> dict:
     """
-    Parse a NL calendar create request and create a pending confirmation.
+    Parse a NL calendar create request and either auto-execute or ask for confirmation.
 
-    Returns:
-      status: "pending" | "needs_input" | "no_availability"
-      confirmation_id: str | None
-      human_summary: str
-      missing_fields: list[str]
-      draft: dict
+    Returns dict with status:
+      "executed"       — direct create succeeded (low-risk, fully-specified request)
+      "blocked"        — direct create blocked by DRY_RUN env gate
+      "failed"         — direct create failed (executor error)
+      "conflict"       — overlapping event detected; pending confirmation written
+      "pending"        — confirmation file written; awaiting user yes/no
+      "needs_input"    — missing date, time, or title; ask a clarifying question
+      "no_availability"— window-based search found no free slot
     """
     now = datetime.now()
     draft = parse_calendar_create_request(user_request, now)
@@ -599,15 +846,44 @@ def parse_and_propose(user_request: str) -> dict:
         draft["start_time_str"] = slot["start_time_str"]
         draft["end_time_str"] = slot["end_time_str"]
         draft["needs_availability_search"] = False
+        # Window-based: propose with confirmation even after finding a slot
+        operation = _build_operation(draft)
+        human_summary = _human_summary(draft)
+        pending_record = _write_pending_confirmation(user_request, draft, operation, human_summary)
+        return {
+            "status": "pending",
+            "confirmation_id": pending_record["confirmation_id"],
+            "human_summary": human_summary,
+            "missing_fields": [],
+            "draft": draft,
+        }
 
+    # Exact time specified — check if safe to auto-execute
+    auto_ok, _reason = should_auto_execute_calendar_create(draft, user_request)
+    if auto_ok:
+        conflict_event = _check_conflict(draft)
+        if conflict_event:
+            # Overlapping event — write pending so user can still confirm or cancel
+            operation = _build_operation(draft)
+            human_summary = _human_summary(draft)
+            pending_record = _write_pending_confirmation(user_request, draft, operation, human_summary)
+            return {
+                "status": "conflict",
+                "confirmation_id": pending_record["confirmation_id"],
+                "conflict_event": conflict_event,
+                "human_summary": human_summary,
+                "missing_fields": [],
+                "draft": draft,
+            }
+        return _direct_create_calendar_event(user_request, draft)
+
+    # High-risk or ambiguous → ask for confirmation
     operation = _build_operation(draft)
     human_summary = _human_summary(draft)
-
-    record = _write_pending_confirmation(user_request, draft, operation, human_summary)
-
+    pending_record = _write_pending_confirmation(user_request, draft, operation, human_summary)
     return {
         "status": "pending",
-        "confirmation_id": record["confirmation_id"],
+        "confirmation_id": pending_record["confirmation_id"],
         "human_summary": human_summary,
         "missing_fields": [],
         "draft": draft,

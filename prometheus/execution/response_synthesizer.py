@@ -285,8 +285,48 @@ def _calendar_create_flow(action: str, data: dict) -> str:
         human_summary = str(data.get("human_summary", ""))
         missing_fields = data.get("missing_fields", [])
 
+        if status == "executed":
+            title = str(data.get("title", "the event"))
+            date_hint = str(data.get("date_hint", ""))
+            date_str = str(data.get("date_str", ""))
+            start_time = str(data.get("start_time", ""))
+            end_time = str(data.get("end_time", ""))
+            date_label = date_hint if date_hint in ("today", "tomorrow") else date_str
+            if "T" in start_time and "T" in end_time:
+                start_t = start_time[11:16]
+                end_t = end_time[11:16]
+                return (
+                    f"Done. Say: '{title} has been added to your calendar"
+                    f" for {date_label} from {start_t} to {end_t}.' No filler."
+                )
+            return (
+                f"Done. Tell the user '{title}' was added to their calendar"
+                f" for {date_label}. One sentence. No filler."
+            )
+
+        if status == "blocked":
+            return (
+                "Tell the user: 'I parsed the request but calendar writes are blocked — "
+                "GOOGLE_CALENDAR_DRY_RUN is set to true. Set it to false in your environment "
+                "to allow live writes. The event was not added.' Be concise."
+            )
+
+        if status == "failed":
+            title = str(data.get("title", "the event"))
+            reason = str(data.get("reason") or data.get("error", "unknown error"))
+            return (
+                f"Tell the user that '{title}' could not be added to the calendar. "
+                f"Reason: {reason}. One sentence. No filler."
+            )
+
+        if status == "conflict":
+            conflict_event = str(data.get("conflict_event", "another event"))
+            return (
+                f"Tell the user: 'That overlaps with \"{conflict_event}\" on your calendar. "
+                f"{human_summary}' Ask if they want to add it anyway or cancel. Be concise."
+            )
+
         if status == "needs_input":
-            missing = missing_fields[0] if missing_fields else "details"
             return (
                 f"The user wants to schedule an event but we need more information. "
                 f"Ask them: '{human_summary}'"
