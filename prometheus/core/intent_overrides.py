@@ -464,8 +464,9 @@ _SHOW_LOGS_PHRASES = (
 )
 
 # Calendar create — NL scheduling phrases (triggers parse_and_propose)
+# Note: "schedule " is NOT here — it's handled as a startswith check in resolve_direct_intent
+# so it doesn't match "my schedule today" (which is a read phrase).
 _CALENDAR_CREATE_PHRASES = (
-    "schedule ",      # broad: "schedule a meeting", "schedule workout", "schedule church..."
     "block off ",
     "book a ",
     "book an ",
@@ -774,6 +775,18 @@ def resolve_direct_intent(transcript: str) -> dict[str, Any] | None:
                 }
         except Exception:
             pass
+
+    # "schedule X" at the start of an utterance — prefix check avoids matching
+    # "my schedule today" (which is a calendar read phrase, not a create request).
+    if text.startswith("schedule "):
+        return {
+            "type": "direct_tool",
+            "payload": {
+                "action": "calendar_create_proposal",
+                "user_request": transcript,
+                "request_text": transcript,
+            },
+        }
 
     # Compound calendar create: "put church meeting on my calendar Sunday at 10"
     # Catches any "<verb> X on/to my calendar" pattern not covered by phrase list.
