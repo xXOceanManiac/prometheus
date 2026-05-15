@@ -1,6 +1,6 @@
 # Prometheus Capability Audit
 
-**Generated:** 2026-05-15 00:22:57
+**Generated:** 2026-05-15 02:41:25
 **Tests run:** 273  **Passed:** 273  **Failed:** 0  (100.0% pass rate)
 
 ---
@@ -37,18 +37,18 @@ Key findings:
 | startup | ~/.jarvis/logs dir exists | PASS |  |  |
 | startup | ~/.jarvis/audio dir exists | PASS |  |  |
 | startup | ~/.jarvis/memory_v2 dir exists | PASS |  |  |
-| startup | tools.py imports cleanly | PASS | 112ms |  |
+| startup | tools.py imports cleanly | PASS | 360ms |  |
 | startup | memory.py imports cleanly | PASS | 0ms |  |
 | startup | working_memory.py imports cleanly | PASS | 0ms |  |
-| startup | planner.planner imports cleanly | PASS | 1ms |  |
+| startup | planner.planner imports cleanly | PASS | 3ms |  |
 | startup | Missing OPENAI_API_KEY surfaced in CONFIG (not silently blank) | PASS |  | If key is absent it should be detectable — config reads env correctly |
 | startup | visual_state.json writable | PASS |  |  |
 | startup | heartbeat.json writable | PASS |  |  |
-| startup | launch.py imports cleanly | PASS | 0ms |  |
-| startup | watchdog.py imports cleanly | PASS | 0ms |  |
+| startup | launch.py imports cleanly | PASS | 1ms |  |
+| startup | watchdog.py imports cleanly | PASS | 1ms |  |
 | tools | ToolRegistry instantiation | PASS |  |  |
 | tools | tool:tell_time | PASS | 0ms |  |
-| tools | tool:list_files(project_root) | PASS | 1ms |  |
+| tools | tool:list_files(project_root) | PASS | 2ms |  |
 | tools | tool:list_files:no_path_gives_error | PASS |  | No folder path was provided. |
 | tools | tool:read_file(config.py) | PASS | 0ms |  |
 | tools | tool:read_file:missing_file_gives_error | PASS |  | File not found: /tmp/nonexistent_prometheus_audit.txt |
@@ -60,7 +60,7 @@ Key findings:
 | tools | tool:get_active_window:no_crash | PASS |  | ok=True |
 | tools | tool:system_status | PASS |  | System status retrieved. |
 | tools | tool:system_status:has_active_project_key | PASS |  |  |
-| tools | tool:get_priorities:no_crash | PASS |  | ok=True Found 0 priorities. |
+| tools | tool:get_priorities:no_crash | PASS |  | ok=True Found 1 priorities. |
 | tools | tool:query_vault:vault_not_configured | PASS |  | vault_path not set — skipped; returns gracefully |
 | tools | tool:run_python:safe_snippet | PASS |  | prometheus_audit_ok |
 | tools | tool:run_python:blocks_os_system | PASS |  | run_python: blocked — command contains restricted patterns |
@@ -108,7 +108,7 @@ Key findings:
 | mission | mission:what_are_we_working_on_today:routable | PASS |  | 'today' variant type=direct_tool |
 | mission | mission:what_are_we_working_on:without_today_routable | PASS |  | GAP: short form requires LLM — direct override only covers '...today' suffix |
 | mission | mission:active_goal_appears_in_get_priorities | PASS |  | priorities=['Finish Prometheus audit report'] |
-| planning | planning:simple_one_step:builds_plan | PASS | 2ms | steps=1 conf=0.90 |
+| planning | planning:simple_one_step:builds_plan | PASS | 3ms | steps=1 conf=0.90 |
 | planning | planning:simple_one_step:valid_action | PASS |  | web_search |
 | planning | planning:plan_is_serializable | PASS |  |  |
 | planning | planning:low_confidence:triggers_clarification | PASS | 0ms | conf=0.20 q='Can you be more specific about what you'd like me to do?' |
@@ -133,7 +133,7 @@ Key findings:
 | voice | voice:response_in_progress_guard_exists | PASS |  | Checked source for duplicate-response guard |
 | voice | voice:error_callback:fires | PASS |  |  |
 | logging | logging:log_file_created_today | PASS |  |  |
-| logging | logging:jsonl_lines_valid | PASS |  | Checked last 20 of 1476 lines |
+| logging | logging:jsonl_lines_valid | PASS |  | Checked last 20 of 5279 lines |
 | logging | logging:entries_have_ts | PASS |  |  |
 | logging | logging:entries_have_kind | PASS |  |  |
 | logging | logging:activity.jsonl_exists | PASS |  |  |
@@ -188,7 +188,7 @@ Key findings:
 |  | lumen_calendar_router:no_subprocess | PASS |  | No shell execution in router source |
 |  | lumen_calendar_router:no_home_assistant | PASS |  | No Home Assistant calls in router source |
 |  | lumen_calendar_router:no_auto_approval | PASS |  | Proposals are never auto-approved by the router |
-| calendar | calendar:module_imports_cleanly | PASS | 3ms |  |
+| calendar | calendar:module_imports_cleanly | PASS | 2ms |  |
 | calendar | calendar:function_exists:calendar_list_upcoming | PASS |  |  |
 | calendar | calendar:function_exists:calendar_get_today | PASS |  |  |
 | calendar | calendar:function_exists:calendar_get_tomorrow | PASS |  |  |
