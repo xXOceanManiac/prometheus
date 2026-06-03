@@ -114,6 +114,80 @@ def find_today_wake_event(events: list) -> Optional[Any]:
     return min(candidates, key=lambda e: e.start_time)
 
 
+def _eligibility_detail(
+    now: datetime,
+    wake_event: Optional[Any],
+    state: Optional[MorningRoutineState],
+    config: MorningRoutineConfig,
+) -> "tuple[bool, str, dict]":
+    """
+    Return (eligible, reason, diagnostic_payload).
+
+    Reasons:
+      "eligible"           — routine should run now
+      "no_wake_event"      — no Wake Up event found (or unparseable start_time)
+      "already_completed"  — already ran for this event_id + date
+      "before_event_start" — now is before the event start time
+      "after_grace_window" — now is past start + grace_minutes
+
+    Timezone normalisation:
+      If wake_dt is aware and now is naive, attach wake_dt.tzinfo to now —
+      both are the user's local wall-clock time so this is correct.
+      Stamping naive local time as UTC (the old behaviour) produced comparisons
+      that were wrong by the local UTC offset (e.g. 4 hours for EDT).
+    """
+    _empty = {"now_iso": now.isoformat(timespec="seconds")}
+
+    if wake_event is None:
+        return False, "no_wake_event", _empty
+
+    event_id = getattr(wake_event, "event_id", None)
+    today = now.date().isoformat()
+
+    # Guard duplicate runs: completed for this exact event_id + date
+    if state is not None and state.completed:
+        if state.event_id == event_id and state.date == today:
+            return False, "already_completed", _empty
+
+    start_time = (getattr(wake_event, "start_time", "") or "")
+    if not start_time or "T" not in start_time:
+        return False, "no_wake_event", _empty
+
+    try:
+        wake_dt = _parse_dt(start_time)
+    except (ValueError, TypeError):
+        return False, "no_wake_event", _empty
+
+    # Normalise timezone awareness before comparison.
+    # When wake_dt is aware (e.g. "18:15:00-04:00") and now is naive (datetime.now()),
+    # attach wake_dt's tzinfo to now — both represent local wall-clock time.
+    # The previous code used timezone.utc here, which shifted naive local time by the
+    # UTC offset and caused events to appear 4 h in the future for EDT users.
+    now_cmp = now
+    wake_cmp = wake_dt
+    if wake_dt.tzinfo is not None and now.tzinfo is None:
+        now_cmp = now.replace(tzinfo=wake_dt.tzinfo)
+    elif wake_dt.tzinfo is None and now.tzinfo is not None:
+        wake_cmp = wake_dt.replace(tzinfo=now.tzinfo)
+
+    grace_end = wake_cmp + timedelta(minutes=config.missed_trigger_grace_minutes)
+    diff_seconds = (now_cmp - wake_cmp).total_seconds()
+
+    payload: dict = {
+        "now_iso": now_cmp.isoformat(timespec="seconds"),
+        "start_iso": wake_cmp.isoformat(timespec="seconds"),
+        "grace_until_iso": grace_end.isoformat(timespec="seconds"),
+        "seconds_until_start": round(max(0.0, -diff_seconds), 1),
+        "seconds_after_start": round(max(0.0, diff_seconds), 1),
+    }
+
+    if now_cmp < wake_cmp:
+        return False, "before_event_start", payload
+    if now_cmp > grace_end:
+        return False, "after_grace_window", payload
+    return True, "eligible", payload
+
+
 def should_run_morning_routine(
     now: datetime,
     wake_event: Optional[Any],
@@ -125,40 +199,11 @@ def should_run_morning_routine(
 
     False when: no wake event, already completed for this event/date,
     now is before wake time, or now is past the grace window.
+
+    For the full reason and diagnostic payload use _eligibility_detail().
     """
-    if wake_event is None:
-        return False
-
-    event_id = getattr(wake_event, "event_id", None)
-    today = now.date().isoformat()
-
-    # Guard duplicate runs: completed for this exact event+date
-    if state is not None and state.completed:
-        if state.event_id == event_id and state.date == today:
-            return False
-
-    start_time = (getattr(wake_event, "start_time", "") or "")
-    if not start_time or "T" not in start_time:
-        return False
-
-    try:
-        wake_dt = _parse_dt(start_time)
-    except (ValueError, TypeError):
-        return False
-
-    # Reconcile timezone awareness so comparisons are valid
-    if wake_dt.tzinfo is not None and now.tzinfo is None:
-        now = now.replace(tzinfo=timezone.utc)
-    elif wake_dt.tzinfo is None and now.tzinfo is not None:
-        wake_dt = wake_dt.replace(tzinfo=now.tzinfo)
-
-    grace_end = wake_dt + timedelta(minutes=config.missed_trigger_grace_minutes)
-
-    if now < wake_dt:
-        return False
-    if now > grace_end:
-        return False
-    return True
+    eligible, _, _ = _eligibility_detail(now, wake_event, state, config)
+    return eligible
 
 
 def build_morning_summary(
@@ -280,17 +325,13 @@ class MorningRoutineService:
                 "state_date": getattr(state, "date", None),
             })
 
-            eligible = should_run_morning_routine(now, wake_event, state, self._config)
+            eligible, skip_reason, eligibility_payload = _eligibility_detail(
+                now, wake_event, state, self._config
+            )
             if not eligible:
-                if wake_event is None:
-                    skip_reason = "no_wake_event"
-                elif state is not None and getattr(state, "completed", False) and getattr(state, "date", None) == now.date().isoformat():
-                    skip_reason = "already_completed_today"
-                else:
-                    skip_reason = "outside_time_window"
                 self._log("morning_routine_skipped", {
                     "reason": skip_reason,
-                    "now": now.isoformat(timespec="seconds"),
+                    **eligibility_payload,
                 })
                 return
             await self.run_morning_routine(wake_event)

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import sys
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
 from unittest.mock import AsyncMock, MagicMock, call
@@ -28,6 +28,7 @@ from prometheus.routines.morning_routine import (
     PROMETHEUS_XBOX_TURN_ON,
     PROMETHEUS_XBOX_VOLUME_DOWN,
     PROMETHEUS_XBOX_VOLUME_UP,
+    _eligibility_detail,
     build_morning_summary,
     find_today_wake_event,
     should_run_morning_routine,
@@ -262,6 +263,90 @@ class TestShouldRunMorningRoutine:
         )
         now = datetime(int(TODAY[:4]), int(TODAY[5:7]), int(TODAY[8:10]), 7, 5, 0)
         assert should_run_morning_routine(now, wake, state, self._config()) is True
+
+
+# ── Timezone-aware eligibility ─────────────────────────────────────────────────
+#
+# Regression: event start "2026-06-03T18:15:00-04:00", naive now 18:15:22 was
+# incorrectly stamped as UTC → appeared 4 h before the event → skipped as
+# "outside_time_window".  Fix: attach the event's tzinfo to naive now.
+
+_EDT = timezone(timedelta(hours=-4))
+
+
+class TestTimezoneAwareEligibility:
+    """Timezone normalisation in _eligibility_detail / should_run_morning_routine."""
+
+    def _wake_aware(self) -> Any:
+        return _make_event(
+            "Wake Up",
+            start_time="2026-06-03T18:15:00-04:00",
+            event_id="tz-evt-001",
+        )
+
+    def _config(self) -> MorningRoutineConfig:
+        return MorningRoutineConfig(missed_trigger_grace_minutes=15)
+
+    # ── should_run_morning_routine (bool API) ──────────────────────────────────
+
+    def test_aware_start_naive_now_within_window_returns_true(self):
+        """Regression guard: was returning False due to UTC stamping of naive now."""
+        wake = self._wake_aware()
+        now = datetime(2026, 6, 3, 18, 15, 22)  # naive local EDT, 22 s after start
+        assert should_run_morning_routine(now, wake, None, self._config()) is True
+
+    def test_aware_start_aware_now_within_window_returns_true(self):
+        wake = self._wake_aware()
+        now = datetime(2026, 6, 3, 18, 15, 22, tzinfo=_EDT)
+        assert should_run_morning_routine(now, wake, None, self._config()) is True
+
+    # ── _eligibility_detail (reason + payload) ─────────────────────────────────
+
+    def test_aware_start_naive_now_before_start_reason(self):
+        wake = self._wake_aware()
+        now = datetime(2026, 6, 3, 18, 14, 22)  # naive, 38 s before start
+        eligible, reason, _ = _eligibility_detail(now, wake, None, self._config())
+        assert eligible is False
+        assert reason == "before_event_start"
+
+    def test_aware_start_naive_now_past_grace_reason(self):
+        wake = self._wake_aware()
+        now = datetime(2026, 6, 3, 18, 31, 0)  # naive, 16 min after → past 15-min grace
+        eligible, reason, _ = _eligibility_detail(now, wake, None, self._config())
+        assert eligible is False
+        assert reason == "after_grace_window"
+
+    def test_eligibility_detail_returns_full_diagnostic_payload(self):
+        wake = self._wake_aware()
+        now = datetime(2026, 6, 3, 18, 15, 22)
+        eligible, reason, payload = _eligibility_detail(now, wake, None, self._config())
+        assert eligible is True
+        assert reason == "eligible"
+        assert "now_iso" in payload
+        assert "start_iso" in payload
+        assert "grace_until_iso" in payload
+        assert "seconds_after_start" in payload
+        assert payload["seconds_after_start"] == 22.0
+        assert payload["seconds_until_start"] == 0.0
+
+    def test_no_wake_event_reason(self):
+        now = datetime(2026, 6, 3, 18, 15, 22)
+        eligible, reason, _ = _eligibility_detail(now, None, None, self._config())
+        assert eligible is False
+        assert reason == "no_wake_event"
+
+    def test_already_completed_reason(self):
+        wake = self._wake_aware()
+        state = MorningRoutineState(
+            date="2026-06-03",
+            event_id="tz-evt-001",
+            completed=True,
+            started_at="2026-06-03T18:15:05",
+        )
+        now = datetime(2026, 6, 3, 18, 16, 0)
+        eligible, reason, _ = _eligibility_detail(now, wake, state, self._config())
+        assert eligible is False
+        assert reason == "already_completed"
 
 
 # ── build_morning_summary ──────────────────────────────────────────────────────
