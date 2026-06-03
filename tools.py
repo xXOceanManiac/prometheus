@@ -294,12 +294,10 @@ def _step_schema() -> dict[str, Any]:
                         "content": {"type": "string"},
                     },
                     "required": ["action"],
-                    "additionalProperties": False,
                 },
             },
         },
         "required": ["action"],
-        "additionalProperties": False,
     }
 
 
@@ -677,7 +675,6 @@ class ToolRegistry:
                         "actions": {
                             "type": "array",
                             "items": _step_schema(),
-                            "minItems": 1,
                         },
                         "app": {"type": "string"},
                         "apps": {"type": "array", "items": {"type": "string"}},
@@ -710,11 +707,9 @@ class ToolRegistry:
                         "steps": {
                             "type": "array",
                             "items": _step_schema(),
-                            "minItems": 1,
                         },
                     },
                     "required": [],
-                    "additionalProperties": False,
                 },
             }
         ]

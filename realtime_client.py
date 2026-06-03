@@ -62,6 +62,16 @@ class RealtimePrometheusClient:
         self.awaiting_user_audio = False
         self._receiver_task: asyncio.Task | None = None
 
+        # Reconnect backoff — schedule: 5s, 15s, 60s; hard-stop after max attempts
+        self._should_reconnect = True
+        self._RECONNECT_SCHEDULE: list[int] = [5, 15, 60]
+        self._MAX_RECONNECT_ATTEMPTS = 5
+        self._reconnect_attempt = 0
+        self._reconnect_task: asyncio.Task | None = None
+        # Dedup connection error logging — suppress repeats within 60s
+        self._last_error_msg: str = ""
+        self._last_error_dedup_ts: float = 0.0
+
         self.current_text = ""
         self.busy = False
         self.waiting_for_tool_followup = False
@@ -389,7 +399,6 @@ class RealtimePrometheusClient:
                     f"Respond as Prometheus. Deliver this message naturally and concisely, "
                     f"staying in character: {text}"
                 ),
-                "input": [{"type": "message", "role": "user", "content": [{"type": "input_text", "text": "say it"}]}],
             },
             context="_speak_text",
         )
@@ -646,10 +655,19 @@ class RealtimePrometheusClient:
             raise RuntimeError("Missing OpenAI API key.")
 
         url = f"wss://api.openai.com/v1/realtime?model={self.model}"
+        # GA Realtime API — no OpenAI-Beta header; Authorization only
         headers = {
             "Authorization": f"Bearer {self.api_key}",
-            "OpenAI-Beta": "realtime=v1",
         }
+
+        # Log connection attempt — header names only, never values or API key
+        log_event("realtime_connect_attempt", {
+            "url": url,
+            "model": self.model,
+            "header_names": list(headers.keys()),
+            "has_beta_header": "OpenAI-Beta" in headers,
+            "reconnect_attempt": self._reconnect_attempt,
+        })
 
         self.ws = await websockets.connect(
             url,
@@ -669,29 +687,72 @@ class RealtimePrometheusClient:
                 if l.strip().startswith("[TITLE:")
             ],
         })
-        await self.send(
-            {
-                "type": "session.update",
-                "session": {
-                    "instructions": _instructions,
-                    "modalities": ["audio", "text"],
-                    "voice": self.voice,
-                    "input_audio_format": "pcm16",
-                    "output_audio_format": "pcm16",
-                    "input_audio_transcription": {
-                        "model": "gpt-4o-mini-transcribe",
-                    },
-                    "turn_detection": None,
-                    "tool_choice": "auto",
-                    "tools": self.tools.schemas(),
+
+        # Log outgoing session payload (redacted — no instructions text, no API key)
+        log_event("realtime_session_payload_debug", {
+            "model": self.model,
+            "voice": self.voice,
+            "modalities": ["text", "audio"],
+            "instructions_length": len(_instructions),
+        })
+
+        # Audit headers — only Authorization is permitted
+        _forbidden_headers = [h for h in headers if h != "Authorization"]
+        if _forbidden_headers:
+            log_event("realtime_header_blocked", {"forbidden": _forbidden_headers})
+            notify(f"Realtime blocked: unexpected headers {_forbidden_headers}")
+            self._should_reconnect = False
+            return
+
+        _session_update = {
+            "type": "session.update",
+            "session": {
+                "modalities": ["text", "audio"],
+                "instructions": _instructions,
+                "voice": self.voice,
+                "turn_detection": {
+                    "type": "server_vad",
+                    "threshold": 0.5,
+                    "prefix_padding_ms": 300,
+                    "silence_duration_ms": 700,
                 },
-            }
-        )
+            },
+        }
+
+        # Log session keys and turn_detection keys before sending — never log secrets
+        _sess = _session_update["session"]
+        log_event("realtime_session_update_keys", {
+            "session_keys": list(_sess.keys()),
+            "turn_detection_keys": list(_sess["turn_detection"].keys()),
+            "turn_detection_type": _sess["turn_detection"]["type"],
+        })
+
+        # Hard audit: block send if any forbidden beta field appears in the payload
+        _forbidden_payload_strings = [
+            "OpenAI-Beta",
+            "realtime=v1",
+            "input_audio_format",
+            "output_audio_format",
+            "additionalProperties",
+            "whisper-1",
+            "input_audio_transcription_model",
+        ]
+        _payload_text = json.dumps(_session_update)
+        _hits = [s for s in _forbidden_payload_strings if s in _payload_text]
+        if _hits:
+            log_event("realtime_payload_blocked", {"forbidden": _hits})
+            notify(f"Realtime payload blocked: forbidden fields {_hits}")
+            self._should_reconnect = False
+            return
+
+        await self.send(_session_update)
 
         asyncio.create_task(self._chat_polling_loop())
+        # Successful connection — reset reconnect counter
+        self._reconnect_attempt = 0
 
         log_event("realtime_connected", {"model": self.model, "voice": self.voice})
-        print("Realtime connected")
+        print(f"Realtime connected ({self.model})")
 
     async def _chat_polling_loop(self) -> None:
         """
@@ -793,7 +854,10 @@ class RealtimePrometheusClient:
                 log_event("chat_polling_error", {"error": str(exc)[:200]})
 
     async def close(self) -> None:
+        self._should_reconnect = False  # intentional close — do not reconnect
         self.connected = False
+        if self._reconnect_task and not self._reconnect_task.done():
+            self._reconnect_task.cancel()
         if self._receiver_task:
             self._receiver_task.cancel()
         if self.ws:
@@ -1108,6 +1172,66 @@ class RealtimePrometheusClient:
             self.busy = False
             self.last_cycle_end_at = time.time()
 
+    def _log_connection_error_deduped(self, msg: str, event_name: str) -> None:
+        """Log a connection error once; suppress repeats within 60 seconds."""
+        now = time.time()
+        if msg != self._last_error_msg or (now - self._last_error_dedup_ts) > 60.0:
+            notify(f"Realtime connection closed: {msg}")
+            log_event(event_name, {"error": msg})
+            self._last_error_msg = msg
+            self._last_error_dedup_ts = now
+        else:
+            log_event(event_name + "_suppressed", {"suppressed": True})
+
+    async def _reconnect_with_backoff(self) -> None:
+        """Attempt to re-establish the Realtime WebSocket with scheduled backoff.
+
+        Schedule: 5s → 15s → 60s. Stops after _MAX_RECONNECT_ATTEMPTS failures.
+        Prometheus continues running (text/tool path) even when realtime is down.
+        """
+        if not self._should_reconnect:
+            return
+        if self._reconnect_attempt >= self._MAX_RECONNECT_ATTEMPTS:
+            log_event("realtime_reconnect_exhausted", {
+                "attempts": self._reconnect_attempt,
+                "max": self._MAX_RECONNECT_ATTEMPTS,
+            })
+            notify(
+                "Realtime voice offline after max reconnect attempts. "
+                "Restart Prometheus to retry."
+            )
+            self._should_reconnect = False
+            return
+        delay = self._RECONNECT_SCHEDULE[
+            min(self._reconnect_attempt, len(self._RECONNECT_SCHEDULE) - 1)
+        ]
+        self._reconnect_attempt += 1
+        log_event("realtime_reconnect_scheduled", {
+            "attempt": self._reconnect_attempt,
+            "of_max": self._MAX_RECONNECT_ATTEMPTS,
+            "delay_s": delay,
+        })
+        print(
+            f"Realtime reconnect attempt {self._reconnect_attempt}/"
+            f"{self._MAX_RECONNECT_ATTEMPTS} in {delay}s"
+        )
+        await asyncio.sleep(delay)
+        if not self._should_reconnect:
+            return
+        try:
+            await self.connect()
+            log_event("realtime_reconnected", {
+                "attempt": self._reconnect_attempt,
+                "after_delay_s": delay,
+            })
+        except Exception as exc:
+            log_event("realtime_reconnect_failed", {
+                "attempt": self._reconnect_attempt,
+                "error": str(exc)[:200],
+            })
+            if self._should_reconnect:
+                self._reconnect_task = asyncio.create_task(self._reconnect_with_backoff())
+
     async def _receiver(self) -> None:
         assert self.ws is not None
 
@@ -1119,7 +1243,11 @@ class RealtimePrometheusClient:
                 log_event("realtime_event", {"type": event_type})
 
                 if event_type == "error":
-                    notify(f"Realtime error: {event}")
+                    err_obj = event.get("error") or {}
+                    err_code = str(err_obj.get("code") or "unknown")
+                    err_msg = str(err_obj.get("message") or str(event))[:200]
+                    log_event("realtime_api_error", {"code": err_code, "message": err_msg})
+                    notify(f"Realtime API error: {err_code}")
                     self.busy = False
                     self._response_active = False
                     self.speaker.finish_realtime()
@@ -1219,17 +1347,21 @@ class RealtimePrometheusClient:
         except asyncio.CancelledError:
             self._response_active = False
         except ConnectionClosed as e:
-            notify(f"Realtime connection closed: {e}")
-            log_event("realtime_connection_closed", {"error": str(e)})
+            self.connected = False
             self.busy = False
             self._response_active = False
             self.speaker.finish_realtime()
             self.last_cycle_end_at = time.time()
+            self._log_connection_error_deduped(str(e), "realtime_connection_closed")
+            if self._should_reconnect:
+                self._reconnect_task = asyncio.create_task(self._reconnect_with_backoff())
         except Exception as e:
-            notify(f"Realtime receiver error: {e}")
-            log_event("realtime_receiver_error", {"error": str(e)})
-            print("Receiver exception:", repr(e))
+            self.connected = False
             self.busy = False
             self._response_active = False
             self.speaker.finish_realtime()
             self.last_cycle_end_at = time.time()
+            self._log_connection_error_deduped(str(e), "realtime_receiver_error")
+            print("Receiver exception:", repr(e))
+            if self._should_reconnect:
+                self._reconnect_task = asyncio.create_task(self._reconnect_with_backoff())
