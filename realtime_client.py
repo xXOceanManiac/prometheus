@@ -84,6 +84,10 @@ class RealtimePrometheusClient:
 
         # Voice latency tracking — reset on each PTT press / begin_user_turn
         self._turn_start_ts: float = 0.0  # monotonic time when user started speaking
+        # Bytes of audio sent since the last input_audio_buffer.committed event.
+        # Reset to 0 when server_vad auto-commits (or on turn start).
+        # Used in end_audio() to skip a redundant commit when the buffer is already empty.
+        self._audio_bytes_since_commit: int = 0
 
         # Vault / workspace context injected before or during a session
         self._vault_context: str = ""
@@ -712,7 +716,6 @@ class RealtimePrometheusClient:
             "session": {
                 "type": "realtime",
                 "instructions": _instructions,
-                "voice": self.voice,
                 "turn_detection": {
                     "type": "server_vad",
                     "threshold": 0.5,
@@ -905,12 +908,14 @@ class RealtimePrometheusClient:
     async def begin_user_turn(self) -> None:
         self.awaiting_user_audio = True
         self._turn_start_ts = time.monotonic()
+        self._audio_bytes_since_commit = 0
         log_event("user_turn_started", {})
 
     async def send_audio(self, chunk: bytes) -> None:
         if not self.awaiting_user_audio:
             return
 
+        self._audio_bytes_since_commit += len(chunk)
         arr = np.frombuffer(chunk, dtype=np.int16)
         b64 = pcm16_16k_to_base64_24k(arr)
 
@@ -931,6 +936,12 @@ class RealtimePrometheusClient:
         self.waiting_for_tool_followup = False
         self._override_handled = False
         self._drop_audio_until = 0.0
+
+        _MIN_COMMIT_BYTES = 3200
+        if self._audio_bytes_since_commit < _MIN_COMMIT_BYTES:
+            print(f"[DBG] end_audio: skip commit ({self._audio_bytes_since_commit} bytes, server_vad already committed)")
+            log_event("end_audio_vad_committed", {"bytes": self._audio_bytes_since_commit})
+            return
 
         log_event("user_turn_committed", {})
         print("[DBG] end_audio: sending input_audio_buffer.commit")
@@ -1273,6 +1284,10 @@ class RealtimePrometheusClient:
                     self._response_active = False
                     self.speaker.finish_realtime()
                     self.last_cycle_end_at = time.time()
+                    continue
+
+                if event_type == "input_audio_buffer.committed":
+                    self._audio_bytes_since_commit = 0
                     continue
 
                 if (
