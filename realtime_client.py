@@ -716,21 +716,13 @@ class RealtimePrometheusClient:
             "session": {
                 "type": "realtime",
                 "instructions": _instructions,
-                "turn_detection": {
-                    "type": "server_vad",
-                    "threshold": 0.5,
-                    "prefix_padding_ms": 300,
-                    "silence_duration_ms": 700,
-                },
             },
         }
 
-        # Log session keys and turn_detection keys before sending — never log secrets
+        # Log session keys before sending — never log secrets
         _sess = _session_update["session"]
         log_event("realtime_session_update_keys", {
             "session_keys": list(_sess.keys()),
-            "turn_detection_keys": list(_sess["turn_detection"].keys()),
-            "turn_detection_type": _sess["turn_detection"]["type"],
         })
 
         # Hard audit: block send if any forbidden beta field appears in the payload
