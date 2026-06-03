@@ -157,7 +157,9 @@ class TestPrometheusMorningSpeaker:
 
         response_msg = sent_payloads[1]
         assert response_msg["type"] == "response.create"
-        assert "audio" in response_msg["response"]["modalities"]
+        assert "modalities" not in response_msg["response"], (
+            "response.create must not include modalities — GA API rejects it as unknown_parameter"
+        )
         assert "Good morning, Tate." in response_msg["response"]["instructions"]
 
     def test_skips_when_client_not_connected(self):
