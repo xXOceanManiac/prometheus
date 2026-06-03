@@ -1,0 +1,18 @@
+{
+  "request_id": "req-direct-7c5082d8740b",
+  "executed_at": "2026-06-03T18:44:44.880660+00:00",
+  "success": true,
+  "operation_count": 1,
+  "operation_results": [
+    {
+      "operation_index": 0,
+      "operation_type": "create_event",
+      "success": true,
+      "dry_run": false,
+      "message": "Event 'Standup' created.",
+      "event_id": "fnudo9pbobm27rv8ced8i5jqu4",
+      "calendar_id": "primary"
+    }
+  ],
+  "message": "Executed 1 operation(s) successfully."
+}

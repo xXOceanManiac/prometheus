@@ -29,6 +29,14 @@ from session_briefing import SessionBriefing
 from proactive_loop import ProactiveLoop
 from event_bus import get_bus, EventType
 from sensor_manager import SensorManager
+from prometheus.routines.morning_routine import MorningRoutineService
+from prometheus.routines.morning_adapters import (
+    JSONMorningRoutineStateStore,
+    HomeAssistantMorningClient,
+    PrometheusMorningSpeaker,
+    MorningWeatherProvider,
+    MorningCalendarReader,
+)
 
 
 _PID_FILE = Path.home() / ".jarvis" / "prometheus.pid"
@@ -84,6 +92,7 @@ class PrometheusCore:
         self.briefing: SessionBriefing | None = None
         self.proactive_loop: ProactiveLoop | None = None
         self._sensor_manager: SensorManager | None = None
+        self._morning_routine_svc: MorningRoutineService | None = None
 
     def _acquire_pid_lock(self) -> None:
         try:
@@ -197,6 +206,23 @@ class PrometheusCore:
         self.briefing = SessionBriefing(self.client)
         asyncio.create_task(self.briefing.fire_delayed(delay=3.0))
 
+        # Morning routine — gated by PROMETHEUS_MORNING_ROUTINE_ENABLED env var
+        _mrn_enabled = os.getenv("PROMETHEUS_MORNING_ROUTINE_ENABLED", "false").strip().lower()
+        if _mrn_enabled in ("1", "true", "yes"):
+            try:
+                self._morning_routine_svc = MorningRoutineService(
+                    calendar_reader=MorningCalendarReader(),
+                    ha_client=HomeAssistantMorningClient(),
+                    speaker=PrometheusMorningSpeaker(self.client),
+                    weather_provider=MorningWeatherProvider(),
+                    state_store=JSONMorningRoutineStateStore(),
+                    logger=log_event,
+                )
+                asyncio.create_task(self._morning_routine_loop())
+                log_event("morning_routine_enabled", {})
+            except Exception as exc:
+                log_event("morning_routine_init_error", {"error": str(exc)[:200]})
+
         self.mic.start()
         self.ptt.start()
         self.worker_pool.start(
@@ -268,6 +294,16 @@ class PrometheusCore:
             except Exception as exc:
                 log_event("heartbeat_error", {"error": str(exc)})
             await asyncio.sleep(5.0)
+
+    async def _morning_routine_loop(self) -> None:
+        """60-second tick loop for the morning routine. Never crashes."""
+        while self.running:
+            try:
+                if self._morning_routine_svc:
+                    await self._morning_routine_svc.check_and_run_morning_routine()
+            except Exception as exc:
+                log_event("morning_routine_loop_error", {"error": str(exc)[:200]})
+            await asyncio.sleep(60.0)
 
     def _on_background_task_complete(self, result: dict) -> None:
         description = str(result.get("description", "task"))[:50]
