@@ -187,6 +187,35 @@ class PrometheusCore:
 
         self.client.inject_workspace_context(project)
 
+        # Morning routine — init BEFORE connect so it is guaranteed to run
+        # regardless of how long the Realtime WebSocket handshake takes.
+        # PrometheusMorningSpeaker guards on client.connected before sending.
+        _mrn_raw = os.getenv("PROMETHEUS_MORNING_ROUTINE_ENABLED", "")
+        _mrn_enabled = _mrn_raw.strip().lower()
+        print(f"[MORNING] env={_mrn_raw!r} enabled={_mrn_enabled!r}", flush=True)
+        log_event("morning_routine_env_check", {"raw": _mrn_raw, "enabled": _mrn_enabled})
+        if _mrn_enabled in ("1", "true", "yes"):
+            print("[MORNING] init starting", flush=True)
+            log_event("morning_routine_init_starting", {})
+            try:
+                self._morning_routine_svc = MorningRoutineService(
+                    calendar_reader=MorningCalendarReader(),
+                    ha_client=HomeAssistantMorningClient(),
+                    speaker=PrometheusMorningSpeaker(self.client),
+                    weather_provider=MorningWeatherProvider(),
+                    state_store=JSONMorningRoutineStateStore(),
+                    logger=log_event,
+                )
+                asyncio.create_task(self._morning_routine_loop())
+                print("[MORNING] init complete", flush=True)
+                log_event("morning_routine_enabled", {})
+            except Exception as exc:
+                print(f"[MORNING] init error={exc!r}", flush=True)
+                log_event("morning_routine_init_error", {"error": str(exc)[:200]})
+        else:
+            print("[MORNING] disabled (env not matched)", flush=True)
+            log_event("morning_routine_disabled", {"raw": _mrn_raw})
+
         # Connect now — session.update uses the pre-loaded context.
         await self.client.connect()
 
@@ -205,23 +234,6 @@ class PrometheusCore:
         asyncio.create_task(self.proactive_loop.run())
         self.briefing = SessionBriefing(self.client)
         asyncio.create_task(self.briefing.fire_delayed(delay=3.0))
-
-        # Morning routine — gated by PROMETHEUS_MORNING_ROUTINE_ENABLED env var
-        _mrn_enabled = os.getenv("PROMETHEUS_MORNING_ROUTINE_ENABLED", "false").strip().lower()
-        if _mrn_enabled in ("1", "true", "yes"):
-            try:
-                self._morning_routine_svc = MorningRoutineService(
-                    calendar_reader=MorningCalendarReader(),
-                    ha_client=HomeAssistantMorningClient(),
-                    speaker=PrometheusMorningSpeaker(self.client),
-                    weather_provider=MorningWeatherProvider(),
-                    state_store=JSONMorningRoutineStateStore(),
-                    logger=log_event,
-                )
-                asyncio.create_task(self._morning_routine_loop())
-                log_event("morning_routine_enabled", {})
-            except Exception as exc:
-                log_event("morning_routine_init_error", {"error": str(exc)[:200]})
 
         self.mic.start()
         self.ptt.start()
@@ -297,12 +309,23 @@ class PrometheusCore:
 
     async def _morning_routine_loop(self) -> None:
         """60-second tick loop for the morning routine. Never crashes."""
+        print("[MORNING] loop started", flush=True)
+        log_event("morning_routine_loop_started", {})
+        # Brief delay so the Realtime connection is established before the first
+        # check can attempt to speak (PrometheusMorningSpeaker guards on connected,
+        # but waiting avoids a logged skip on every cold start).
+        await asyncio.sleep(5.0)
         while self.running:
+            print("[MORNING] check started", flush=True)
+            log_event("morning_routine_check_started", {})
             try:
                 if self._morning_routine_svc:
                     await self._morning_routine_svc.check_and_run_morning_routine()
             except Exception as exc:
+                print(f"[MORNING] loop error={exc!r}", flush=True)
                 log_event("morning_routine_loop_error", {"error": str(exc)[:200]})
+            print("[MORNING] check completed", flush=True)
+            log_event("morning_routine_check_completed", {})
             await asyncio.sleep(60.0)
 
     def _on_background_task_complete(self, result: dict) -> None:
@@ -357,7 +380,6 @@ class PrometheusCore:
             await self.client.send({
                 "type": "response.create",
                 "response": {
-                    "modalities": ["audio", "text"],
                     "instructions": f"Announce this background task result in one sentence: {msg}",
                 },
             })

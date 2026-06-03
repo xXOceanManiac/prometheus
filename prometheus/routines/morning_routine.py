@@ -262,10 +262,36 @@ class MorningRoutineService:
             if now is None:
                 now = datetime.now()
             loop = asyncio.get_running_loop()
+
             events = await loop.run_in_executor(None, self._calendar.get_today_events)
+            self._log("morning_routine_events_fetched", {"count": len(events)})
+
             wake_event = find_today_wake_event(events)
+            self._log("morning_routine_wake_event", {
+                "found": wake_event is not None,
+                "start_time": getattr(wake_event, "start_time", None),
+                "event_id": str(getattr(wake_event, "event_id", None)),
+            })
+
             state = await loop.run_in_executor(None, self._store.load_state)
-            if not should_run_morning_routine(now, wake_event, state, self._config):
+            self._log("morning_routine_state_loaded", {
+                "has_state": state is not None,
+                "completed": getattr(state, "completed", None),
+                "state_date": getattr(state, "date", None),
+            })
+
+            eligible = should_run_morning_routine(now, wake_event, state, self._config)
+            if not eligible:
+                if wake_event is None:
+                    skip_reason = "no_wake_event"
+                elif state is not None and getattr(state, "completed", False) and getattr(state, "date", None) == now.date().isoformat():
+                    skip_reason = "already_completed_today"
+                else:
+                    skip_reason = "outside_time_window"
+                self._log("morning_routine_skipped", {
+                    "reason": skip_reason,
+                    "now": now.isoformat(timespec="seconds"),
+                })
                 return
             await self.run_morning_routine(wake_event)
         except Exception as exc:
