@@ -929,10 +929,15 @@ class RealtimePrometheusClient:
         self._override_handled = False
         self._drop_audio_until = 0.0
 
+        # Yield one event-loop tick so the receiver can process any server events
+        # already in the WebSocket buffer (e.g. response.created or
+        # input_audio_buffer.committed from server_vad) before we decide to commit.
+        await asyncio.sleep(0)
+
         _MIN_COMMIT_BYTES = 3200
-        if self._audio_bytes_since_commit < _MIN_COMMIT_BYTES:
-            print(f"[DBG] end_audio: skip commit ({self._audio_bytes_since_commit} bytes, server_vad already committed)")
-            log_event("end_audio_vad_committed", {"bytes": self._audio_bytes_since_commit})
+        if self._response_active or self._audio_bytes_since_commit < _MIN_COMMIT_BYTES:
+            print(f"[DBG] end_audio: skip commit ({self._audio_bytes_since_commit} bytes, response_active={self._response_active})")
+            log_event("end_audio_skip", {"bytes": self._audio_bytes_since_commit, "response_active": self._response_active})
             return
 
         log_event("user_turn_committed", {})
@@ -1280,6 +1285,10 @@ class RealtimePrometheusClient:
 
                 if event_type == "input_audio_buffer.committed":
                     self._audio_bytes_since_commit = 0
+                    continue
+
+                if event_type == "response.created":
+                    self._response_active = True
                     continue
 
                 if (

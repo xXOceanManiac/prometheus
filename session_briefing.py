@@ -215,7 +215,6 @@ class SessionBriefing:
             await client.send({
                 "type": "response.create",
                 "response": {
-                    "modalities": ["audio", "text"],
                     "instructions": f"Speak this briefing exactly as given. One breath. No additions: {briefing_text}",
                 },
             })

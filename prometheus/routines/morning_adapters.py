@@ -135,7 +135,6 @@ class PrometheusMorningSpeaker:
         await client.send({
             "type": "response.create",
             "response": {
-                "modalities": ["audio", "text"],
                 "instructions": f"Say exactly: {text}",
             },
         })
