@@ -2,7 +2,7 @@
 tests/test_realtime_missing_required_parameter.py
 
 Regression test: every session.update payload sent to the OpenAI Realtime API
-must include "session.type" = "conversation".
+must include "session.type" = "realtime".
 
 The GA Realtime API added this as a required field for conversation sessions;
 omitting it produces:
@@ -82,7 +82,7 @@ class TestConnectSessionUpdateIncludesType:
                 _session_update = {
                     "type": "session.update",
                     "session": {
-                        "type": "conversation",
+                        "type": "realtime",
                         "modalities": ["text", "audio"],
                         "instructions": instructions,
                         "voice": client.voice,
@@ -101,7 +101,7 @@ class TestConnectSessionUpdateIncludesType:
         assert len(sent_payloads) == 1, "Exactly one payload should have been sent"
         session = sent_payloads[0].get("session", {})
         assert "type" in session, "session.type is missing from the payload"
-        assert session["type"] == "conversation", (
+        assert session["type"] == "realtime", (
             f"session.type must be 'conversation', got {session['type']!r}"
         )
 
@@ -112,7 +112,7 @@ class TestConnectSessionUpdateIncludesType:
         """
         # Mirror the exact payload construction in realtime_client.connect()
         session_payload = {
-            "type": "conversation",
+            "type": "realtime",
             "modalities": ["text", "audio"],
             "instructions": "test instructions",
             "voice": "alloy",
@@ -124,7 +124,7 @@ class TestConnectSessionUpdateIncludesType:
             },
         }
         assert "type" in session_payload
-        assert session_payload["type"] == "conversation"
+        assert session_payload["type"] == "realtime"
 
 
 # ── _update_session_instructions() payload ────────────────────────────────────
@@ -153,7 +153,7 @@ class TestUpdateSessionInstructionsIncludesType:
             "session.type missing from _update_session_instructions payload — "
             "this is the bug that causes the runtime API error"
         )
-        assert session["type"] == "conversation"
+        assert session["type"] == "realtime"
 
     def test_update_session_instructions_does_not_overwrite_other_fields(self):
         """Adding session.type must not drop the instructions field."""
@@ -187,7 +187,7 @@ class TestBothPayloadsAreConsistent:
         """
         # Payload A: connect()
         payload_a_session = {
-            "type": "conversation",
+            "type": "realtime",
             "modalities": ["text", "audio"],
             "instructions": "instructions here",
             "voice": "alloy",
@@ -196,9 +196,9 @@ class TestBothPayloadsAreConsistent:
 
         # Payload B: _update_session_instructions()
         payload_b_session = {
-            "type": "conversation",
+            "type": "realtime",
             "instructions": "instructions here",
         }
 
-        assert payload_a_session.get("type") == "conversation"
-        assert payload_b_session.get("type") == "conversation"
+        assert payload_a_session.get("type") == "realtime"
+        assert payload_b_session.get("type") == "realtime"

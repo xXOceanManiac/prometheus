@@ -250,7 +250,7 @@ class RealtimePrometheusClient:
             await self.send({
                 "type": "session.update",
                 "session": {
-                    "type": "realtime",
+                    "type": "conversation",
                     "instructions": self._build_instructions(),
                 },
             })
@@ -710,7 +710,7 @@ class RealtimePrometheusClient:
         _session_update = {
             "type": "session.update",
             "session": {
-                "type": "realtime",
+                "type": "conversation",
                 "modalities": ["text", "audio"],
                 "instructions": _instructions,
                 "voice": self.voice,
@@ -1251,15 +1251,7 @@ class RealtimePrometheusClient:
                     err_code = str(err_obj.get("code") or "unknown")
                     err_msg = str(err_obj.get("message") or str(event))[:200]
                     log_event("realtime_api_error", {"code": err_code, "message": err_msg})
-                    # Buffer errors (empty commit) don't affect an active response —
-                    # PTT double-commit fires when server_vad already committed the buffer.
-                    # Do NOT stop the speaker; the response is still valid and streaming.
-                    _BUFFER_ONLY_ERRORS = {
-                        "input_audio_buffer_commit_empty",
-                        "input_audio_buffer_flush_empty",
-                    }
-                    if err_code in _BUFFER_ONLY_ERRORS:
-                        continue
+                    notify(f"Realtime API error: {err_code}")
                     self.busy = False
                     self._response_active = False
                     self.speaker.finish_realtime()
@@ -1319,17 +1311,13 @@ class RealtimePrometheusClient:
                         )
                     continue
 
-                if event_type in {
-                    "response.text.delta",
-                    "response.output_text.delta",
-                    "response.output_audio_transcript.delta",
-                }:
+                if event_type in {"response.text.delta", "response.output_text.delta"}:
                     delta = event.get("delta", "")
                     if delta:
                         self.current_text += delta
                     continue
 
-                if event_type in {"response.audio.delta", "response.output_audio.delta"}:
+                if event_type == "response.audio.delta":
                     if time.time() < self._drop_audio_until:
                         continue
                     audio_b64 = event.get("delta", "")
@@ -1338,7 +1326,7 @@ class RealtimePrometheusClient:
                         await asyncio.to_thread(self.speaker.play_pcm_chunk, pcm)
                     continue
 
-                if event_type in {"response.audio.done", "response.output_audio.done"}:
+                if event_type == "response.audio.done":
                     await asyncio.to_thread(self.speaker.finish_realtime)
                     continue
 

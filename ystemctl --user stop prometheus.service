@@ -1,0 +1,23 @@
+[0;1;34m# ]8;;file://Spartan/home/tatel/.config/systemd/user/prometheus.service/home/tatel/.config/systemd/user/prometheus.service]8;;[0m
+[0;1;36m[Unit][0m
+Description=Prometheus Voice Assistant
+After=network.target sound.target graphical-session.target
+Wants=graphical-session.target
+PartOf=graphical-session.target
+[0;1;38;5;245m[0m
+[0;1;36m[Service][0m
+Type=simple
+WorkingDirectory=/home/tatel/Desktop/PROMETHEUS/Prometheus_Main
+EnvironmentFile=/home/tatel/Desktop/PROMETHEUS/Prometheus_Main/.env
+ExecStart=/home/tatel/Desktop/PROMETHEUS/Prometheus_Main/.venv/bin/python3 /home/tatel/Desktop/PROMETHEUS/Prometheus_Main/main.py
+Restart=on-failure
+RestartSec=5
+KillMode=control-group
+KillSignal=SIGTERM
+TimeoutStopSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=prometheus
+[0;1;38;5;245m[0m
+[0;1;36m[Install][0m
+WantedBy=graphical-session.target
