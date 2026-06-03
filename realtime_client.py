@@ -249,7 +249,10 @@ class RealtimePrometheusClient:
         try:
             await self.send({
                 "type": "session.update",
-                "session": {"instructions": self._build_instructions()},
+                "session": {
+                    "type": "conversation",
+                    "instructions": self._build_instructions(),
+                },
             })
             log_event("vault_context_injected", {
                 "vault_chars": len(self._vault_context),
@@ -707,6 +710,7 @@ class RealtimePrometheusClient:
         _session_update = {
             "type": "session.update",
             "session": {
+                "type": "conversation",
                 "modalities": ["text", "audio"],
                 "instructions": _instructions,
                 "voice": self.voice,
