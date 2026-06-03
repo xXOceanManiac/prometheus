@@ -711,7 +711,6 @@ class RealtimePrometheusClient:
             "type": "session.update",
             "session": {
                 "type": "realtime",
-                "modalities": ["text", "audio"],
                 "instructions": _instructions,
                 "voice": self.voice,
                 "turn_detection": {
@@ -890,14 +889,17 @@ class RealtimePrometheusClient:
         """Send response.create only if no response is currently active.
 
         Returns True if the request was sent, False if it was blocked (duplicate).
-        Caller must set self._response_active = True immediately before calling this
-        or rely on this method to set it (which it does on success).
+        Strips 'modalities' — unknown parameter in the GA Realtime API; session defaults apply.
         """
         if self._response_active:
             log_event("response_guard_blocked", {"context": context[:80]})
+            print(f"[DBG] response.create BLOCKED (already active) ctx={context}")
             return False
+        cleaned = {k: v for k, v in response_payload.items() if k != "modalities"}
         self._response_active = True
-        await self.send({"type": "response.create", "response": response_payload})
+        print(f"[DBG] sending response.create ctx={context} keys={list(cleaned.keys())}")
+        await self.send({"type": "response.create", "response": cleaned})
+        print(f"[DBG] response.create sent")
         return True
 
     async def begin_user_turn(self) -> None:
@@ -931,9 +933,11 @@ class RealtimePrometheusClient:
         self._drop_audio_until = 0.0
 
         log_event("user_turn_committed", {})
-        print("Committing audio and requesting response")
-
+        print("[DBG] end_audio: sending input_audio_buffer.commit")
         await self.send({"type": "input_audio_buffer.commit"})
+        print("[DBG] end_audio: commit sent — sending response.create")
+        await self._guarded_response_create({}, context="end_audio_ptt")
+        print("Committing audio and requesting response")
 
     async def _handle_tool_call(self, event: dict[str, Any]) -> None:
         try:
@@ -1245,20 +1249,25 @@ class RealtimePrometheusClient:
                 event = json.loads(raw)
                 event_type = event.get("type", "")
                 log_event("realtime_event", {"type": event_type})
+                print(f"[DBG] recv: {event_type}")
 
                 if event_type == "error":
                     err_obj = event.get("error") or {}
                     err_code = str(err_obj.get("code") or "unknown")
                     err_msg = str(err_obj.get("message") or str(event))[:200]
+                    err_param = str(err_obj.get("param") or "")
+                    err_event_id = str(err_obj.get("event_id") or "")
                     log_event("realtime_api_error", {"code": err_code, "message": err_msg})
-                    # Buffer errors (empty commit) don't affect an active response —
-                    # PTT double-commit fires when server_vad already committed the buffer.
-                    # Do NOT stop the speaker; the response is still valid and streaming.
-                    _BUFFER_ONLY_ERRORS = {
+                    print(f"[DBG] REALTIME ERROR code={err_code!r} msg={err_msg!r} param={err_param!r} event_id={err_event_id!r}")
+                    # Non-fatal errors that must not stop an active response:
+                    # - buffer errors: PTT double-commit after server_vad already committed
+                    # - already_active: server_vad and client both created a response
+                    _NON_FATAL_ERRORS = {
                         "input_audio_buffer_commit_empty",
                         "input_audio_buffer_flush_empty",
+                        "conversation_already_has_active_response",
                     }
-                    if err_code in _BUFFER_ONLY_ERRORS:
+                    if err_code in _NON_FATAL_ERRORS:
                         continue
                     self.busy = False
                     self._response_active = False
@@ -1331,14 +1340,20 @@ class RealtimePrometheusClient:
 
                 if event_type in {"response.audio.delta", "response.output_audio.delta"}:
                     if time.time() < self._drop_audio_until:
+                        print(f"[DBG] audio delta DROPPED (drop_until active)")
                         continue
                     audio_b64 = event.get("delta", "")
                     if audio_b64:
                         pcm = base64.b64decode(audio_b64)
-                        await asyncio.to_thread(self.speaker.play_pcm_chunk, pcm)
+                        print(f"[DBG] audio chunk {len(pcm)} bytes -> speaker")
+                        try:
+                            await asyncio.to_thread(self.speaker.play_pcm_chunk, pcm)
+                        except Exception as _exc:
+                            print(f"[DBG] speaker.play_pcm_chunk FAILED: {_exc!r}")
                     continue
 
                 if event_type in {"response.audio.done", "response.output_audio.done"}:
+                    print(f"[DBG] audio done -> speaker.finish_realtime")
                     await asyncio.to_thread(self.speaker.finish_realtime)
                     continue
 
@@ -1347,6 +1362,7 @@ class RealtimePrometheusClient:
                     continue
 
                 if event_type == "response.done":
+                    print(f"[DBG] response.done received")
                     self.waiting_for_tool_followup = False
                     self.busy = False
                     self._response_active = False

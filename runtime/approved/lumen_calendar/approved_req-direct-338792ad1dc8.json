@@ -1,0 +1,11 @@
+{
+  "request_id": "req-direct-338792ad1dc8",
+  "approved": true,
+  "approved_by": "user_voice",
+  "approved_at": "2026-06-03T21:00:23.111910+00:00",
+  "reviewed_path": "/home/tatel/Desktop/PROMETHEUS/Prometheus_Main/runtime/reviewed/lumen_calendar/reviewed_req-direct-338792ad1dc8.json",
+  "operation_count": 1,
+  "explicit_user_approval_required": false,
+  "approval_mode": "direct_user_command",
+  "source": "nl_calendar_create_direct"
+}
