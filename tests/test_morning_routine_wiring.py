@@ -70,6 +70,9 @@ class TestJSONMorningRoutineStateStore:
 
 # ── HomeAssistantMorningClient ─────────────────────────────────────────────────
 
+_HA_ENV = {"HOME_ASSISTANT_URL": "http://ha.test:8123", "HOME_ASSISTANT_API_KEY": "test_token"}
+
+
 class TestHomeAssistantMorningClient:
 
     def test_strips_script_prefix_before_calling_run_ha_script(self):
@@ -84,12 +87,8 @@ class TestHomeAssistantMorningClient:
             r.message = "ok"
             return r
 
-        with patch("prometheus.routines.morning_adapters.HomeAssistantMorningClient.call_script",
-                   wraps=lambda self, eid: None):
-            pass  # just to confirm the method exists
-
         client = HomeAssistantMorningClient()
-        with patch("tools.run_ha_script", fake_run_ha_script):
+        with patch.dict(os.environ, _HA_ENV), patch("tools.run_ha_script", fake_run_ha_script):
             result = client.call_script("script.prometheus_xbox_turn_on")
 
         assert captured["name"] == "prometheus_xbox_turn_on"
@@ -105,7 +104,7 @@ class TestHomeAssistantMorningClient:
             return r
 
         client = HomeAssistantMorningClient()
-        with patch("tools.run_ha_script", fake_run_ha_script):
+        with patch.dict(os.environ, _HA_ENV), patch("tools.run_ha_script", fake_run_ha_script):
             result = client.call_script("script.prometheus_morning_lights_warm_fade")
 
         assert result is False
@@ -123,59 +122,199 @@ class TestHomeAssistantMorningClient:
             return r
 
         client = HomeAssistantMorningClient()
-        with patch("tools.run_ha_script", fake_run_ha_script):
+        with patch.dict(os.environ, _HA_ENV), patch("tools.run_ha_script", fake_run_ha_script):
             client.call_script("no_prefix_name")
 
         assert captured["name"] == "no_prefix_name"
 
+    def test_returns_false_when_ha_config_missing(self):
+        from prometheus.routines.morning_adapters import HomeAssistantMorningClient
+
+        client = HomeAssistantMorningClient()
+        with patch.dict(os.environ, {"HOME_ASSISTANT_URL": "", "HOME_ASSISTANT_API_KEY": ""}):
+            result = client.call_script("script.prometheus_xbox_turn_on")
+
+        assert result is False
+
 
 # ── PrometheusMorningSpeaker ───────────────────────────────────────────────────
+
+def _make_fake_client(
+    connected: bool = True,
+    fire_done_immediately: bool = True,
+    ensure_connected_raises: bool = False,
+):
+    """Build a fake Realtime client for speaker tests.
+
+    If fire_done_immediately=True, register_response_done_event() sets the event
+    right away so speak() completes without waiting a real timeout.
+    If ensure_connected_raises=True, ensure_connected() raises RuntimeError simulating
+    a failed overnight reconnect.
+    """
+    import asyncio as _asyncio
+    fake = MagicMock()
+    fake.connected = connected
+    sent: list[dict] = []
+    fake.send = AsyncMock(side_effect=lambda p: sent.append(p))
+
+    def _register(evt: _asyncio.Event) -> None:
+        if fire_done_immediately:
+            evt.set()
+
+    fake.register_response_done_event = _register
+    fake._sent = sent
+
+    if ensure_connected_raises:
+        async def _fail() -> None:
+            raise RuntimeError("realtime_reconnect_failed: connection timed out after 15s")
+        fake.ensure_connected = _fail
+    else:
+        fake.ensure_connected = AsyncMock()
+
+    return fake
+
 
 class TestPrometheusMorningSpeaker:
 
     def test_sends_correct_payload_format(self):
         from prometheus.routines.morning_adapters import PrometheusMorningSpeaker
 
-        sent_payloads: list[dict] = []
+        fake_client = _make_fake_client(connected=True, fire_done_immediately=True)
 
-        async def _run():
-            fake_client = MagicMock()
-            fake_client.connected = True
-            fake_client.send = AsyncMock(side_effect=lambda p: sent_payloads.append(p))
-            speaker = PrometheusMorningSpeaker(fake_client)
-            await speaker.speak("Good morning, Tate.")
+        asyncio.run(PrometheusMorningSpeaker(fake_client).speak("Good morning, Tate."))
 
-        asyncio.run(_run())
+        sent = fake_client._sent
+        assert len(sent) == 2
 
-        assert len(sent_payloads) == 2
-
-        item_msg = sent_payloads[0]
+        item_msg = sent[0]
         assert item_msg["type"] == "conversation.item.create"
         content = item_msg["item"]["content"][0]
         assert "[MORNING_ROUTINE]" in content["text"]
         assert "Good morning, Tate." in content["text"]
 
-        response_msg = sent_payloads[1]
+        response_msg = sent[1]
         assert response_msg["type"] == "response.create"
         assert "modalities" not in response_msg["response"], (
             "response.create must not include modalities — GA API rejects it as unknown_parameter"
         )
         assert "Good morning, Tate." in response_msg["response"]["instructions"]
 
-    def test_skips_when_client_not_connected(self):
+    def test_raises_when_client_not_connected(self):
         from prometheus.routines.morning_adapters import PrometheusMorningSpeaker
 
-        sent_payloads: list[dict] = []
+        fake_client = _make_fake_client(connected=False)
 
         async def _run():
-            fake_client = MagicMock()
-            fake_client.connected = False
-            fake_client.send = AsyncMock(side_effect=lambda p: sent_payloads.append(p))
-            speaker = PrometheusMorningSpeaker(fake_client)
-            await speaker.speak("This should not be sent.")
+            with pytest.raises(RuntimeError, match="client_not_connected"):
+                await PrometheusMorningSpeaker(fake_client).speak("This should not be sent.")
 
         asyncio.run(_run())
-        assert len(sent_payloads) == 0
+        assert len(fake_client._sent) == 0, "send() must not be called when client is not connected"
+
+    def test_waits_for_response_done_before_returning(self):
+        from prometheus.routines.morning_adapters import PrometheusMorningSpeaker
+
+        # fire_done_immediately=False: event is never set — speak() must timeout
+        fake_client = _make_fake_client(connected=True, fire_done_immediately=False)
+
+        async def _run():
+            with pytest.raises(RuntimeError, match="speech_timeout"):
+                # Patch the timeout to 0.05s so the test doesn't actually wait 60s
+                import prometheus.routines.morning_adapters as _mod
+                original = _mod._SPEAK_TIMEOUT
+                _mod._SPEAK_TIMEOUT = 0.05
+                try:
+                    await PrometheusMorningSpeaker(fake_client).speak("Test.")
+                finally:
+                    _mod._SPEAK_TIMEOUT = original
+
+        asyncio.run(_run())
+        # response.create was sent even though done never arrived
+        assert any(p.get("type") == "response.create" for p in fake_client._sent)
+
+    def test_does_not_wait_when_client_lacks_register_method(self):
+        """Clients without register_response_done_event still work — no wait, no error."""
+        from prometheus.routines.morning_adapters import PrometheusMorningSpeaker
+
+        # Plain object: no register_response_done_event so hasattr returns False
+        sent: list[dict] = []
+
+        class _MinimalClient:
+            connected = True
+            async def send(self, p: dict) -> None:
+                sent.append(p)
+
+        asyncio.run(PrometheusMorningSpeaker(_MinimalClient()).speak("No wait test."))
+        assert len(sent) == 2
+
+    def test_speak_calls_ensure_connected_when_available(self):
+        """speak() calls ensure_connected() if the client exposes it."""
+        from prometheus.routines.morning_adapters import PrometheusMorningSpeaker
+
+        fake_client = _make_fake_client(connected=True, fire_done_immediately=True)
+        asyncio.run(PrometheusMorningSpeaker(fake_client).speak("Good morning."))
+
+        fake_client.ensure_connected.assert_awaited_once()
+
+    def test_speak_raises_and_does_not_send_when_ensure_connected_fails(self):
+        """When ensure_connected raises RuntimeError, speak() propagates it without sending."""
+        from prometheus.routines.morning_adapters import PrometheusMorningSpeaker
+
+        fake_client = _make_fake_client(
+            connected=True,
+            fire_done_immediately=True,
+            ensure_connected_raises=True,
+        )
+
+        async def _run() -> None:
+            with pytest.raises(RuntimeError, match="realtime_reconnect_failed"):
+                await PrometheusMorningSpeaker(fake_client).speak("Should not be sent.")
+
+        asyncio.run(_run())
+        assert len(fake_client._sent) == 0, "send() must not be called when reconnect fails"
+
+
+# ── ensure_morning_audio_sink ─────────────────────────────────────────────────
+
+class TestEnsureMorningAudioSink:
+
+    def test_tolerates_missing_wpctl(self):
+        """ensure_morning_audio_sink() must not raise when wpctl is absent."""
+        import prometheus.routines.morning_adapters as _mod
+        from unittest.mock import patch
+
+        with patch.object(_mod, "_run_cmd", return_value=(127, "")):
+            _mod.ensure_morning_audio_sink()  # should complete without exception
+
+    def test_switches_to_preferred_sink_when_not_already_default(self):
+        """When a preferred sink is configured and is not the current default, set-default is called."""
+        import prometheus.routines.morning_adapters as _mod
+        from unittest.mock import patch
+
+        fake_status = (
+            " Sinks:\n"
+            "  *  51. alsa_output.hdmi-stereo [vol: 1.00]\n"
+            "     47. alsa_output.analog-stereo [vol: 0.70]\n"
+            " Sources:\n"
+        )
+
+        cmds: list[list[str]] = []
+
+        def _fake_run_cmd(args: list[str]) -> tuple[int, str]:
+            cmds.append(list(args))
+            if args == ["wpctl", "--version"]:
+                return 0, "WirePlumber 0.5"
+            if args == ["wpctl", "status"]:
+                return 0, fake_status
+            return 0, ""
+
+        with patch.object(_mod, "_run_cmd", _fake_run_cmd), \
+             patch.dict(os.environ, {"PROMETHEUS_AUDIO_SINK_NAME": "analog-stereo"}):
+            _mod.ensure_morning_audio_sink()
+
+        set_default_calls = [c for c in cmds if "set-default" in c]
+        assert len(set_default_calls) == 1
+        assert "47" in set_default_calls[0]
 
 
 # ── MorningCalendarReader ─────────────────────────────────────────────────────

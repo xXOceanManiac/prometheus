@@ -1,0 +1,39 @@
+# prometheus_morning_lights_warm_fade.yaml
+#
+# Home Assistant script for the morning routine warm light fade.
+# Targets the bedroom lights used by the morning routine.
+#
+# HOW TO INSTALL:
+#   Option A — scripts.yaml:
+#     prometheus_morning_lights_warm_fade: !include prometheus_morning_lights_warm_fade.yaml
+#
+#   Option B — HA UI → Settings → Automations & Scenes → Scripts → + Add Script
+#     Paste the sequence below. Entity ID must be: script.prometheus_morning_lights_warm_fade
+#
+# DESIGN:
+#   Gradual warm fade from current state to 55% / 2700K over 30 seconds.
+#   This avoids a harsh instant-on at full brightness — lights ease in gently.
+#   55% brightness at 2700K matches late-morning natural warm light.
+#   If lights were already on (e.g., night mode), the 30s transition smooths
+#   the scene change rather than snapping.
+#
+# LIGHTS:
+#   light.color_light_2   — bedroom light (adjust entity IDs to match your HA setup)
+#   light.color_light_3
+#   light.color_light_3_2
+
+alias: "Prometheus: Morning Lights Warm Fade"
+description: "Gradual warm fade to 55% / 2700K over 30 seconds"
+sequence:
+  - service: light.turn_on
+    target:
+      entity_id:
+        - light.color_light_2
+        - light.color_light_3
+        - light.color_light_3_2
+    data:
+      brightness_pct: 55
+      kelvin: 2700
+      transition: 30
+
+mode: single

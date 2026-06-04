@@ -70,11 +70,13 @@ def _make_event(
 def _fast_config() -> MorningRoutineConfig:
     """Config with zero sleep values so async tests run instantly."""
     return MorningRoutineConfig(
-        spotify_launch_wait_seconds=0,
+        pre_play_duck_wait_seconds=0,
+        pre_play_final_wait_seconds=0,
         music_fade_interval_seconds=0,
         summary_delay_seconds=0,
         pre_summary_duck_seconds=0,
         post_summary_fade_interval_seconds=0,
+        volume_command_interval_seconds=0,
     )
 
 
@@ -530,6 +532,26 @@ class TestRunMorningRoutineNormalFlow:
         svc, _ = _build_service()
         asyncio.run(svc.run_morning_routine(_make_event("Wake Up")))
         assert svc._running is False
+
+    def test_volume_down_comes_after_launch_spotify(self):
+        """Volume duck must happen after Spotify launch, not before Xbox is ready."""
+        svc, ha_calls = _build_service()
+        asyncio.run(svc.run_morning_routine(_make_event("Wake Up")))
+
+        idx_spotify = ha_calls.index(PROMETHEUS_XBOX_LAUNCH_SPOTIFY)
+        idx_first_down = ha_calls.index(PROMETHEUS_XBOX_VOLUME_DOWN)
+        assert idx_spotify < idx_first_down, (
+            "volume_down must come after launch_spotify — Xbox may ignore early commands"
+        )
+
+    def test_volume_down_comes_before_play(self):
+        """Volume must be ducked before play fires."""
+        svc, ha_calls = _build_service()
+        asyncio.run(svc.run_morning_routine(_make_event("Wake Up")))
+
+        idx_first_down = ha_calls.index(PROMETHEUS_XBOX_VOLUME_DOWN)
+        idx_play = ha_calls.index(PROMETHEUS_XBOX_PLAY)
+        assert idx_first_down < idx_play, "volume_down must come before play"
 
 
 class TestCheckAndRunMorningRoutine:

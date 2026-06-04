@@ -36,11 +36,13 @@ PROMETHEUS_MORNING_LIGHTS_WARM_FADE = "script.prometheus_morning_lights_warm_fad
 class MorningRoutineConfig:
     wake_event_title: str = "wake up"
     missed_trigger_grace_minutes: int = 15
-    spotify_launch_wait_seconds: int = 20
+    pre_play_duck_wait_seconds: int = 16    # wait after launch_spotify before volume duck
+    pre_play_final_wait_seconds: int = 1   # wait after volume duck, before play
     music_fade_interval_seconds: int = 10
     summary_delay_seconds: int = 120
     pre_summary_duck_seconds: int = 3
     post_summary_fade_interval_seconds: int = 1
+    volume_command_interval_seconds: float = 1.0
 
 
 @dataclass
@@ -289,6 +291,8 @@ class MorningRoutineService:
         self._log = logger
         self._config = config or MorningRoutineConfig()
         self._running = False
+        self._ha_ok: int = 0
+        self._ha_fail: int = 0
 
     # ------------------------------------------------------------------
     # Public entry point (callable from the main loop tick)
@@ -350,6 +354,8 @@ class MorningRoutineService:
         Speech failure → volume is still restored afterward.
         """
         self._running = True
+        self._ha_ok = 0
+        self._ha_fail = 0
         config = self._config
         loop = asyncio.get_running_loop()
         started_loop_time = loop.time()
@@ -357,6 +363,8 @@ class MorningRoutineService:
         event_id = getattr(wake_event, "event_id", None)
         today = datetime.now().date().isoformat()
         started_iso = datetime.now().isoformat(timespec="seconds")
+        speak_succeeded = False
+        speak_skip_reason: Optional[str] = None
 
         # a. Mark routine started in state
         state = MorningRoutineState(
@@ -385,20 +393,29 @@ class MorningRoutineService:
             self._log("morning_routine_step", {"step": "morning_lights"})
             await self._call_ha(PROMETHEUS_MORNING_LIGHTS_WARM_FADE)
 
-            # e. Lower volume 3 notches (skipped if Xbox failed)
+            # e+f. Pre-play volume duck embedded within the Spotify launch window.
+            # Wait until the Xbox is ready before sending volume commands, then duck
+            # just before play so volume is already set when music starts.
+            # Timeline: wait 16s → volume_down × 3 (1s apart) → wait 1s → play
             if xbox_ok:
-                self._log("morning_routine_step", {"step": "volume_down_x3"})
+                self._log("morning_routine_step", {
+                    "step": "wait_spotify_launch_pre_duck",
+                    "seconds": config.pre_play_duck_wait_seconds,
+                })
+                await asyncio.sleep(config.pre_play_duck_wait_seconds)
+
+                self._log("morning_routine_step", {"step": "pre_play_volume_down_x3"})
                 await self._call_ha(PROMETHEUS_XBOX_VOLUME_DOWN)
+                await asyncio.sleep(config.volume_command_interval_seconds)
                 await self._call_ha(PROMETHEUS_XBOX_VOLUME_DOWN)
+                await asyncio.sleep(config.volume_command_interval_seconds)
                 await self._call_ha(PROMETHEUS_XBOX_VOLUME_DOWN)
 
-            # f. Wait before pressing play (skipped if Xbox failed)
-            if xbox_ok:
-                self._log(
-                    "morning_routine_step",
-                    {"step": "wait_spotify_launch", "seconds": config.spotify_launch_wait_seconds},
-                )
-                await asyncio.sleep(config.spotify_launch_wait_seconds)
+                self._log("morning_routine_step", {
+                    "step": "wait_before_play",
+                    "seconds": config.pre_play_final_wait_seconds,
+                })
+                await asyncio.sleep(config.pre_play_final_wait_seconds)
 
             # g. Press play (skipped if Xbox failed)
             if xbox_ok:
@@ -426,20 +443,24 @@ class MorningRoutineService:
             if xbox_ok:
                 self._log("morning_routine_step", {"step": "pre_summary_duck"})
                 await self._call_ha(PROMETHEUS_XBOX_VOLUME_DOWN)
+                await asyncio.sleep(config.volume_command_interval_seconds)
                 await self._call_ha(PROMETHEUS_XBOX_VOLUME_DOWN)
+                await asyncio.sleep(config.volume_command_interval_seconds)
                 await self._call_ha(PROMETHEUS_XBOX_VOLUME_DOWN)
             await asyncio.sleep(config.pre_summary_duck_seconds)
 
             # k. Build and speak daily summary
             self._log("morning_routine_step", {"step": "build_and_speak_summary"})
-            speak_succeeded = True
             try:
                 events = await loop.run_in_executor(None, self._calendar.get_today_events)
                 weather = await loop.run_in_executor(None, self._weather.get_today_weather)
                 summary = build_morning_summary(weather, events, wake_event)
                 await self._speaker.speak(summary)
+                speak_succeeded = True
+            except RuntimeError as exc:
+                speak_skip_reason = str(exc)
+                self._log("morning_routine_speak_error", {"error": str(exc)[:200]})
             except Exception as exc:
-                speak_succeeded = False
                 self._log("morning_routine_speak_error", {"error": str(exc)[:200]})
 
             # l. Fade music back in (always runs, even if speech failed)
@@ -462,7 +483,16 @@ class MorningRoutineService:
                 started_at=state.started_at,
             )
             await loop.run_in_executor(None, lambda: self._store.save_state(completed_state))
-            self._log("morning_routine_completed", {"event_id": event_id, "date": today})
+            completed_payload: dict = {
+                "event_id": event_id,
+                "date": today,
+                "ha_success_count": self._ha_ok,
+                "ha_failure_count": self._ha_fail,
+                "speech_success": speak_succeeded,
+            }
+            if speak_skip_reason is not None:
+                completed_payload["speech_skipped_reason"] = speak_skip_reason
+            self._log("morning_routine_completed", completed_payload)
             self._running = False
 
     # ------------------------------------------------------------------
@@ -476,10 +506,17 @@ class MorningRoutineService:
             result = await loop.run_in_executor(
                 None, lambda: self._ha.call_script(entity_id)
             )
+            if result:
+                self._ha_ok += 1
+                self._log("morning_routine_ha_call_success", {"entity_id": entity_id})
+            else:
+                self._ha_fail += 1
+                self._log("morning_routine_ha_call_failed", {"entity_id": entity_id, "error": "adapter_returned_false"})
             return bool(result)
         except Exception as exc:
+            self._ha_fail += 1
             self._log(
-                "morning_routine_ha_error",
+                "morning_routine_ha_call_failed",
                 {"entity_id": entity_id, "error": str(exc)[:200]},
             )
             return False

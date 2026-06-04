@@ -37,6 +37,7 @@ from prometheus.routines.morning_adapters import (
     MorningWeatherProvider,
     MorningCalendarReader,
 )
+from prometheus.policies.proactive_speech_policy import should_allow_proactive_speech
 
 
 _PID_FILE = Path.home() / ".jarvis" / "prometheus.pid"
@@ -355,6 +356,12 @@ class PrometheusCore:
                 "busy": self.client.busy,
                 "user_turn": self.user_turn_active,
             })
+            return
+        # Presence gate — suppress if user is locked/idle
+        allowed = await asyncio.get_event_loop().run_in_executor(
+            None, lambda: should_allow_proactive_speech("background_completion")
+        )
+        if not allowed:
             return
         description = str(result.get("description", "task"))[:60]
         ok = result.get("ok", False)

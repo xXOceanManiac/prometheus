@@ -82,6 +82,10 @@ class RealtimePrometheusClient:
         # Reset on response.done / response.cancelled / response.failed / errors.
         self._response_active = False
 
+        # External waiters for response completion (e.g. morning routine speaker).
+        # Each registered asyncio.Event is set and removed when the response ends.
+        self._response_done_events: list[asyncio.Event] = []
+
         # Voice latency tracking — reset on each PTT press / begin_user_turn
         self._turn_start_ts: float = 0.0  # monotonic time when user started speaking
         # Bytes of audio sent since the last input_audio_buffer.committed event.
@@ -897,6 +901,66 @@ class RealtimePrometheusClient:
         print(f"[DBG] response.create sent")
         return True
 
+    def register_response_done_event(self, evt: asyncio.Event) -> None:
+        """Register an asyncio.Event to be set when the next response ends (done/cancelled/failed)."""
+        self._response_done_events.append(evt)
+
+    def _fire_response_done_events(self) -> None:
+        """Set and discard all pending response-done events."""
+        evts, self._response_done_events = self._response_done_events, []
+        for e in evts:
+            e.set()
+
+    async def ensure_connected(self) -> None:
+        """Ensure the Realtime WebSocket is open and ready. Reconnects immediately if not.
+
+        Safe to call from external tasks (e.g. morning routine speaker) without
+        disrupting the normal PTT voice path.
+
+        Raises RuntimeError("realtime_reconnect_failed: <reason>") on failure.
+        """
+        if self.connected and self.ws is not None:
+            return  # already live — nothing to do
+
+        log_event("morning_routine_realtime_reconnect_attempt", {
+            "connected": self.connected,
+            "has_ws": self.ws is not None,
+        })
+
+        # Cancel any pending backoff reconnect so we connect immediately
+        if self._reconnect_task and not self._reconnect_task.done():
+            self._reconnect_task.cancel()
+            try:
+                await self._reconnect_task
+            except asyncio.CancelledError:
+                pass
+            self._reconnect_task = None
+
+        # Cancel stale receiver — connect() will create a fresh one
+        if self._receiver_task and not self._receiver_task.done():
+            self._receiver_task.cancel()
+            try:
+                await self._receiver_task
+            except asyncio.CancelledError:
+                pass
+            self._receiver_task = None
+
+        # Re-enable reconnection in case limits were exhausted overnight
+        self._should_reconnect = True
+        self._reconnect_attempt = 0
+
+        try:
+            await asyncio.wait_for(self.connect(), timeout=15.0)
+        except asyncio.TimeoutError:
+            self.connected = False
+            raise RuntimeError("realtime_reconnect_failed: connection timed out after 15s")
+        except Exception as exc:
+            self.connected = False
+            raise RuntimeError(f"realtime_reconnect_failed: {exc}")
+
+        # Let session.update be processed before the caller sends audio
+        await asyncio.sleep(1.0)
+
     async def begin_user_turn(self) -> None:
         self.awaiting_user_audio = True
         self._turn_start_ts = time.monotonic()
@@ -1281,6 +1345,7 @@ class RealtimePrometheusClient:
                     self._response_active = False
                     self.speaker.finish_realtime()
                     self.last_cycle_end_at = time.time()
+                    self._fire_response_done_events()
                     continue
 
                 if event_type == "input_audio_buffer.committed":
@@ -1384,12 +1449,14 @@ class RealtimePrometheusClient:
                     self._response_active = False
                     self._drop_audio_until = 0.0
                     self.last_cycle_end_at = time.time()
+                    self._fire_response_done_events()
                     continue
 
                 if event_type in {"response.cancelled", "response.failed"}:
                     self._response_active = False
                     self.busy = False
                     self.last_cycle_end_at = time.time()
+                    self._fire_response_done_events()
                     continue
 
         except asyncio.CancelledError:

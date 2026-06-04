@@ -1,0 +1,56 @@
+# prometheus_xbox_launch_spotify.yaml
+#
+# Home Assistant script to launch Spotify on the Xbox (media_player.blackhawkred).
+#
+# HOW TO INSTALL:
+#   Option A — configuration.yaml:
+#     script:
+#       prometheus_xbox_launch_spotify: !include prometheus_xbox_launch_spotify.yaml
+#
+#   Option B — scripts.yaml (if using split config):
+#     prometheus_xbox_launch_spotify: !include prometheus_xbox_launch_spotify.yaml
+#
+#   Option C — HA UI → Settings → Automations & Scenes → Scripts → + Add Script
+#     Paste the sequence below and set alias to "Prometheus: Xbox Launch Spotify".
+#     Entity ID must be set to: script.prometheus_xbox_launch_spotify
+#
+# APPROACH:
+#   Uses media_player.select_source with source "Spotify". This is the standard
+#   method for the Xbox integration (xboxone custom component or HA native integration).
+#   The source name must match exactly what appears in HA's source list for
+#   media_player.blackhawkred — typically "Spotify" or the full app display name.
+#
+# VERIFY THE SOURCE NAME:
+#   Run this curl to get the current source list for your Xbox:
+#
+#     curl -s -H "Authorization: Bearer YOUR_TOKEN" \
+#       "http://HA_URL/api/states/media_player.blackhawkred" \
+#       | python3 -m json.tool | grep -A20 '"source_list"'
+#
+#   Use the exact string from source_list in the source field below.
+#
+# FALLBACK — if select_source does not work:
+#   The play_media approach is commented out below. Spotify's Xbox app ID is:
+#     SpotifyAB.SpotifyMusic_zpdnekdrzrea0!Spotify
+#   Uncomment the play_media block and comment out the select_source block.
+
+alias: "Prometheus: Xbox Launch Spotify"
+description: "Launch Spotify on the Xbox via media_player.select_source"
+sequence:
+
+  # Primary: select_source — works with Xbox integration that exposes source list
+  - service: media_player.select_source
+    target:
+      entity_id: media_player.blackhawkred
+    data:
+      source: "Spotify"
+
+  # Fallback (uncomment if select_source has no effect):
+  # - service: media_player.play_media
+  #   target:
+  #     entity_id: media_player.blackhawkred
+  #   data:
+  #     media_content_type: "app"
+  #     media_content_id: "SpotifyAB.SpotifyMusic_zpdnekdrzrea0!Spotify"
+
+mode: single

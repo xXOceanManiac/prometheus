@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any
 from config import CONFIG
 from utils import log_event
 from working_memory import WorkingMemory
+from prometheus.policies.proactive_speech_policy import should_allow_proactive_speech
 
 if TYPE_CHECKING:
     from realtime_client import RealtimePrometheusClient
@@ -192,6 +193,13 @@ class SessionBriefing:
                 return
 
             if not client.connected:
+                return
+
+            # Presence gate — suppress briefing if screen is locked / user is idle
+            allowed = await asyncio.get_running_loop().run_in_executor(
+                None, lambda: should_allow_proactive_speech("session_briefing")
+            )
+            if not allowed:
                 return
 
             # Send via Realtime API

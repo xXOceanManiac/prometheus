@@ -14,6 +14,7 @@ from typing import Any
 
 from utils import log_event
 from working_memory import WorkingMemory
+from prometheus.policies.proactive_speech_policy import should_allow_proactive_speech
 
 
 def _time_of_day_label() -> str:
@@ -126,6 +127,13 @@ class ProactiveLoop:
 
         # Final check — still idle?
         if getattr(client, "busy", False) or getattr(client, "awaiting_user_audio", False):
+            return
+
+        # Presence gate — suppress if screen is locked / user is idle
+        allowed = await asyncio.get_running_loop().run_in_executor(
+            None, lambda: should_allow_proactive_speech(f"proactive_{category}")
+        )
+        if not allowed:
             return
 
         self._last_surfaced[category] = time.time()
