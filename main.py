@@ -37,6 +37,11 @@ from prometheus.routines.morning_adapters import (
     MorningWeatherProvider,
     MorningCalendarReader,
 )
+from prometheus.routines.calendar_event_triggers import (
+    CalendarEventTriggerEngine,
+    CalendarRoutineRule,
+    TriggerCalendarReader,
+)
 from prometheus.policies.proactive_speech_policy import should_allow_proactive_speech
 
 
@@ -94,6 +99,7 @@ class PrometheusCore:
         self.proactive_loop: ProactiveLoop | None = None
         self._sensor_manager: SensorManager | None = None
         self._morning_routine_svc: MorningRoutineService | None = None
+        self._cal_trigger_engine: CalendarEventTriggerEngine | None = None
 
     def _acquire_pid_lock(self) -> None:
         try:
@@ -188,8 +194,8 @@ class PrometheusCore:
 
         self.client.inject_workspace_context(project)
 
-        # Morning routine — init BEFORE connect so it is guaranteed to run
-        # regardless of how long the Realtime WebSocket handshake takes.
+        # Calendar Event Trigger Engine — owns precise event timing for morning routine
+        # and future calendar-driven routines. Gated on PROMETHEUS_MORNING_ROUTINE_ENABLED.
         # PrometheusMorningSpeaker guards on client.connected before sending.
         _mrn_raw = os.getenv("PROMETHEUS_MORNING_ROUTINE_ENABLED", "")
         _mrn_enabled = _mrn_raw.strip().lower()
@@ -199,16 +205,36 @@ class PrometheusCore:
             print("[MORNING] init starting", flush=True)
             log_event("morning_routine_init_starting", {})
             try:
+                morning_speaker = PrometheusMorningSpeaker(self.client)
                 self._morning_routine_svc = MorningRoutineService(
                     calendar_reader=MorningCalendarReader(),
                     ha_client=HomeAssistantMorningClient(),
-                    speaker=PrometheusMorningSpeaker(self.client),
+                    speaker=morning_speaker,
                     weather_provider=MorningWeatherProvider(),
                     state_store=JSONMorningRoutineStateStore(),
                     logger=log_event,
                 )
-                asyncio.create_task(self._morning_routine_loop())
-                print("[MORNING] init complete", flush=True)
+                # Register the Wake Up rule; grace window matches the routine config
+                _grace_seconds = int(
+                    self._morning_routine_svc._config.missed_trigger_grace_minutes * 60
+                )
+                morning_rule = CalendarRoutineRule(
+                    name="morning_routine",
+                    match_title_contains=["wake up"],
+                    handler=self._morning_routine_handler,
+                    allow_late_seconds=_grace_seconds,
+                )
+                # TODO: register movie routine when implemented
+                # TODO: register gym routine when implemented
+                # TODO: register meeting routine when implemented
+                self._cal_trigger_engine = CalendarEventTriggerEngine(
+                    calendar_reader=TriggerCalendarReader(),
+                    speaker_fn=morning_speaker.speak,
+                    rules=[morning_rule],
+                    logger=log_event,
+                )
+                asyncio.create_task(self._calendar_trigger_loop())
+                print("[MORNING] init complete (trigger engine)", flush=True)
                 log_event("morning_routine_enabled", {})
             except Exception as exc:
                 print(f"[MORNING] init error={exc!r}", flush=True)
@@ -308,26 +334,31 @@ class PrometheusCore:
                 log_event("heartbeat_error", {"error": str(exc)})
             await asyncio.sleep(5.0)
 
-    async def _morning_routine_loop(self) -> None:
-        """60-second tick loop for the morning routine. Never crashes."""
-        print("[MORNING] loop started", flush=True)
-        log_event("morning_routine_loop_started", {})
+    async def _calendar_trigger_loop(self) -> None:
+        """Drive the CalendarEventTriggerEngine. Never crashes the main loop."""
+        if not self._cal_trigger_engine:
+            return
         # Brief delay so the Realtime connection is established before the first
-        # check can attempt to speak (PrometheusMorningSpeaker guards on connected,
-        # but waiting avoids a logged skip on every cold start).
+        # calendar poll (PrometheusMorningSpeaker guards on connected).
         await asyncio.sleep(5.0)
-        while self.running:
-            print("[MORNING] check started", flush=True)
-            log_event("morning_routine_check_started", {})
-            try:
-                if self._morning_routine_svc:
-                    await self._morning_routine_svc.check_and_run_morning_routine()
-            except Exception as exc:
-                print(f"[MORNING] loop error={exc!r}", flush=True)
-                log_event("morning_routine_loop_error", {"error": str(exc)[:200]})
-            print("[MORNING] check completed", flush=True)
-            log_event("morning_routine_check_completed", {})
-            await asyncio.sleep(60.0)
+        print("[CALTRIG] loop starting", flush=True)
+        try:
+            await self._cal_trigger_engine.run()
+        except Exception as exc:
+            print(f"[CALTRIG] loop error={exc!r}", flush=True)
+            log_event("calendar_trigger_loop_error", {"error": str(exc)[:200]})
+
+    async def _morning_routine_handler(self, event: Any) -> None:
+        """Handler called by CalendarEventTriggerEngine when Wake Up event fires."""
+        svc = self._morning_routine_svc
+        if not svc:
+            log_event("morning_routine_trigger_skipped", {"reason": "svc_not_initialized"})
+            return
+        if svc._running:
+            log_event("morning_routine_trigger_skipped", {"reason": "already_running"})
+            return
+        print(f"[MORNING] trigger fired event_id={getattr(event, 'event_id', None)}", flush=True)
+        await svc.run_morning_routine(event)
 
     def _on_background_task_complete(self, result: dict) -> None:
         description = str(result.get("description", "task"))[:50]

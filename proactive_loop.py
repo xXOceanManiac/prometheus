@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import time
 from pathlib import Path
 from typing import Any
@@ -15,6 +16,15 @@ from typing import Any
 from utils import log_event
 from working_memory import WorkingMemory
 from prometheus.policies.proactive_speech_policy import should_allow_proactive_speech
+
+
+def _cfg_bool(name: str, default: bool) -> bool:
+    raw = os.getenv(name, "").strip().lower()
+    if raw in ("1", "true", "yes"):
+        return True
+    if raw in ("0", "false", "no"):
+        return False
+    return default
 
 
 def _time_of_day_label() -> str:
@@ -125,6 +135,10 @@ class ProactiveLoop:
             log_event("proactive_loop_cooldown", {"category": category, "reason": reason[:80]})
             return
 
+        # Policy gate: wrap-up and check-in categories are disabled by default
+        if not self._is_category_allowed(category, reason):
+            return
+
         # Final check — still idle?
         if getattr(client, "busy", False) or getattr(client, "awaiting_user_audio", False):
             return
@@ -227,6 +241,29 @@ class ProactiveLoop:
             if llm is None:
                 return None
 
+            wrapup_enabled = _cfg_bool("PROMETHEUS_PROACTIVE_WRAP_UP_ENABLED", False)
+            checkins_enabled = _cfg_bool("PROMETHEUS_PROACTIVE_CHECKINS_ENABLED", False)
+
+            rules = [
+                "- Only return should_surface=true if something genuinely useful would be said",
+                "- Never surface generic observations",
+                "- Never surface anything in the same category as something surfaced within the last 10 minutes",
+                "- Only surface if seconds_since_last_voice >= 30",
+                "- Background task completed: worth surfacing if output_path or result_summary is new",
+                "- last_build_result.status == 'complete' and seconds_since_last_voice > 60: surface build outcome once",
+                "- Build succeeded: say 'Build complete. N tests passing.'",
+                "- Build needs_human: say 'Build hit the debug limit. Your review is needed.'",
+                "- Same file open 2+ hours: worth surfacing",
+                "- Relevant vault connection to current window: worth surfacing once per session",
+                "- Status updates Tate didn't ask for: never worth surfacing",
+            ]
+            if wrapup_enabled:
+                rules.append("- Evening with no wrap-up: worth surfacing once")
+            else:
+                rules.append("- Do NOT surface wrap-up reminders, evening summaries, or end-of-day nudges")
+            if not checkins_enabled:
+                rules.append("- Do NOT surface productivity check-ins, progress updates, or unsolicited status reminders")
+
             prompt = (
                 "You are Prometheus's awareness engine. Given the current context, "
                 "decide if there is something genuinely worth surfacing to Tate right now. "
@@ -237,18 +274,7 @@ class ProactiveLoop:
                 "\"message\": \"short spoken message if should_surface is true\", "
                 "\"reason\": \"internal reason\"}\n\n"
                 "Rules:\n"
-                "- Only return should_surface=true if something genuinely useful would be said\n"
-                "- Never surface generic observations\n"
-                "- Never surface anything in the same category as something surfaced within the last 10 minutes\n"
-                "- Only surface if seconds_since_last_voice >= 30\n"
-                "- Background task completed: worth surfacing if output_path or result_summary is new\n"
-                "- last_build_result.status == 'complete' and seconds_since_last_voice > 60: surface build outcome once\n"
-                "- Build succeeded: say 'Build complete. N tests passing.'\n"
-                "- Build needs_human: say 'Build hit the debug limit. Your review is needed.'\n"
-                "- Same file open 2+ hours: worth surfacing\n"
-                "- Evening with no wrap-up: worth surfacing once\n"
-                "- Relevant vault connection to current window: worth surfacing once per session\n"
-                "- Status updates Tate didn't ask for: never worth surfacing"
+                + "\n".join(rules)
             )
 
             raw = llm.complete(prompt, system="You are a conservative ambient assistant decision engine.")
@@ -280,7 +306,33 @@ class ProactiveLoop:
             return "vault_connection"
         if "xbox" in reason_lower or "media" in reason_lower:
             return "media"
+        if (
+            "check" in reason_lower
+            or "progress" in reason_lower
+            or "productivity" in reason_lower
+            or "status update" in reason_lower
+            or "check-in" in reason_lower
+        ):
+            return "productivity_checkin"
         return reason[:40] if reason else "general"
+
+    def _is_category_allowed(self, category: str, reason: str) -> bool:
+        """Return False if this category is suppressed by config. Logs the reason."""
+        if category == "evening_wrapup":
+            if not _cfg_bool("PROMETHEUS_PROACTIVE_WRAP_UP_ENABLED", False):
+                log_event("proactive_wrapup_disabled", {
+                    "category": category,
+                    "reason": reason[:80],
+                })
+                return False
+        if category == "productivity_checkin":
+            if not _cfg_bool("PROMETHEUS_PROACTIVE_CHECKINS_ENABLED", False):
+                log_event("proactive_checkin_disabled", {
+                    "category": category,
+                    "reason": reason[:80],
+                })
+                return False
+        return True
 
     async def _surface(self, message: str) -> None:
         """Send a proactive message via the Realtime client."""
