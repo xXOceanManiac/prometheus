@@ -244,7 +244,22 @@ class PrometheusCore:
             log_event("morning_routine_disabled", {"raw": _mrn_raw})
 
         # Connect now — session.update uses the pre-loaded context.
-        await self.client.connect()
+        # PROMETHEUS_REALTIME_REQUIRED=true preserves the old fatal behavior.
+        # Default (false): continue without voice on any Realtime startup failure.
+        _realtime_required = (
+            os.getenv("PROMETHEUS_REALTIME_REQUIRED", "false").strip().lower()
+            in ("1", "true", "yes")
+        )
+        try:
+            await self.client.connect()
+        except Exception as exc:
+            log_event("realtime_startup_failed", {
+                "error": str(exc)[:200],
+                "quota_exceeded": self.client._quota_exceeded,
+            })
+            print(f"[REALTIME] startup failed — continuing without voice: {exc!r:.100}", flush=True)
+            if _realtime_required:
+                raise
 
         # Start event bus and ambient sensor layer; subscribe to window changes
         try:

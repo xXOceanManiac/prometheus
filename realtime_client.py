@@ -62,6 +62,12 @@ class RealtimePrometheusClient:
         self.awaiting_user_audio = False
         self._receiver_task: asyncio.Task | None = None
 
+        # Quota / billing state — set when server closes with insufficient_quota
+        # or sends an error event with that code.  Once set, ensure_connected()
+        # raises immediately instead of looping; _reconnect_with_backoff() aborts.
+        self._quota_exceeded = False
+        self.last_error: str = ""
+
         # Reconnect backoff — schedule: 5s, 15s, 60s; hard-stop after max attempts
         self._should_reconnect = True
         self._RECONNECT_SCHEDULE: list[int] = [5, 15, 60]
@@ -661,6 +667,48 @@ class RealtimePrometheusClient:
             self.busy = False
             self.last_cycle_end_at = time.time()
 
+    # ── Quota / availability helpers ──────────────────────────────────────────
+
+    def _set_quota_exceeded(self, detail: str = "") -> None:
+        """Mark Realtime as quota-exhausted. Stops reconnect attempts."""
+        self._quota_exceeded = True
+        self._should_reconnect = False
+        self.connected = False
+        self.last_error = "insufficient_quota"
+        log_event("realtime_unavailable", {
+            "reason": "insufficient_quota",
+            "detail": detail,
+        })
+        print(f"[REALTIME] unavailable: insufficient_quota ({detail})")
+
+    @staticmethod
+    def _is_quota_close(exc: ConnectionClosed) -> bool:
+        """Return True when a ConnectionClosed exception signals a quota error."""
+        code = None
+        reason = ""
+        if exc.rcvd is not None:
+            code = exc.rcvd.code
+            reason = (exc.rcvd.reason or "").lower()
+        err_str = str(exc).lower()
+        return (
+            code == 1013
+            or "insufficient_quota" in reason
+            or "insufficient_quota" in err_str
+            or "billing_not_active" in reason
+            or "billing" in reason
+            or "quota" in reason
+        )
+
+    @staticmethod
+    def _is_quota_str(text: str) -> bool:
+        """Return True when a plain error string signals a quota error."""
+        t = text.lower()
+        return (
+            "insufficient_quota" in t
+            or "billing_not_active" in t
+            or "quota exceeded" in t
+        )
+
     async def connect(self) -> None:
         if not self.api_key:
             raise RuntimeError("Missing OpenAI API key.")
@@ -680,11 +728,17 @@ class RealtimePrometheusClient:
             "reconnect_attempt": self._reconnect_attempt,
         })
 
-        self.ws = await websockets.connect(
-            url,
-            additional_headers=headers,
-            max_size=20_000_000,
-        )
+        try:
+            self.ws = await websockets.connect(
+                url,
+                additional_headers=headers,
+                max_size=20_000_000,
+            )
+        except Exception as exc:
+            if self._is_quota_str(str(exc)):
+                self._set_quota_exceeded("websocket_open_rejected")
+                return
+            raise
         self.connected = True
         self._receiver_task = asyncio.create_task(self._receiver())
 
@@ -747,7 +801,15 @@ class RealtimePrometheusClient:
             self._should_reconnect = False
             return
 
-        await self.send(_session_update)
+        try:
+            await self.send(_session_update)
+        except ConnectionClosed as exc:
+            if self._is_quota_close(exc):
+                self._set_quota_exceeded("send_session_update_closed")
+                if self._receiver_task and not self._receiver_task.done():
+                    self._receiver_task.cancel()
+                return
+            raise
 
         asyncio.create_task(self._chat_polling_loop())
         # Successful connection — reset reconnect counter
@@ -917,8 +979,11 @@ class RealtimePrometheusClient:
         Safe to call from external tasks (e.g. morning routine speaker) without
         disrupting the normal PTT voice path.
 
-        Raises RuntimeError("realtime_reconnect_failed: <reason>") on failure.
+        Raises RuntimeError("realtime_unavailable: insufficient_quota") if quota exceeded.
+        Raises RuntimeError("realtime_reconnect_failed: <reason>") on other failures.
         """
+        if self._quota_exceeded:
+            raise RuntimeError("realtime_unavailable: insufficient_quota")
         if self.connected and self.ws is not None:
             return  # already live — nothing to do
 
@@ -945,9 +1010,12 @@ class RealtimePrometheusClient:
                 pass
             self._receiver_task = None
 
-        # Re-enable reconnection in case limits were exhausted overnight
-        self._should_reconnect = True
-        self._reconnect_attempt = 0
+        # Re-enable reconnection only if quota is not the cause of the offline state.
+        # (If quota is the cause, the early return above would have handled it already,
+        # but guard here too so this branch is safe if called concurrently.)
+        if not self._quota_exceeded:
+            self._should_reconnect = True
+            self._reconnect_attempt = 0
 
         try:
             await asyncio.wait_for(self.connect(), timeout=15.0)
@@ -957,6 +1025,10 @@ class RealtimePrometheusClient:
         except Exception as exc:
             self.connected = False
             raise RuntimeError(f"realtime_reconnect_failed: {exc}")
+
+        # connect() returned without raising — re-check quota (connect may have set it)
+        if self._quota_exceeded:
+            raise RuntimeError("realtime_unavailable: insufficient_quota")
 
         # Let session.update be processed before the caller sends audio
         await asyncio.sleep(1.0)
@@ -1331,6 +1403,13 @@ class RealtimePrometheusClient:
                     err_event_id = str(err_obj.get("event_id") or "")
                     log_event("realtime_api_error", {"code": err_code, "message": err_msg})
                     print(f"[DBG] REALTIME ERROR code={err_code!r} msg={err_msg!r} param={err_param!r} event_id={err_event_id!r}")
+                    # Quota / billing errors — server will close the socket next;
+                    # disable reconnect so _reconnect_with_backoff() aborts cleanly.
+                    _QUOTA_ERROR_CODES = {"insufficient_quota", "billing_not_active"}
+                    if err_code in _QUOTA_ERROR_CODES or self._is_quota_str(err_msg):
+                        self._set_quota_exceeded(f"error_event:{err_code}")
+                        self._fire_response_done_events()
+                        continue  # server closes the socket next
                     # Non-fatal errors that must not stop an active response:
                     # - buffer errors: PTT double-commit after server_vad already committed
                     # - already_active: server_vad and client both created a response
@@ -1467,9 +1546,13 @@ class RealtimePrometheusClient:
             self._response_active = False
             self.speaker.finish_realtime()
             self.last_cycle_end_at = time.time()
-            self._log_connection_error_deduped(str(e), "realtime_connection_closed")
-            if self._should_reconnect:
-                self._reconnect_task = asyncio.create_task(self._reconnect_with_backoff())
+            self._fire_response_done_events()
+            if self._is_quota_close(e):
+                self._set_quota_exceeded("receiver_connection_closed")
+            else:
+                self._log_connection_error_deduped(str(e), "realtime_connection_closed")
+                if self._should_reconnect:
+                    self._reconnect_task = asyncio.create_task(self._reconnect_with_backoff())
         except Exception as e:
             self.connected = False
             self.busy = False
