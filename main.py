@@ -43,6 +43,8 @@ from prometheus.routines.calendar_event_triggers import (
     TriggerCalendarReader,
 )
 from prometheus.policies.proactive_speech_policy import should_allow_proactive_speech
+from prometheus.services.hud_state_writer import HudStateWriter
+from prometheus.services.readonly_dashboard import ReadonlyDashboard
 
 
 _PID_FILE = Path.home() / ".jarvis" / "prometheus.pid"
@@ -100,6 +102,8 @@ class PrometheusCore:
         self._sensor_manager: SensorManager | None = None
         self._morning_routine_svc: MorningRoutineService | None = None
         self._cal_trigger_engine: CalendarEventTriggerEngine | None = None
+        self._hud_writer: HudStateWriter | None = None
+        self._readonly_dashboard: ReadonlyDashboard | None = None
 
     def _acquire_pid_lock(self) -> None:
         try:
@@ -286,6 +290,19 @@ class PrometheusCore:
         self.tools.worker_pool = self.worker_pool
         asyncio.create_task(self._heartbeat_loop())
 
+        # Godot HUD state writer — bridges Prometheus state → hud_state.json
+        self._hud_writer = HudStateWriter()
+        asyncio.create_task(self._hud_writer.run())
+
+        # Read-only remote dashboard (second laptop, LAN view)
+        _ro_enabled = (
+            os.getenv("PROMETHEUS_READONLY_DASHBOARD_ENABLED", "false").strip().lower()
+            in ("1", "true", "yes")
+        )
+        if _ro_enabled:
+            self._readonly_dashboard = ReadonlyDashboard()
+            self._readonly_dashboard.start()
+
         self._set_idle_visual_state()
         status = "wake word armed" if self.wakeword.is_ready else "PTT ready"
         notify(f"Prometheus started. {status}")
@@ -301,6 +318,10 @@ class PrometheusCore:
         self.running = False
         if self.proactive_loop:
             self.proactive_loop.stop()
+        if self._hud_writer:
+            self._hud_writer.stop()
+        if self._readonly_dashboard:
+            self._readonly_dashboard.stop()
         self.ptt.stop()
         self.mic.stop()
         self.speaker.stop()
