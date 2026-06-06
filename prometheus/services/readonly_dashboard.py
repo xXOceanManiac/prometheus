@@ -127,7 +127,7 @@ def _build_html(state: dict) -> str:
     live_badge = '<span class="live-badge">● LIVE</span>' if news_status == "live" else '<span class="demo-badge">DEMO</span>'
 
     news_rows = ""
-    for a in articles[:9]:
+    for a in articles[:6]:
         if not isinstance(a, dict):
             continue
         title = _esc(a.get("title") or "")
@@ -215,12 +215,16 @@ def _build_html(state: dict) -> str:
   --blue:#4a9ae8;
   --shadow:rgba(0,0,0,0.55);
 }}
+html{{height:100%;overflow:hidden}}
 body{{
   font-family:system-ui,-apple-system,sans-serif;
   background:#05080a;
   color:var(--text);
-  min-height:100vh;
-  padding:24px 28px 48px;
+  height:100vh;
+  overflow:hidden;
+  display:flex;
+  flex-direction:column;
+  padding:14px 24px 0;
 }}
 /* Header */
 .prom-header{{display:flex;align-items:center;gap:16px;margin-bottom:6px}}
@@ -236,7 +240,7 @@ body{{
   border-radius:4px;padding:2px 9px;
   text-shadow:0 0 8px color-mix(in srgb,var(--accent) 60%,transparent);
 }}
-.prom-meta{{color:var(--dim);font-size:.76em;margin-bottom:24px;display:flex;gap:14px;flex-wrap:wrap}}
+.prom-meta{{color:var(--dim);font-size:.76em;margin-bottom:10px;display:flex;gap:14px;flex-wrap:wrap}}
 .prom-meta a{{color:var(--blue);text-decoration:none}}
 .prom-meta a:hover{{text-decoration:underline}}
 /* Grid */
@@ -370,16 +374,18 @@ body{{
 /* Outer two-column layout: main content + right calendar rail */
 .outer-layout{{
   display:flex;gap:20px;
-  align-items:stretch;
-  min-height:calc(100vh - 110px);
+  flex:1;
+  min-height:0;
+  overflow:hidden;
   max-width:1640px;
+  padding-bottom:14px;
 }}
-.main-content{{flex:1;min-width:0}}
+.main-content{{flex:1;min-width:0;overflow-y:auto}}
 .cal-rail{{
-  flex:0 0 30%;
-  min-width:280px;
-  max-width:400px;
+  flex:0 0 29%;
+  min-width:260px;
   display:flex;flex-direction:column;gap:14px;
+  overflow:hidden;
 }}
 /* Analog clock */
 .clock-wrap{{
@@ -397,7 +403,7 @@ body{{
   box-shadow:0 9px 24px var(--shadow);
   flex:1;min-height:0;display:flex;flex-direction:column;
 }}
-.cal-events-scroll{{flex:1;overflow-y:auto;padding:10px 12px;display:flex;flex-direction:column;gap:8px;}}
+.cal-events-scroll{{flex:1;min-height:0;overflow-y:auto;padding:10px 12px;display:flex;flex-direction:column;gap:8px;}}
 .cal-card-head{{
   display:flex;align-items:center;gap:10px;
   padding:10px 14px 8px;
@@ -432,10 +438,14 @@ body{{
 }}
 .cal-hint{{font-size:.86em;color:var(--dim)}}
 @media(max-width:1100px){{
-  .outer-layout{{flex-direction:column;min-height:auto}}
-  .cal-rail{{flex:none;width:100%;flex-direction:row;flex-wrap:wrap;height:auto}}
+  html{{height:auto;overflow:auto}}
+  body{{height:auto;overflow:auto;display:block;padding:14px 16px 32px}}
+  .outer-layout{{flex-direction:column;height:auto;overflow:visible;padding-bottom:0}}
+  .main-content{{overflow-y:visible}}
+  .cal-rail{{flex:none;width:100%;flex-direction:row;flex-wrap:wrap;height:auto;overflow:visible}}
   .clock-wrap{{flex:0 0 auto}}
-  .cal-card{{flex:1;min-width:220px}}
+  .cal-card{{flex:1;min-width:220px;min-height:0}}
+  .cal-events-scroll{{max-height:300px}}
 }}
 </style>
 </head>
