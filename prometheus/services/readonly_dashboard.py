@@ -85,6 +85,27 @@ def _build_html(state: dict) -> str:
         "SPEAKING": "#f09a35", "EXECUTING": "#3cc89e", "WARNING": "#e03838",
     }.get(godot_state, "#e8a030")
 
+    # ── Calendar rail ─────────────────────────────────────────────────────────
+    cal_card = cards.get("calendar") or {}
+    cal_events = cal_card.get("events") or []
+    cal_status = str(cal_card.get("status", "pending"))
+
+    if cal_events:
+        cal_event_rows = ""
+        for ev in cal_events[:8]:
+            if not isinstance(ev, dict):
+                continue
+            etitle = _esc(ev.get("title") or ev.get("summary") or "Untitled")
+            estart = _esc(ev.get("time_label") or ev.get("start_time") or ev.get("start") or "")
+            cal_event_rows += (
+                f'<div class="cal-event">'
+                f'<span class="cal-etime">{estart}</span>'
+                f'<span class="cal-etitle">{etitle}</span>'
+                f'</div>'
+            )
+    else:
+        cal_event_rows = '<div class="cal-pending">Calendar source pending<br><span class="cal-hint">Connect calendar data to dashboard_state.json → cards.calendar.events</span></div>'
+
     # ── News ─────────────────────────────────────────────────────────────────
     news = cards.get("news") or {}
     news_status = str(news.get("status", "demo"))
@@ -332,6 +353,53 @@ body{{
   opacity:0;animation:refreshFade 1s ease-in-out 14s forwards;
 }}
 @keyframes refreshFade{{0%{{opacity:0}}50%{{opacity:.7}}100%{{opacity:0}}}}
+/* Outer two-column layout: main content + right calendar rail */
+.outer-layout{{display:flex;gap:20px;align-items:flex-start;max-width:1640px}}
+.main-content{{flex:1;min-width:0}}
+.cal-rail{{
+  width:220px;flex-shrink:0;
+  display:flex;flex-direction:column;gap:14px;
+}}
+/* Analog clock */
+.clock-wrap{{
+  background:var(--card);border:1px solid var(--card-border);
+  border-radius:14px;padding:18px 14px 12px;
+  display:flex;flex-direction:column;align-items:center;gap:8px;
+  box-shadow:0 9px 24px var(--shadow);
+}}
+.clock-face{{display:block}}
+.clock-date-line{{font-size:.72em;color:var(--text-dim);letter-spacing:.04em;text-align:center}}
+/* Calendar events rail card */
+.cal-card{{
+  background:var(--card);border:1px solid var(--card-border);
+  border-radius:14px;overflow:hidden;
+  box-shadow:0 9px 24px var(--shadow);
+  flex:1;
+}}
+.cal-card-head{{
+  display:flex;align-items:center;gap:10px;
+  padding:10px 14px 8px;
+  border-bottom:1px solid var(--amber-border);
+}}
+.cal-card-title{{font-size:.68em;font-weight:700;letter-spacing:.14em;color:var(--amber);text-transform:uppercase;flex:1}}
+.cal-events-list{{padding:10px 12px;display:flex;flex-direction:column;gap:8px}}
+.cal-event{{
+  display:flex;flex-direction:column;gap:2px;
+  padding:7px 9px;border-radius:8px;
+  background:var(--well);border:1px solid var(--well-border);
+}}
+.cal-etime{{font-size:.66em;color:var(--amber);letter-spacing:.04em;font-weight:600}}
+.cal-etitle{{font-size:.78em;color:var(--text);line-height:1.35}}
+.cal-pending{{
+  padding:14px 14px;font-size:.76em;color:var(--muted);line-height:1.5;
+}}
+.cal-hint{{font-size:.86em;color:var(--dim)}}
+@media(max-width:1100px){{
+  .outer-layout{{flex-direction:column}}
+  .cal-rail{{width:100%;flex-direction:row;flex-wrap:wrap}}
+  .clock-wrap{{flex:0 0 auto}}
+  .cal-card{{flex:1;min-width:220px}}
+}}
 </style>
 </head>
 <body>
@@ -347,6 +415,8 @@ body{{
   <a href="/state">/state JSON</a>
   <a href="/news">/news JSON</a>
 </div>
+<div class="outer-layout">
+<div class="main-content">
 <div class="grid">
   <div class="card">
     <div class="card-head"><span class="card-title">Status</span></div>
@@ -383,8 +453,78 @@ body{{
     <div class="news-grid">{news_rows}</div>
   </div>
 </div>
+</div><!-- .main-content -->
+
+<div class="cal-rail">
+  <div class="clock-wrap">
+    <svg id="clock-face" class="clock-face" viewBox="0 0 120 120" width="160" height="160" aria-label="Analog clock">
+      <!-- Face -->
+      <circle cx="60" cy="60" r="56" fill="none" stroke="#2a2e35" stroke-width="2"/>
+      <!-- Hour tick marks -->
+      <g stroke="#4a4e55" stroke-width="2">
+        <line x1="60" y1="8"  x2="60" y2="16"/>
+        <line x1="60" y1="8"  x2="60" y2="16" transform="rotate(30,60,60)"/>
+        <line x1="60" y1="8"  x2="60" y2="16" transform="rotate(60,60,60)"/>
+        <line x1="60" y1="8"  x2="60" y2="16" transform="rotate(90,60,60)"/>
+        <line x1="60" y1="8"  x2="60" y2="16" transform="rotate(120,60,60)"/>
+        <line x1="60" y1="8"  x2="60" y2="16" transform="rotate(150,60,60)"/>
+        <line x1="60" y1="8"  x2="60" y2="16" transform="rotate(180,60,60)"/>
+        <line x1="60" y1="8"  x2="60" y2="16" transform="rotate(210,60,60)"/>
+        <line x1="60" y1="8"  x2="60" y2="16" transform="rotate(240,60,60)"/>
+        <line x1="60" y1="8"  x2="60" y2="16" transform="rotate(270,60,60)"/>
+        <line x1="60" y1="8"  x2="60" y2="16" transform="rotate(300,60,60)"/>
+        <line x1="60" y1="8"  x2="60" y2="16" transform="rotate(330,60,60)"/>
+      </g>
+      <!-- Hour hand -->
+      <line id="hand-h" x1="60" y1="60" x2="60" y2="30" stroke="#c8c0b0" stroke-width="3.5" stroke-linecap="round"/>
+      <!-- Minute hand -->
+      <line id="hand-m" x1="60" y1="60" x2="60" y2="18" stroke="#a89878" stroke-width="2.5" stroke-linecap="round"/>
+      <!-- Second hand -->
+      <line id="hand-s" x1="60" y1="68" x2="60" y2="14" stroke="#e8a030" stroke-width="1.2" stroke-linecap="round"/>
+      <!-- Center cap -->
+      <circle cx="60" cy="60" r="3.5" fill="#6a6458"/>
+      <circle cx="60" cy="60" r="1.5" fill="#e8a030"/>
+    </svg>
+    <div class="clock-date-line" id="clock-date"></div>
+  </div>
+
+  <div class="cal-card">
+    <div class="cal-card-head">
+      <span class="cal-card-title">Today</span>
+      <span class="card-chip">CALENDAR</span>
+    </div>
+    <div class="cal-events-list">
+      {cal_event_rows}
+    </div>
+  </div>
+</div><!-- .cal-rail -->
+
+</div><!-- .outer-layout -->
 <div class="refresh-bar"></div>
-<script>setTimeout(()=>location.reload(),15000);</script>
+<script>
+(function(){{
+  function pad(n){{return String(n).padStart(2,'0');}}
+  function tick(){{
+    var now=new Date();
+    var s=now.getSeconds(),m=now.getMinutes()+s/60,h=(now.getHours()%12)+m/60;
+    var sd=s*6,md=m*6,hd=h*30;
+    function rot(id,deg,cx,cy){{
+      var el=document.getElementById(id);
+      if(el) el.setAttribute('transform','rotate('+deg+','+cx+','+cy+')');
+    }}
+    rot('hand-s',sd,60,60);
+    rot('hand-m',md,60,60);
+    rot('hand-h',hd,60,60);
+    var days=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+    var months=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    var d=document.getElementById('clock-date');
+    if(d) d.textContent=days[now.getDay()]+' '+months[now.getMonth()]+' '+now.getDate()+' · '+pad(now.getHours())+':'+pad(now.getMinutes());
+  }}
+  tick();
+  setInterval(tick,1000);
+  setTimeout(()=>location.reload(),15000);
+}})();
+</script>
 </body>
 </html>"""
 
