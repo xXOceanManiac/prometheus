@@ -85,6 +85,23 @@ class TestNormalizeArticle:
         assert a["summary"] == ""
         assert a["thumb"] == ""
 
+    def test_thumbnail_and_thumb_both_present_when_api_provides_thumbnail(self):
+        raw = {
+            "webTitle": "AI story",
+            "webUrl": "https://theguardian.com/tech",
+            "fields": {"thumbnail": "https://media.guim.co.uk/thumb.jpg"},
+        }
+        a = normalize_article(raw)
+        assert a["thumb"] == "https://media.guim.co.uk/thumb.jpg"
+        assert a["thumbnail"] == "https://media.guim.co.uk/thumb.jpg"
+        assert a["thumb"] == a["thumbnail"], "thumb and thumbnail must be equal"
+
+    def test_thumbnail_and_thumb_empty_when_no_api_thumbnail(self):
+        raw = {"webTitle": "Story", "webUrl": "https://x", "fields": {}}
+        a = normalize_article(raw)
+        assert a["thumb"] == ""
+        assert a["thumbnail"] == ""
+
     def test_time_ago_recent(self):
         now = datetime.now(timezone.utc).isoformat()
         assert _time_ago(now) == "just now"
@@ -214,6 +231,11 @@ class TestFallbackArticles:
         for a in _fallback_articles():
             assert a["title"], f"Missing title: {a}"
             assert a["id"], f"Missing id: {a}"
+
+    def test_fallback_articles_have_both_thumb_and_thumbnail(self):
+        for a in _fallback_articles():
+            assert "thumb" in a, f"Missing thumb key: {a['id']}"
+            assert "thumbnail" in a, f"Missing thumbnail key: {a['id']}"
 
     def test_fallback_covers_prometheus_topics(self):
         titles = " ".join(a["title"].lower() for a in _fallback_articles())

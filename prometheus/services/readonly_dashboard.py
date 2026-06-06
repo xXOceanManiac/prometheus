@@ -68,139 +68,323 @@ def _json_response(data: Any) -> bytes:
     return json.dumps(_redact(data), indent=2, ensure_ascii=False).encode("utf-8")
 
 
+def _esc(text: str) -> str:
+    return str(text or "").replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace('"', "&quot;")
+
+
 def _build_html(state: dict) -> str:
-    """Build a rich read-only HTML status page from dashboard state."""
+    """Build a Prometheus dark/fire-themed read-only HTML status page."""
     godot_state = str(state.get("state", "idle")).upper()
-    project = str(state.get("active_project", "—"))
+    project = _esc(state.get("active_project", "—"))
     updated = str(state.get("updated_at", ""))[:19].replace("T", " ")
     cards = state.get("cards") or {}
 
-    # News section
+    # ── State accent color (matches Godot) ────────────────────────────────────
+    state_color = {
+        "IDLE": "#e8a030", "LISTENING": "#f5ca50", "PROCESSING": "#48a8e0",
+        "SPEAKING": "#f09a35", "EXECUTING": "#3cc89e", "WARNING": "#e03838",
+    }.get(godot_state, "#e8a030")
+
+    # ── News ─────────────────────────────────────────────────────────────────
     news = cards.get("news") or {}
     news_status = str(news.get("status", "demo"))
-    news_chip = str(news.get("chip", "DEMO"))
     articles = news.get("articles") or []
+    live_badge = '<span class="live-badge">● LIVE</span>' if news_status == "live" else '<span class="demo-badge">DEMO</span>'
 
     news_rows = ""
     for a in articles[:9]:
         if not isinstance(a, dict):
             continue
-        title = str(a.get("title") or "").replace("<", "&lt;").replace(">", "&gt;")
-        tag = str(a.get("section") or a.get("tag") or "News")
-        time_ago = str(a.get("time_ago") or "")
-        summary = str(a.get("summary") or "").replace("<", "&lt;").replace(">", "&gt;")
-        href = str(a.get("href") or a.get("url") or "#")
-        news_rows += f"""
-      <div class="nitem">
-        <div class="nmeta"><span class="npill">{tag}</span> <span class="ndim">{time_ago}</span></div>
-        <a class="ntitle" href="{href}" target="_blank" rel="noopener">{title}</a>
-        <div class="nsummary">{summary}</div>
-      </div>"""
+        title = _esc(a.get("title") or "")
+        tag = _esc(a.get("tag") or a.get("section") or "News").upper()
+        time_ago = _esc(a.get("time_ago") or "")
+        summary = _esc(a.get("summary") or "")
+        href = _esc(a.get("href") or a.get("url") or "#")
+        thumb = str(a.get("thumb") or a.get("thumbnail") or "").strip()
+        if thumb:
+            thumb_html = (
+                f'<div class="nthumb-row">'
+                f'<img class="nthumb" src="{_esc(thumb)}" alt="" loading="lazy" onerror="this.parentNode.classList.remove(\'nthumb-row\')">'
+                f'<div class="ntext">'
+                f'<div class="nmeta"><span class="npill">{tag}</span><span class="ndim">{time_ago}</span></div>'
+                f'<a class="ntitle" href="{href}" target="_blank" rel="noopener noreferrer">{title}</a>'
+                f'</div></div>'
+                f'<div class="nsummary">{summary}</div>'
+            )
+        else:
+            thumb_html = (
+                f'<div class="nmeta"><span class="npill">{tag}</span><span class="ndim">{time_ago}</span></div>'
+                f'<a class="ntitle" href="{href}" target="_blank" rel="noopener noreferrer">{title}</a>'
+                f'<div class="nsummary">{summary}</div>'
+            )
+        news_rows += f'<div class="nitem">{thumb_html}</div>'
 
     if not news_rows:
-        news_rows = '<div class="ndim" style="padding:8px">No articles yet — Guardian feed loading…</div>'
+        news_rows = '<p class="ndim" style="padding:14px 0;grid-column:1/-1">No articles yet — Guardian feed loading…</p>'
 
-    # Activity section
+    # ── Activity ──────────────────────────────────────────────────────────────
     activity = cards.get("activity") or {}
     act_items = activity.get("items") or []
-    act_rows = "".join(
-        f'<li>{str(i).replace("<","&lt;").replace(">","&gt;")}</li>'
+    act_rows = "\n".join(
+        f'<div class="list-row"><span class="list-dot">▸</span><span class="list-text">{_esc(i)}</span></div>'
         for i in act_items[:6]
-    ) or "<li>No recent activity</li>"
+    ) or '<div class="list-row ndim">No recent activity</div>'
 
-    # Tasks section
+    # ── Tasks ─────────────────────────────────────────────────────────────────
     tasks = cards.get("tasks") or {}
     task_items = tasks.get("items") or []
-    task_rows = "".join(
-        f'<li>{str(i).replace("<","&lt;").replace(">","&gt;")}</li>'
+    task_rows = "\n".join(
+        f'<div class="list-row"><span class="list-dot">▸</span><span class="list-text">{_esc(i)}</span></div>'
         for i in task_items[:5]
-    ) or "<li>No active tasks</li>"
+    ) or '<div class="list-row ndim">No active tasks</div>'
 
-    # Objective section
+    # ── Mission/Objective ─────────────────────────────────────────────────────
     objective = cards.get("objective") or {}
-    obj_summary = str(objective.get("summary") or "No active mission.").replace("<", "&lt;").replace(">", "&gt;")
+    obj_summary = _esc(objective.get("summary") or "No active mission.")
     obj_items = objective.get("items") or []
-    obj_rows = "".join(
-        f'<li>{str(i).replace("<","&lt;").replace(">","&gt;")}</li>'
+    obj_rows = "\n".join(
+        f'<div class="list-row"><span class="list-dot">·</span><span class="list-text">{_esc(i)}</span></div>'
         for i in obj_items[:4]
     )
 
-    state_color = {
-        "IDLE": "#c8902a", "LISTENING": "#f0bc55", "PROCESSING": "#4da8d8",
-        "SPEAKING": "#f09a35", "EXECUTING": "#3cc89e", "WARNING": "#da4848",
-    }.get(godot_state, "#c8902a")
+    # ── Brand ─────────────────────────────────────────────────────────────────
+    brand = cards.get("brand") or {}
+    brand_items = brand.get("items") or []
+    brand_rows = "\n".join(
+        f'<div class="list-row"><span class="list-dot">·</span><span class="list-text">{_esc(i)}</span></div>'
+        for i in brand_items[:4]
+    )
 
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Prometheus — Remote Dashboard</title>
+<title>Prometheus — Mission Control</title>
 <style>
 *{{box-sizing:border-box;margin:0;padding:0}}
-body{{font-family:system-ui,sans-serif;background:#080a0d;color:#ddd;padding:20px 24px}}
-h1{{color:#c8902a;font-size:1.4em;margin-bottom:2px}}
-.subtitle{{color:#555;font-size:.85em;margin-bottom:20px}}
-.grid{{display:grid;grid-template-columns:1fr 1fr;gap:16px;max-width:1200px}}
-@media(max-width:700px){{.grid{{grid-template-columns:1fr}}}}
-.card{{background:#11151c;border:1px solid #252b35;border-radius:10px;padding:16px 18px}}
-.card h2{{font-size:.8em;letter-spacing:.12em;color:#888;text-transform:uppercase;margin-bottom:8px}}
-.chip{{display:inline-block;font-size:.7em;font-weight:700;letter-spacing:.08em;
-       padding:2px 8px;border-radius:5px;background:#1e2530;margin-left:6px;vertical-align:middle}}
-.state{{font-size:1.6em;font-weight:700;color:{state_color};margin:4px 0 8px}}
-.meta{{font-size:.78em;color:#555}}
-ul{{list-style:none;padding:0}}
-ul li{{padding:4px 0;border-bottom:1px solid #1a1e26;font-size:.85em;color:#bbb}}
-ul li:last-child{{border:none}}
-.nitem{{padding:10px 0;border-bottom:1px solid #1a1e26}}
-.nitem:last-child{{border:none}}
-.nmeta{{margin-bottom:3px}}
-.npill{{font-size:.7em;font-weight:700;letter-spacing:.06em;background:#1a2540;
-        color:#5a90d8;padding:2px 7px;border-radius:4px}}
-.ndim{{font-size:.72em;color:#555;margin-left:6px}}
-.ntitle{{font-size:.9em;color:#e8c878;text-decoration:none;display:block;margin-bottom:3px;font-weight:600}}
-.ntitle:hover{{color:#f0d890;text-decoration:underline}}
-.nsummary{{font-size:.78em;color:#888;line-height:1.4}}
-.news-full{{grid-column:1/-1}}
-.status-ok{{color:#3cc89e}}.status-demo{{color:#888}}.status-err{{color:#da4848}}
+:root{{
+  --accent:{state_color};
+  --amber:#e8a030;
+  --amber-dim:rgba(232,160,48,0.18);
+  --amber-border:rgba(232,160,48,0.28);
+  --card:#0f1318;
+  --card-border:rgba(232,160,48,0.22);
+  --well:#080b0e;
+  --well-border:rgba(232,160,48,0.14);
+  --text:#dcd6ca;
+  --text-dim:#a09070;
+  --muted:#7a7060;
+  --dim:#4a4540;
+  --green:#3dc87a;
+  --blue:#4a9ae8;
+  --shadow:rgba(0,0,0,0.55);
+}}
+body{{
+  font-family:system-ui,-apple-system,sans-serif;
+  background:#05080a;
+  color:var(--text);
+  min-height:100vh;
+  padding:24px 28px 48px;
+}}
+/* Header */
+.prom-header{{display:flex;align-items:center;gap:16px;margin-bottom:6px}}
+.prom-title{{
+  font-size:1.6em;font-weight:800;
+  color:var(--amber);letter-spacing:.06em;
+  text-shadow:0 0 28px rgba(232,160,48,0.35);
+}}
+.prom-sub-title{{font-size:.78em;color:var(--text-dim);letter-spacing:.06em;font-weight:500}}
+.state-badge{{
+  font-size:.68em;font-weight:700;letter-spacing:.12em;
+  color:var(--accent);border:1px solid var(--accent);
+  border-radius:4px;padding:2px 9px;
+  text-shadow:0 0 8px color-mix(in srgb,var(--accent) 60%,transparent);
+}}
+.prom-meta{{color:var(--dim);font-size:.76em;margin-bottom:24px;display:flex;gap:14px;flex-wrap:wrap}}
+.prom-meta a{{color:var(--blue);text-decoration:none}}
+.prom-meta a:hover{{text-decoration:underline}}
+/* Grid */
+.grid{{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;max-width:1440px}}
+.span2{{grid-column:span 2}}
+.span3{{grid-column:1/-1}}
+@media(max-width:960px){{
+  .grid{{grid-template-columns:1fr 1fr}}
+  .span2{{grid-column:span 1}}
+  .span3{{grid-column:span 2}}
+}}
+@media(max-width:600px){{
+  .grid{{grid-template-columns:1fr}}
+  .span2,.span3{{grid-column:span 1}}
+  body{{padding:14px 16px 32px}}
+}}
+/* Cards — match Godot card_style */
+.card{{
+  background:var(--card);
+  border:1px solid var(--card-border);
+  border-radius:14px;
+  padding:0;
+  display:flex;flex-direction:column;
+  box-shadow:0 9px 24px var(--shadow);
+  overflow:hidden;
+}}
+.card-head{{
+  display:flex;align-items:center;gap:10px;
+  padding:12px 16px 10px;
+  border-bottom:1px solid var(--amber-border);
+}}
+.card-title{{
+  font-size:.70em;font-weight:700;letter-spacing:.14em;
+  color:var(--amber);
+  text-transform:uppercase;flex:1;
+}}
+.card-chip{{
+  font-size:.62em;font-weight:700;letter-spacing:.08em;
+  padding:2px 7px;border-radius:4px;
+  color:var(--amber);
+  border:1px solid var(--amber-border);
+  background:var(--amber-dim);
+}}
+/* Content well — matches Godot content_well_style */
+.well{{
+  background:var(--well);
+  border-radius:0 0 13px 13px;
+  padding:13px 15px;
+  flex:1;
+  border-top:none;
+}}
+/* Status card */
+.state-val{{
+  font-size:2.2em;font-weight:800;
+  color:var(--accent);line-height:1.1;margin-bottom:8px;
+  text-shadow:0 0 20px color-mix(in srgb,var(--accent) 50%,transparent);
+}}
+.state-meta{{font-size:.80em;color:var(--muted);line-height:2.0}}
+/* List rows — match Godot bullet rows */
+.list-row{{
+  display:flex;gap:9px;align-items:baseline;
+  padding:6px 0;
+  border-bottom:1px solid rgba(232,160,48,0.07);
+  font-size:.83em;
+}}
+.list-row:last-child{{border:none;padding-bottom:0}}
+.list-dot{{color:var(--accent);flex-shrink:0;font-size:.75em;margin-top:2px}}
+.list-text{{color:var(--text);line-height:1.45}}
+/* Mission summary */
+.mission-summary{{font-size:.85em;color:var(--text-dim);line-height:1.55;margin-bottom:8px}}
+/* News */
+.live-badge{{font-size:.65em;font-weight:700;color:var(--green);letter-spacing:.08em}}
+.demo-badge{{font-size:.65em;font-weight:700;color:var(--dim);letter-spacing:.08em}}
+.news-head{{
+  display:flex;align-items:center;gap:8px;
+  padding:12px 16px 10px;
+  border-bottom:1px solid var(--amber-border);
+}}
+.news-grid{{
+  display:grid;
+  grid-template-columns:repeat(3,1fr);
+  gap:12px;
+  padding:14px 15px;
+  background:var(--well);
+  border-radius:0 0 13px 13px;
+}}
+@media(max-width:960px){{.news-grid{{grid-template-columns:1fr 1fr}}}}
+@media(max-width:600px){{.news-grid{{grid-template-columns:1fr}}}}
+.nitem{{
+  display:flex;flex-direction:column;gap:8px;
+  background:rgba(15,19,24,0.95);
+  border:1px solid rgba(232,160,48,0.14);
+  border-radius:9px;
+  padding:11px 12px;
+  overflow:hidden;
+  transition:border-color .18s;
+}}
+.nitem:hover{{border-color:rgba(232,160,48,0.32)}}
+.nthumb-row{{display:flex;gap:10px;align-items:flex-start}}
+.nthumb{{
+  width:52px;height:52px;
+  object-fit:cover;border-radius:6px;
+  flex-shrink:0;
+}}
+.ntext{{flex:1;min-width:0}}
+.nmeta{{display:flex;align-items:center;gap:7px;margin-bottom:5px;flex-wrap:wrap}}
+.npill{{
+  font-size:.61em;font-weight:700;letter-spacing:.06em;
+  padding:1px 6px;border-radius:3px;
+  background:rgba(74,154,232,0.15);color:var(--blue);
+  border:1px solid rgba(74,154,232,0.28);white-space:nowrap;
+}}
+.ndim{{font-size:.68em;color:var(--dim)}}
+.ntitle{{
+  font-size:.87em;font-weight:600;color:#e8c870;
+  text-decoration:none;display:block;
+  line-height:1.38;margin-bottom:4px;
+}}
+.ntitle:hover{{color:#f5da80;text-decoration:underline}}
+.nsummary{{
+  font-size:.75em;color:var(--muted);line-height:1.45;
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;
+}}
+/* Refresh indicator */
+.refresh-bar{{
+  position:fixed;bottom:0;left:0;right:0;height:2px;
+  background:linear-gradient(90deg,transparent,var(--amber),transparent);
+  opacity:0;animation:refreshFade 1s ease-in-out 14s forwards;
+}}
+@keyframes refreshFade{{0%{{opacity:0}}50%{{opacity:.7}}100%{{opacity:0}}}}
 </style>
 </head>
 <body>
-<h1>Prometheus <span class="chip">{godot_state}</span></h1>
-<p class="subtitle">Read-only view · {updated} UTC · <a href="/state" style="color:#5a90d8">/state JSON</a></p>
+<div class="prom-header">
+  <span class="prom-title">PROMETHEUS</span>
+  <span class="prom-sub-title">MISSION CONTROL</span>
+  <span class="state-badge">{godot_state}</span>
+</div>
+<div class="prom-meta">
+  <span>Read-only</span>
+  <span>{updated} UTC</span>
+  <span>Project: {project}</span>
+  <a href="/state">/state JSON</a>
+  <a href="/news">/news JSON</a>
+</div>
 <div class="grid">
   <div class="card">
-    <h2>Status</h2>
-    <div class="state">{godot_state}</div>
-    <div class="meta">Project: {project}</div>
-    <div class="meta">Updated: {updated}</div>
-  </div>
-  <div class="card">
-    <h2>Mission</h2>
-    <p style="font-size:.88em;color:#bbb;margin-bottom:8px">{obj_summary}</p>
-    <ul>{obj_rows}</ul>
-  </div>
-  <div class="card">
-    <h2>Activity</h2>
-    <ul>{act_rows}</ul>
-  </div>
-  <div class="card">
-    <h2>Tasks</h2>
-    <ul>{task_rows}</ul>
-  </div>
-  <div class="card news-full">
-    <h2>News <span class="chip">The Guardian</span>
-      <span class="chip {'status-ok' if news_status=='live' else 'status-demo' if news_status in ('demo','fallback') else 'status-err'}">{news_chip}</span>
-    </h2>
-    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(300px,1fr));gap:0 24px">
-      {news_rows}
+    <div class="card-head"><span class="card-title">Status</span></div>
+    <div class="well">
+      <div class="state-val">{godot_state}</div>
+      <div class="state-meta">Project: {project}<br>Updated: {updated}</div>
     </div>
   </div>
+  <div class="card span2">
+    <div class="card-head"><span class="card-title">Mission</span><span class="card-chip">CONTEXT</span></div>
+    <div class="well">
+      <div class="mission-summary">{obj_summary}</div>
+      {obj_rows}
+    </div>
+  </div>
+  <div class="card">
+    <div class="card-head"><span class="card-title">Activity</span><span class="card-chip">LIVE</span></div>
+    <div class="well">{act_rows}</div>
+  </div>
+  <div class="card">
+    <div class="card-head"><span class="card-title">Prometheus</span></div>
+    <div class="well">{brand_rows}</div>
+  </div>
+  <div class="card">
+    <div class="card-head"><span class="card-title">Tasks</span><span class="card-chip">QUEUE</span></div>
+    <div class="well">{task_rows}</div>
+  </div>
+  <div class="card span3" style="padding:0">
+    <div class="news-head">
+      <span class="card-title" style="color:var(--amber)">Relevant News</span>
+      <span class="card-chip">The Guardian</span>
+      &nbsp;{live_badge}
+    </div>
+    <div class="news-grid">{news_rows}</div>
+  </div>
 </div>
-<script>
-// Auto-refresh every 15 seconds
-setTimeout(()=>location.reload(), 15000);
-</script>
+<div class="refresh-bar"></div>
+<script>setTimeout(()=>location.reload(),15000);</script>
 </body>
 </html>"""
 

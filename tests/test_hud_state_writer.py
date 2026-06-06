@@ -336,3 +336,92 @@ class TestGodotStateSchema:
         items = build_hud_state(_mock_articles(9), "live")["cards"]["news"]["items"]
         assert isinstance(items, list)
         assert all(isinstance(i, dict) for i in items)
+
+    def test_articles_preserve_thumb_field(self):
+        from prometheus.services.hud_state_writer import build_hud_state
+        articles_in = _mock_articles(9)
+        articles_in[0]["thumb"] = "https://media.guim.co.uk/thumb.jpg"
+        articles_out = build_hud_state(articles_in, "live")["cards"]["news"]["articles"]
+        assert articles_out[0]["thumb"] == "https://media.guim.co.uk/thumb.jpg"
+
+
+# ── Thumbnail end-to-end ──────────────────────────────────────────────────────
+
+def _mock_articles_with_thumb(n: int = 9) -> list[dict]:
+    articles = _mock_articles(n)
+    articles[0]["thumb"] = "https://media.guim.co.uk/sample/500.jpg"
+    articles[0]["thumbnail"] = "https://media.guim.co.uk/sample/500.jpg"
+    return articles
+
+
+class TestThumbnailEndToEnd:
+
+    @pytest.fixture(autouse=True)
+    def _server_with_thumb(self, tmp_path):
+        from prometheus.services.readonly_dashboard import ReadonlyDashboard
+        import prometheus.services.readonly_dashboard as _mod
+
+        port = _find_free_port()
+        original = _mod._DASHBOARD_STATE_PATH
+        state_file = tmp_path / "dashboard_state.json"
+        state_file.write_text(json.dumps({
+            "state": "idle",
+            "active_project": "ThumbTest",
+            "updated_at": "2026-06-06T00:00:00Z",
+            "cards": {
+                "news": {
+                    "title": "News",
+                    "chip": "LIVE",
+                    "status": "live",
+                    "articles": _mock_articles_with_thumb(9),
+                    "items": [],
+                },
+            },
+        }), encoding="utf-8")
+        _mod._DASHBOARD_STATE_PATH = state_file
+
+        self._dashboard = ReadonlyDashboard(host="127.0.0.1", port=port)
+        self._dashboard.start()
+        import time
+        time.sleep(0.15)
+        self._base = f"http://127.0.0.1:{port}"
+        yield
+        self._dashboard.stop()
+        _mod._DASHBOARD_STATE_PATH = original
+
+    def _get(self, path: str) -> tuple[int, bytes]:
+        try:
+            with urllib.request.urlopen(self._base + path, timeout=3) as r:
+                return r.status, r.read()
+        except urllib.error.HTTPError as e:
+            return e.code, b""
+
+    def test_news_endpoint_exposes_thumb_field(self):
+        code, body = self._get("/news")
+        assert code == 200
+        data = json.loads(body)
+        articles = data.get("articles", [])
+        assert len(articles) == 9
+        # First article should have thumb URL
+        assert articles[0].get("thumb") == "https://media.guim.co.uk/sample/500.jpg"
+
+    def test_html_includes_img_tag_when_thumb_present(self):
+        _, body = self._get("/")
+        assert b'<img' in body
+        assert b'media.guim.co.uk/sample/500.jpg' in body
+
+    def test_html_no_broken_img_when_thumb_missing(self):
+        _, body = self._get("/")
+        # Articles without thumb should not have onerror or empty src img tags
+        html = body.decode()
+        # Count articles rendered — we only have 1 with thumb, 8 without
+        # The 8 articles without thumb should not produce <img src=""> broken images
+        import re
+        empty_src_imgs = re.findall(r'<img[^>]+src=""', html)
+        assert empty_src_imgs == [], f"Found empty-src img tags: {empty_src_imgs}"
+
+    def test_no_secrets_in_html(self):
+        _, body = self._get("/")
+        text = body.decode().lower()
+        assert "sk-" not in text
+        assert "api_key" not in text or "[redacted]" in text or "read-only" in text

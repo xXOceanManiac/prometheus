@@ -38,13 +38,15 @@ def normalize_article(raw: dict) -> dict:
         trail = trail[:137] + "…"
 
     published_iso = str(raw.get("webPublicationDate") or "").strip()
+    thumb_url = str(fields.get("thumbnail") or "").strip()
     return {
         "id": str(raw.get("id") or raw.get("webUrl") or raw.get("webTitle") or ""),
         "title": str(raw.get("webTitle") or fields.get("headline") or "").strip(),
         "href": str(raw.get("webUrl") or "").strip(),
         "tag": str(raw.get("sectionName") or raw.get("sectionId") or "News").strip(),
         "summary": trail,
-        "thumb": str(fields.get("thumbnail") or "").strip(),
+        "thumb": thumb_url,
+        "thumbnail": thumb_url,  # alias so both "thumb" and "thumbnail" keys work
         "byline": str(fields.get("byline") or "").strip(),
         "published_iso": published_iso,
         "time_ago": _time_ago(published_iso),
@@ -194,6 +196,7 @@ def _fallback_articles() -> list[dict]:
             "tag": tag,
             "summary": summary,
             "thumb": "",
+            "thumbnail": "",  # alias so both keys are always present
             "byline": "",
             "published_iso": now_iso,
             "time_ago": "just now",
