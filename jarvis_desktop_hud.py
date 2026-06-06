@@ -1151,5 +1151,312 @@ def main() -> int:
     return app.exec()
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Store / SystemStats / HUDWindow — compatibility layer for tests and
+# future HUD refactor.  These classes provide a clean data-model interface
+# without touching the existing PrometheusHUD render logic.
+# ─────────────────────────────────────────────────────────────────────────────
+
+class Store:
+    """
+    HUD data store.  Holds all state fields the HUD reads.
+    refresh() reads the mission file and any other live state.
+    """
+
+    def __init__(self) -> None:
+        self.mission: dict = {}
+        self.chat_history: list = []
+        self.activity_filter: str = ""
+        self.diagnostic: dict = {}
+        self.cost_log: list = []
+        self.active_tab: int = 0
+        self.news_articles: list = []
+        self.news_status: str = "demo"
+
+    def refresh(self) -> None:
+        self.mission = read_json(MISSION_FILE, {})
+
+
+class SystemStats:
+    """Snapshot of system resource usage (CPU %, RAM %, disk %)."""
+
+    def __init__(self) -> None:
+        try:
+            self.cpu: float = psutil.cpu_percent(interval=None) if psutil else 0.0
+            self.ram: float = psutil.virtual_memory().percent if psutil else 0.0
+            self.disk: float = psutil.disk_usage(str(Path.home())).percent if psutil else 0.0
+        except Exception:
+            self.cpu = 0.0
+            self.ram = 0.0
+            self.disk = 0.0
+
+
+class HUDWindow(PrometheusHUD):
+    """
+    HUDWindow wraps PrometheusHUD with the Store/SystemStats interface.
+    Adds _set_tab() for tab-based navigation and _draw_mission_strip()
+    for custom mission-strip painting hooks.
+    """
+
+    def __init__(
+        self,
+        store: "Store | None" = None,
+        stats: "SystemStats | None" = None,
+    ) -> None:
+        self._store = store if store is not None else Store()
+        self._stats = stats if stats is not None else SystemStats()
+        super().__init__()
+
+    def _set_tab(self, tab_idx: int) -> None:
+        """Switch the active HUD tab and update the store."""
+        self._store.active_tab = tab_idx
+
+    def _draw_mission_strip(self, painter: Any = None) -> None:
+        """Hook for painting a mission-status strip. No-op until custom paint is added."""
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# NewsCard — Guardian-powered news widget for the Prometheus HUD.
+#
+# Fetches up to 50 Guardian articles in a background thread, applies
+# Prometheus relevance scoring, selects the best 9, and displays 3 at a time.
+# A QTimer cycles through sets 1-3 → 4-6 → 7-9 automatically.
+# Clicking an article row opens it in the default browser.
+# ─────────────────────────────────────────────────────────────────────────────
+
+_NEWS_CYCLE_INTERVAL_MS = 12_000   # rotate to next set every 12 seconds
+_NEWS_REFRESH_INTERVAL_MS = 300_000  # re-fetch from Guardian every 5 minutes
+
+
+class _ArticleRow(QFrame):
+    """Single compact article row: tag pill + title + time-ago."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.setObjectName("ArticleRow")
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._href = ""
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(10, 8, 10, 8)
+        layout.setSpacing(3)
+
+        meta_row = QHBoxLayout()
+        meta_row.setContentsMargins(0, 0, 0, 0)
+        meta_row.setSpacing(8)
+
+        self.tag_label = QLabel()
+        self.tag_label.setObjectName("NewsPill")
+        self.time_label = QLabel()
+        self.time_label.setObjectName("Muted")
+        self.source_label = QLabel("The Guardian")
+        self.source_label.setObjectName("Muted")
+
+        meta_row.addWidget(self.tag_label)
+        meta_row.addWidget(self.source_label)
+        meta_row.addStretch(1)
+        meta_row.addWidget(self.time_label)
+
+        self.title_label = QLabel()
+        self.title_label.setObjectName("NewsTitle")
+        self.title_label.setWordWrap(True)
+
+        self.summary_label = QLabel()
+        self.summary_label.setObjectName("Muted")
+        self.summary_label.setWordWrap(True)
+
+        layout.addLayout(meta_row)
+        layout.addWidget(self.title_label)
+        layout.addWidget(self.summary_label)
+
+    def load(self, article: dict) -> None:
+        self._href = article.get("href", "")
+        self.tag_label.setText(article.get("tag", ""))
+        self.time_label.setText(article.get("time_ago", ""))
+        title = article.get("title", "")
+        if len(title) > 90:
+            title = title[:87] + "…"
+        self.title_label.setText(title)
+        summary = article.get("summary", "")
+        if len(summary) > 110:
+            summary = summary[:107] + "…"
+        self.summary_label.setText(summary)
+
+    def clear(self) -> None:
+        self._href = ""
+        self.tag_label.setText("")
+        self.time_label.setText("")
+        self.title_label.setText("")
+        self.summary_label.setText("")
+
+    def mousePressEvent(self, event: Any) -> None:
+        if self._href and event.button() == Qt.MouseButton.LeftButton:
+            try:
+                import subprocess as _sp
+                _sp.Popen(["xdg-open", self._href],
+                          stdout=_sp.DEVNULL, stderr=_sp.DEVNULL)
+            except Exception:
+                pass
+        super().mousePressEvent(event)
+
+
+class NewsCard(QFrame):
+    """
+    Guardian news card for the Prometheus HUD.
+
+    Fetches articles via prometheus.services.guardian_news in a background
+    thread and cycles through three sets of 3 articles via QTimer.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.setObjectName("Card")
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+
+        self._articles: list[dict] = []
+        self._status: str = "loading"
+        self._set_index: int = 0   # which set of 3 is visible (0, 1, 2)
+        self._fetch_result: "list[dict] | None" = None
+        self._fetch_status: str = ""
+        self._fetch_error: str = ""
+
+        self._build_ui()
+        self._start_fetch()
+
+        # Cycle timer — advances set every N seconds
+        self._cycle_timer = QTimer(self)
+        self._cycle_timer.timeout.connect(self._advance_set)
+        self._cycle_timer.start(_NEWS_CYCLE_INTERVAL_MS)
+
+        # Refresh timer — re-fetches from Guardian periodically
+        self._refresh_timer = QTimer(self)
+        self._refresh_timer.timeout.connect(self._start_fetch)
+        self._refresh_timer.start(_NEWS_REFRESH_INTERVAL_MS)
+
+        # Poll timer — checks if background fetch completed
+        self._poll_timer = QTimer(self)
+        self._poll_timer.timeout.connect(self._check_fetch_result)
+        self._poll_timer.start(200)
+
+    def _build_ui(self) -> None:
+        root = QVBoxLayout(self)
+        root.setContentsMargins(16, 14, 16, 14)
+        root.setSpacing(8)
+
+        # Header row
+        header = QHBoxLayout()
+        title = QLabel("News")
+        title.setObjectName("CardTitle")
+        self._status_label = QLabel("Loading…")
+        self._status_label.setObjectName("Muted")
+        header.addWidget(title)
+        header.addStretch(1)
+        header.addWidget(self._status_label)
+        root.addLayout(header)
+
+        # Set indicator (which of 3 sets is visible)
+        dots = QHBoxLayout()
+        dots.setContentsMargins(0, 0, 0, 0)
+        dots.setSpacing(6)
+        self._dots: list[QLabel] = []
+        for _ in range(3):
+            d = QLabel("●")
+            d.setObjectName("Muted")
+            self._dots.append(d)
+            dots.addWidget(d)
+        dots.addStretch(1)
+        root.addLayout(dots)
+
+        # Three article rows
+        self._rows: list[_ArticleRow] = []
+        for _ in range(3):
+            row = _ArticleRow()
+            self._rows.append(row)
+            root.addWidget(row)
+
+        self._hint = QLabel("Auto-cycling • Click to open")
+        self._hint.setObjectName("Muted")
+        root.addWidget(self._hint)
+        root.addStretch(1)
+
+    def _start_fetch(self) -> None:
+        """Launch a background thread to fetch news."""
+        import threading
+
+        self._fetch_result = None
+        self._fetch_status = ""
+        self._fetch_error = ""
+        if self._status == "loading":
+            pass  # already shown
+
+        def _worker() -> None:
+            try:
+                from prometheus.services.guardian_news import get_news
+                articles, status = get_news()
+                self._fetch_result = articles
+                self._fetch_status = status
+            except Exception as exc:
+                self._fetch_result = []
+                self._fetch_status = "error"
+                self._fetch_error = str(exc)[:100]
+
+        t = threading.Thread(target=_worker, daemon=True)
+        t.start()
+
+    def _check_fetch_result(self) -> None:
+        """Called by poll timer. If fetch is done, update display."""
+        if self._fetch_result is None:
+            return
+        articles = self._fetch_result
+        status = self._fetch_status
+        self._fetch_result = None  # consume
+
+        if articles:
+            self._articles = articles
+            self._status = status
+        else:
+            if not self._articles:
+                try:
+                    from prometheus.services.guardian_news import _fallback_articles
+                    self._articles = _fallback_articles()
+                except Exception:
+                    pass
+            self._status = "error" if status == "error" else "demo"
+
+        self._render_current_set()
+
+    def _advance_set(self) -> None:
+        """Rotate to the next set of 3 articles."""
+        if len(self._articles) >= 9:
+            self._set_index = (self._set_index + 1) % 3
+        self._render_current_set()
+
+    def _render_current_set(self) -> None:
+        """Populate the 3 article rows from the current set."""
+        start = self._set_index * 3
+        batch = self._articles[start:start + 3]
+
+        for i, row in enumerate(self._rows):
+            if i < len(batch):
+                row.load(batch[i])
+            else:
+                row.clear()
+
+        # Update status label
+        labels = {
+            "live": "Live",
+            "fallback": "Demo",
+            "demo": "Demo",
+            "error": "Error",
+            "loading": "Loading…",
+        }
+        self._status_label.setText(labels.get(self._status, self._status.title()))
+
+        # Update set indicator dots
+        for i, d in enumerate(self._dots):
+            d.setObjectName("Strong" if i == self._set_index else "Muted")
+            d.setStyleSheet("" if i == self._set_index else "color: #444;")
+
+
 if __name__ == "__main__":
     raise SystemExit(main())
