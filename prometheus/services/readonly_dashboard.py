@@ -368,14 +368,18 @@ body{{
 }}
 @keyframes refreshFade{{0%{{opacity:0}}50%{{opacity:.7}}100%{{opacity:0}}}}
 /* Outer two-column layout: main content + right calendar rail */
-.outer-layout{{display:flex;gap:20px;align-items:flex-start;max-width:1640px}}
+.outer-layout{{
+  display:flex;gap:20px;
+  align-items:stretch;
+  min-height:calc(100vh - 110px);
+  max-width:1640px;
+}}
 .main-content{{flex:1;min-width:0}}
 .cal-rail{{
-  width:290px;flex-shrink:0;
+  flex:0 0 30%;
+  min-width:280px;
+  max-width:400px;
   display:flex;flex-direction:column;gap:14px;
-  position:sticky;top:24px;
-  height:calc(100vh - 100px);
-  align-self:flex-start;
 }}
 /* Analog clock */
 .clock-wrap{{
@@ -428,8 +432,8 @@ body{{
 }}
 .cal-hint{{font-size:.86em;color:var(--dim)}}
 @media(max-width:1100px){{
-  .outer-layout{{flex-direction:column}}
-  .cal-rail{{width:100%;flex-direction:row;flex-wrap:wrap;position:static;height:auto}}
+  .outer-layout{{flex-direction:column;min-height:auto}}
+  .cal-rail{{flex:none;width:100%;flex-direction:row;flex-wrap:wrap;height:auto}}
   .clock-wrap{{flex:0 0 auto}}
   .cal-card{{flex:1;min-width:220px}}
 }}
