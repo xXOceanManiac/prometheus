@@ -92,17 +92,31 @@ def _build_html(state: dict) -> str:
 
     if cal_events:
         cal_event_rows = ""
-        for ev in cal_events[:8]:
+        for ev in cal_events[:12]:
             if not isinstance(ev, dict):
                 continue
             etitle = _esc(ev.get("title") or ev.get("summary") or "Untitled")
             estart = _esc(ev.get("time_label") or ev.get("start_time") or ev.get("start") or "")
+            is_now_ev = bool(ev.get("is_now", False))
+            is_next_ev = bool(ev.get("is_next", False))
+            loc = str(ev.get("location") or "").strip()
+            ev_class = "cal-event"
+            if is_now_ev:
+                ev_class += " cal-ev-now"
+            elif is_next_ev:
+                ev_class += " cal-ev-next"
+            loc_html = f'<div class="cal-eloc">{_esc(loc)}</div>' if loc else ""
             cal_event_rows += (
-                f'<div class="cal-event">'
+                f'<div class="{ev_class}">'
                 f'<span class="cal-etime">{estart}</span>'
                 f'<span class="cal-etitle">{etitle}</span>'
+                f'{loc_html}'
                 f'</div>'
             )
+        if not cal_event_rows:
+            cal_event_rows = '<div class="cal-pending">No events found</div>'
+    elif cal_status == "error":
+        cal_event_rows = '<div class="cal-pending">Calendar fetch failed<br><span class="cal-hint">Check Prometheus logs</span></div>'
     else:
         cal_event_rows = '<div class="cal-pending">Calendar source pending<br><span class="cal-hint">Connect calendar data to dashboard_state.json → cards.calendar.events</span></div>'
 
@@ -357,8 +371,11 @@ body{{
 .outer-layout{{display:flex;gap:20px;align-items:flex-start;max-width:1640px}}
 .main-content{{flex:1;min-width:0}}
 .cal-rail{{
-  width:220px;flex-shrink:0;
+  width:290px;flex-shrink:0;
   display:flex;flex-direction:column;gap:14px;
+  position:sticky;top:24px;
+  height:calc(100vh - 100px);
+  align-self:flex-start;
 }}
 /* Analog clock */
 .clock-wrap{{
@@ -374,29 +391,45 @@ body{{
   background:var(--card);border:1px solid var(--card-border);
   border-radius:14px;overflow:hidden;
   box-shadow:0 9px 24px var(--shadow);
-  flex:1;
+  flex:1;min-height:0;display:flex;flex-direction:column;
 }}
+.cal-events-scroll{{flex:1;overflow-y:auto;padding:10px 12px;display:flex;flex-direction:column;gap:8px;}}
 .cal-card-head{{
   display:flex;align-items:center;gap:10px;
   padding:10px 14px 8px;
   border-bottom:1px solid var(--amber-border);
 }}
 .cal-card-title{{font-size:.68em;font-weight:700;letter-spacing:.14em;color:var(--amber);text-transform:uppercase;flex:1}}
-.cal-events-list{{padding:10px 12px;display:flex;flex-direction:column;gap:8px}}
 .cal-event{{
   display:flex;flex-direction:column;gap:2px;
-  padding:7px 9px;border-radius:8px;
-  background:var(--well);border:1px solid var(--well-border);
+  padding:7px 9px 7px 11px;border-radius:8px;
+  background:var(--well);
+  border-left:2px solid var(--well-border);
+  border-top:1px solid var(--well-border);
+  border-right:1px solid var(--well-border);
+  border-bottom:1px solid var(--well-border);
+}}
+.cal-event.cal-ev-now{{
+  background:rgba(232,160,48,0.12);
+  border-left:3px solid var(--amber);
+  border-top:1px solid rgba(232,160,48,0.20);
+  border-right:1px solid rgba(232,160,48,0.20);
+  border-bottom:1px solid rgba(232,160,48,0.20);
+}}
+.cal-event.cal-ev-next{{
+  background:rgba(232,160,48,0.06);
+  border-left:2px solid rgba(232,160,48,0.55);
 }}
 .cal-etime{{font-size:.66em;color:var(--amber);letter-spacing:.04em;font-weight:600}}
 .cal-etitle{{font-size:.78em;color:var(--text);line-height:1.35}}
+.cal-eloc{{font-size:.65em;color:var(--dim);margin-top:1px}}
 .cal-pending{{
   padding:14px 14px;font-size:.76em;color:var(--muted);line-height:1.5;
 }}
 .cal-hint{{font-size:.86em;color:var(--dim)}}
 @media(max-width:1100px){{
   .outer-layout{{flex-direction:column}}
-  .cal-rail{{width:100%;flex-direction:row;flex-wrap:wrap}}
+  .cal-rail{{width:100%;flex-direction:row;flex-wrap:wrap;position:static;height:auto}}
   .clock-wrap{{flex:0 0 auto}}
   .cal-card{{flex:1;min-width:220px}}
 }}
@@ -493,7 +526,7 @@ body{{
       <span class="cal-card-title">Today</span>
       <span class="card-chip">CALENDAR</span>
     </div>
-    <div class="cal-events-list">
+    <div class="cal-events-scroll">
       {cal_event_rows}
     </div>
   </div>
