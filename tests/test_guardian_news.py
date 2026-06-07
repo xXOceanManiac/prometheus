@@ -24,10 +24,11 @@ if str(_ROOT) not in sys.path:
 from prometheus.services.guardian_news import (
     normalize_article,
     prometheus_relevance_score,
-    pad_to_nine,
+    pad_to_ten,
     get_news,
     _fallback_articles,
     _time_ago,
+    _VIOLENT_TITLE_TERMS,
 )
 
 
@@ -175,10 +176,85 @@ class TestPrometheusRelevanceScore:
         a = self._article(title="test")
         assert isinstance(prometheus_relevance_score(a), float)
 
+    def test_entrepreneurship_scores_high(self):
+        a = self._article(title="Founder builds marketplace for indie developers", tag="Business")
+        score = prometheus_relevance_score(a)
+        assert score > 10, f"Entrepreneurship article should score >10, got {score}"
 
-# ── pad_to_nine ───────────────────────────────────────────────────────────────
+    def test_science_space_scores_high(self):
+        a = self._article(title="NASA breakthrough in quantum computing engineering")
+        score = prometheus_relevance_score(a)
+        assert score > 15
 
-class TestPadToNine:
+    def test_education_microschool_scores_high(self):
+        a = self._article(title="School choice legislation expands microschool options in Arizona")
+        score = prometheus_relevance_score(a)
+        assert score > 10
+
+    def test_arizona_utah_gets_geographic_boost(self):
+        a = self._article(title="Arizona startup ecosystem grows amid school choice boom")
+        b = self._article(title="Generic startup news")
+        assert prometheus_relevance_score(a) > prometheus_relevance_score(b)
+
+
+# ── violent/sensational title penalties ───────────────────────────────────────
+
+class TestViolentTitlePenalty:
+
+    def _article(self, title="", summary="", tag="News"):
+        return {
+            "title": title,
+            "summary": summary,
+            "tag": tag,
+            "published_iso": datetime.now(timezone.utc).isoformat(),
+        }
+
+    def test_violent_title_scores_lower_than_neutral(self):
+        violent = self._article(title="Man killed in downtown stabbing attack")
+        neutral = self._article(title="New software platform launches for developers")
+        assert prometheus_relevance_score(violent) < prometheus_relevance_score(neutral)
+
+    def test_murder_headline_heavily_penalized(self):
+        a = self._article(title="Three murdered in overnight attack")
+        score = prometheus_relevance_score(a)
+        assert score < 0, f"Murder headline should score negative, got {score}"
+
+    def test_bombing_headline_heavily_penalized(self):
+        a = self._article(title="Bombing kills dozens in city center")
+        score = prometheus_relevance_score(a)
+        assert score < 0
+
+    def test_drone_strike_penalized(self):
+        a = self._article(title="Drone strike kills civilians in conflict zone")
+        score = prometheus_relevance_score(a)
+        assert score < 0
+
+    def test_horror_title_penalized(self):
+        a = self._article(title="Horrifying discovery shocks investigators")
+        score = prometheus_relevance_score(a)
+        assert score < 5
+
+    def test_analytical_geopolitics_can_survive(self):
+        # An analytical article about geopolitics without violent headline terms should score OK
+        a = self._article(
+            title="Why the US-China semiconductor rivalry is reshaping global trade",
+            summary="Analysis of technology competition and supply chain realignment.",
+            tag="World",
+        )
+        score = prometheus_relevance_score(a)
+        assert score > 0, f"Analytical geopolitics should not be eliminated, got {score}"
+
+    def test_violent_title_terms_list_is_nonempty(self):
+        assert len(_VIOLENT_TITLE_TERMS) > 10
+
+    def test_all_violent_terms_are_lowercase(self):
+        for term in _VIOLENT_TITLE_TERMS:
+            assert term == term.lower(), f"Violent term must be lowercase: {term!r}"
+
+
+# ── pad_to_ten ────────────────────────────────────────────────────────────────
+
+class TestPadToTen:
 
     def _article(self, i):
         return {
@@ -194,38 +270,44 @@ class TestPadToNine:
             "source": "The Guardian",
         }
 
-    def test_pads_empty_list_to_nine(self):
-        result = pad_to_nine([])
-        assert len(result) == 9
+    def test_pads_empty_list_to_ten(self):
+        result = pad_to_ten([])
+        assert len(result) == 10
 
-    def test_pads_partial_list_to_nine(self):
-        result = pad_to_nine([self._article(i) for i in range(3)])
-        assert len(result) == 9
+    def test_pads_partial_list_to_ten(self):
+        result = pad_to_ten([self._article(i) for i in range(3)])
+        assert len(result) == 10
 
-    def test_does_not_exceed_nine(self):
-        result = pad_to_nine([self._article(i) for i in range(15)])
-        assert len(result) == 9
+    def test_does_not_exceed_ten(self):
+        result = pad_to_ten([self._article(i) for i in range(15)])
+        assert len(result) == 10
 
     def test_live_articles_appear_first(self):
         live = [self._article(i) for i in range(4)]
-        result = pad_to_nine(live)
+        result = pad_to_ten(live)
         assert result[0]["id"] == "live-0"
         assert result[3]["id"] == "live-3"
 
     def test_no_duplicates_in_padded_result(self):
         partial = [self._article(i) for i in range(5)]
-        result = pad_to_nine(partial)
+        result = pad_to_ten(partial)
         ids = [a["id"] for a in result]
-        assert len(ids) == len(set(ids)), "pad_to_nine must not add duplicate ids"
+        assert len(ids) == len(set(ids)), "pad_to_ten must not add duplicate ids"
+
+    def test_ten_articles_cycle_cleanly_in_pairs(self):
+        # 10 articles / 2 per set = 5 clean pairs, no leftover single-article slide
+        result = pad_to_ten([self._article(i) for i in range(10)])
+        assert len(result) == 10
+        assert len(result) % 2 == 0, "10 articles should divide evenly into pairs"
 
 
 # ── _fallback_articles ────────────────────────────────────────────────────────
 
 class TestFallbackArticles:
 
-    def test_returns_exactly_nine(self):
+    def test_returns_exactly_ten(self):
         articles = _fallback_articles()
-        assert len(articles) == 9
+        assert len(articles) == 10
 
     def test_all_have_required_fields(self):
         for a in _fallback_articles():
@@ -260,7 +342,7 @@ class TestGetNews:
             with patch("prometheus.services.guardian_news._load_env_key", return_value=("", "")):
                 articles, status = get_news()
         assert status == "demo"
-        assert len(articles) == 9
+        assert len(articles) == 10
 
     def test_returns_live_on_successful_fetch(self):
         mock_raw = [
@@ -280,18 +362,17 @@ class TestGetNews:
             articles, status = get_news(api_key="test-key")
 
         assert status == "live"
-        assert 1 <= len(articles) <= 9
+        assert 1 <= len(articles) <= 10
 
     def test_returns_fallback_on_network_error(self):
-        from prometheus.services.guardian_news import fetch_guardian_articles as _fga
         with patch("prometheus.services.guardian_news.fetch_guardian_articles",
                    side_effect=RuntimeError("network error")), \
              patch("prometheus.services.guardian_news._load_env_key", return_value=("key", "url")):
             articles, status = get_news(api_key="key")
         assert status == "fallback"
-        assert len(articles) == 9
+        assert len(articles) == 10
 
-    def test_always_returns_nine_articles(self):
+    def test_always_returns_ten_articles(self):
         mock_raw = [
             {
                 "id": f"art/{i}",
@@ -301,12 +382,46 @@ class TestGetNews:
                 "webPublicationDate": datetime.now(timezone.utc).isoformat(),
                 "fields": {},
             }
-            for i in range(3)  # only 3 raw results
+            for i in range(3)  # only 3 raw results — should pad to 10
         ]
         with patch("prometheus.services.guardian_news.fetch_guardian_articles", return_value=mock_raw), \
              patch("prometheus.services.guardian_news._load_env_key", return_value=("key", "url")):
             articles, status = get_news(api_key="key")
-        assert len(articles) == 9
+        assert len(articles) == 10
+
+    def test_violent_articles_excluded_from_top_ten(self):
+        """Violent headlines should score too low to appear in the top-10 live results."""
+        violent_raw = [
+            {
+                "id": f"violent/{i}",
+                "webTitle": f"Man killed in brutal shooting attack {i}",
+                "webUrl": f"https://guardian.com/violent/{i}",
+                "sectionName": "UK News",
+                "webPublicationDate": datetime.now(timezone.utc).isoformat(),
+                "fields": {"trailText": "Shooting incident reported.", "thumbnail": ""},
+            }
+            for i in range(8)
+        ]
+        calm_raw = [
+            {
+                "id": f"calm/{i}",
+                "webTitle": f"AI and software developer tools advance {i}",
+                "webUrl": f"https://guardian.com/calm/{i}",
+                "sectionName": "Technology",
+                "webPublicationDate": datetime.now(timezone.utc).isoformat(),
+                "fields": {"trailText": "Progress in developer tooling.", "thumbnail": ""},
+            }
+            for i in range(12)
+        ]
+        mock_raw = violent_raw + calm_raw
+        with patch("prometheus.services.guardian_news.fetch_guardian_articles", return_value=mock_raw), \
+             patch("prometheus.services.guardian_news._load_env_key", return_value=("key", "url")):
+            articles, status = get_news(api_key="key")
+        titles = [a["title"].lower() for a in articles]
+        # No violent headline should be in the result set
+        for title in titles:
+            assert "killed" not in title and "shooting" not in title, \
+                f"Violent article should not appear in results: {title!r}"
 
 
 # ── fetch_guardian_articles (unit) ────────────────────────────────────────────

@@ -2,7 +2,7 @@
 prometheus/services/guardian_news.py — Guardian API news service.
 
 Fetches articles from The Guardian, applies Prometheus-specific relevance scoring,
-selects the best 9, and pads with fallback data when the API is unavailable.
+selects the best 10, and pads with fallback data when the API is unavailable.
 
 Config (read from environment at call time — no module-level side effects):
   VITE_GUARDIAN_API_KEY    — Guardian API key
@@ -10,8 +10,7 @@ Config (read from environment at call time — no module-level side effects):
 
 Usage:
   from prometheus.services.guardian_news import get_news
-  articles = get_news()          # returns list of up to 9 normalized article dicts
-  articles = get_news(live=True) # force a live fetch; raise on failure
+  articles = get_news()          # returns list of up to 10 normalized article dicts
 """
 from __future__ import annotations
 
@@ -22,7 +21,7 @@ from typing import Optional
 
 _DEFAULT_URL = "https://content.guardianapis.com/search"
 _FETCH_PAGE_SIZE = 50
-_BEST_COUNT = 9
+_BEST_COUNT = 10
 
 
 # ── Article normalization ─────────────────────────────────────────────────────
@@ -81,46 +80,83 @@ def _time_ago(iso: str) -> str:
 # ── Prometheus relevance scoring ──────────────────────────────────────────────
 
 _HIGH_SIGNAL = [
-    # Technology / AI / Automation
+    # AI / Software / Developer tools
     "artificial intelligence", "ai agent", "llm", "openai", "claude", "gemini", "language model",
     "automation", "software", "coding", "developer", "open source", "algorithm", "machine learning",
-    "data center", "semiconductor", "chips", "robotics", "computing",
-    # Business / Markets
-    "startup", "venture capital", "private equity", "ipo", "merger", "acquisition", "earnings",
-    "inflation", "interest rate", "gdp", "economy", "market", "stock", "investment", "revenue",
-    "supply chain", "trade", "tariff", "unemployment", "recession", "growth",
-    # Education / Microschools
-    "microschool", "school choice", "homeschool", "charter school", "edtech", "education",
-    "learning", "curriculum", "student", "tuition",
-    # Science / Engineering
-    "space", "nasa", "physics", "quantum", "nuclear", "energy", "climate", "engineering",
-    "biology", "medicine", "research", "breakthrough",
-    # Florida / Local
-    "florida", "south florida", "miami", "orlando", "tallahassee", "hurricane", "everglades",
-    # Faith / Culture / Family
+    "data center", "semiconductor", "chips", "robotics", "computing", "vibe coding",
+    # Science / Engineering / Space
+    "space", "nasa", "physics", "quantum", "nuclear energy", "engineering",
+    "biology", "medicine", "research", "breakthrough", "science",
+    # Education / Microschools / School choice
+    "microschool", "school choice", "homeschool", "charter school", "edtech",
+    "education reform", "learning", "curriculum", "alternative school",
+    # Entrepreneurship / Startups / Product building
+    "startup", "founder", "entrepreneur", "venture capital", "ipo",
+    "marketplace", "directory", "saas", "bootstrapped", "build in public",
+    "small business", "product launch", "private equity",
+    # Florida / Arizona / Utah / Sun Belt
+    "florida", "south florida", "miami", "orlando", "tallahassee",
+    "arizona", "utah", "sun belt",
+    # Faith / Culture / Family / Community
     "faith", "church", "family", "parenting", "culture", "tradition", "community", "character",
-    # Health / Fitness
-    "fitness", "nutrition", "gym", "spartan", "health", "training", "longevity", "sleep",
-    # Geopolitics
-    "geopolitics", "conflict", "war", "nato", "china", "russia", "middle east", "election",
-    "president", "congress", "supreme court", "regulation", "policy",
-    # Media / Entertainment
-    "gaming", "xbox", "spotify", "film", "music", "design", "architecture", "creative",
+    # Health / Fitness / Performance
+    "fitness", "nutrition", "spartan", "health", "training", "longevity", "sleep", "performance",
+    # Design / UI / UX / Creative tools
+    "design", "ui design", "ux", "dashboard", "interface design", "creative tools", "architecture",
+    # Markets / Economy (practical, not crisis-driven)
+    "inflation", "interest rate", "economy", "investment", "supply chain",
+    "trade", "recession", "earnings", "revenue", "growth",
+    # Gaming / Tech culture (selective)
+    "gaming", "xbox", "open source game",
 ]
 
 _MEDIUM_SIGNAL = [
+    # General business
     "company", "ceo", "fund", "infrastructure", "logistics", "pricing", "demand",
-    "manufacturing", "exports", "imports", "housing", "federal", "senate", "governor",
-    "university", "professor", "study", "analysis", "report", "trend",
+    "manufacturing", "exports", "imports", "housing", "acquisition", "merger",
+    # Policy / Government (medium, not high, to avoid rewarding crisis coverage)
+    "policy", "regulation", "federal", "senate", "governor", "congress", "election",
+    "president", "supreme court",
+    # Academia / Analysis
+    "university", "professor", "study", "analysis", "report", "trend", "research paper",
+    # Geopolitics (analytical coverage, boosted further by analysis title logic)
+    "geopolitics", "nato", "china", "russia", "middle east",
 ]
 
 _PENALTY = [
     # Celebrity / clickbait
     "celebrity", "kardashian", "influencer", "dating rumor", "red carpet", "award show",
-    # Low-signal crime / sports
-    "arrested for", "convicted of", "scored against", "match result", "game score",
+    # Low-signal sports scores
+    "scored against", "match result", "game score",
     # UK-only narrow politics
-    "parliament uk", "labour party", "conservative party", "tory", "westminster",
+    "labour party", "conservative party", "tory", "westminster",
+    # Sensational framing
+    "shocking", "outrage", "slams", "destroys", "explodes at",
+]
+
+# Title-level violent/sensational terms — applied to the headline only.
+# Each match subtracts 10 points. A single match is enough to nearly eliminate
+# a typical article from the top-10 selection.
+_VIOLENT_TITLE_TERMS: list[str] = [
+    "kill", "killed", "killing", "kills",
+    "murder", "murdered",
+    "stabbing", "stabbed",
+    "shooting", "shot dead",
+    "dead body", "bodies found", "corpse",
+    "bombing", "bomb blast", "bomb attack",
+    "missile strike", "drone strike", "airstrike", "air strike",
+    "massacre",
+    "rape", "sexual assault",
+    "horror", "horrifying",
+    "brutal", "brutally",
+    "bloodshed", "bloodbath",
+    "execution", "executed",
+    "terror attack", "terrorist attack",
+    "hostage",
+    "genocide", "ethnic cleansing",
+    "famine", "starvation",
+    "tragedy", "tragic death",
+    "death toll", "casualties",
 ]
 
 
@@ -128,15 +164,33 @@ def prometheus_relevance_score(article: dict) -> float:
     """
     Score an article for relevance to Tate's interests.
 
-    High: AI/tech, business/markets, education, science, Florida/local, faith/culture,
-          health/fitness, geopolitics, gaming/entertainment, design.
-    Medium: general business indicators, policy, academia.
-    Penalty: celebrity gossip, low-signal crime/sports scores, narrow UK politics.
-    Boost: recency, analysis/explainer.
+    Positive: AI/tech, entrepreneurship, education/microschools, science/space,
+              Florida/Arizona/Utah, faith/culture, health/fitness, design/UX,
+              practical economics, gaming/tech culture.
+    Medium: general business, policy, geopolitics (analytical).
+    Penalty: violent/sensational headlines (title-level), celebrity gossip, clickbait.
+    Boost: recency, analysis/explainer framing.
+
+    Violent/sensational terms in the title apply a strong -10 penalty each.
+    The same terms in the summary apply a lighter -2 penalty (analytical context).
     """
-    hay = f"{article.get('title','')} {article.get('summary','')} {article.get('tag','')}".lower()
+    title = (article.get("title") or "").lower()
+    summary = (article.get("summary") or "").lower()
+    tag = (article.get("tag") or "").lower()
+    hay = f"{title} {summary} {tag}"
 
     score = 0.0
+
+    # Violent/sensational title penalty — strong; nearly disqualifies the article
+    for kw in _VIOLENT_TITLE_TERMS:
+        if kw in title:
+            score -= 10.0
+
+    # Same terms in summary only — lighter penalty (analytical article may reference these)
+    for kw in _VIOLENT_TITLE_TERMS:
+        if kw in summary:
+            score -= 2.0
+
     for kw in _HIGH_SIGNAL:
         if kw in hay:
             score += 5.0
@@ -168,16 +222,16 @@ def prometheus_relevance_score(article: dict) -> float:
             pass
 
     # Section tag boosts
-    tag = (article.get("tag") or "").lower()
-    if tag in ("technology", "business", "science", "education", "us-news"):
+    if tag in ("technology", "science", "education"):
+        score += 4.0
+    elif tag in ("business", "us-news"):
         score += 3.0
-    elif tag in ("world", "environment", "politics", "media", "sport"):
+    elif tag in ("world", "environment", "politics", "media"):
         score += 1.0
 
-    # Analysis/explainer boost — tends to be higher signal
-    title_lower = (article.get("title") or "").lower()
-    if any(kw in title_lower for kw in ("explained", "analysis", "what is", "why ", "how ")):
-        score += 3.0
+    # Analysis/explainer framing boost — high signal for analytical content
+    if any(kw in title for kw in ("explained", "analysis", "what is", "why ", "how ", "guide to", "deep dive")):
+        score += 4.0
 
     return score
 
@@ -185,7 +239,7 @@ def prometheus_relevance_score(article: dict) -> float:
 # ── Fallback data ─────────────────────────────────────────────────────────────
 
 def _fallback_articles() -> list[dict]:
-    """9 Prometheus-specific fallback articles shown when API is unavailable."""
+    """10 Prometheus-specific fallback articles shown when API is unavailable."""
     now_iso = datetime.now(timezone.utc).isoformat()
 
     def _mk(rank: int, title: str, tag: str, summary: str) -> dict:
@@ -231,6 +285,9 @@ def _fallback_articles() -> list[dict]:
         _mk(9, "Design and architecture for focus: building environments that perform",
             "Design",
             "How space, light, and acoustic design influence cognitive output — principles from research and practice."),
+        _mk(10, "Startup directories and marketplaces: how builders find traction in 2026",
+            "Business",
+            "Product directories, community-led marketplaces, and niche platforms are replacing cold outreach as the primary discovery channel for indie builders."),
     ]
 
 
@@ -310,8 +367,8 @@ def fetch_guardian_articles(
     return results
 
 
-def pad_to_nine(articles: list[dict]) -> list[dict]:
-    """Ensure exactly 9 articles by padding with fallback items."""
+def pad_to_ten(articles: list[dict]) -> list[dict]:
+    """Ensure exactly 10 articles by padding with fallback items."""
     out = list(articles[:_BEST_COUNT])
     if len(out) >= _BEST_COUNT:
         return out
@@ -331,7 +388,7 @@ def get_news(
     base_url: str = "",
 ) -> tuple[list[dict], str]:
     """
-    Fetch, score, and return the best 9 Guardian articles.
+    Fetch, score, and return the best 10 Guardian articles.
 
     Returns (articles, status) where status is one of:
       "live"     — fetched from API
@@ -353,7 +410,7 @@ def get_news(
         normalized = [a for a in normalized if a["title"] and a["href"]]
         normalized.sort(key=prometheus_relevance_score, reverse=True)
         best = normalized[:_BEST_COUNT]
-        padded = pad_to_nine(best)
+        padded = pad_to_ten(best)
         return padded, "live"
     except Exception:
         return _fallback_articles(), "fallback"

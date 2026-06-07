@@ -25,7 +25,7 @@ if str(_ROOT) not in sys.path:
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-def _mock_articles(n: int = 9) -> list[dict]:
+def _mock_articles(n: int = 10) -> list[dict]:
     return [
         {
             "id": f"art-{i}",
@@ -101,10 +101,10 @@ class TestCanonicalPath:
 
 class TestBuildHudState:
 
-    def test_news_card_has_9_articles(self):
+    def test_news_card_has_10_articles(self):
         from prometheus.services.hud_state_writer import build_hud_state
-        state = build_hud_state(_mock_articles(9), "live")
-        assert len(state["cards"]["news"]["articles"]) == 9
+        state = build_hud_state(_mock_articles(10), "live")
+        assert len(state["cards"]["news"]["articles"]) == 10
 
     def test_news_chip_live(self):
         from prometheus.services.hud_state_writer import build_hud_state
@@ -116,7 +116,7 @@ class TestBuildHudState:
 
     def test_items_populated_from_first_3_articles(self):
         from prometheus.services.hud_state_writer import build_hud_state
-        items = build_hud_state(_mock_articles(9), "live")["cards"]["news"]["items"]
+        items = build_hud_state(_mock_articles(10), "live")["cards"]["news"]["items"]
         assert len(items) == 3
         assert all(isinstance(i, dict) and "label" in i for i in items)
 
@@ -303,9 +303,9 @@ class TestWriteDashboardState:
         original = _mod._DASHBOARD_STATE_PATH
         _mod._DASHBOARD_STATE_PATH = tmp_path / "dashboard_state.json"
         try:
-            _mod.write_dashboard_state(_mock_articles(9), "live")
+            _mod.write_dashboard_state(_mock_articles(10), "live")
             data = json.loads(_mod._DASHBOARD_STATE_PATH.read_text())
-            assert len(data["cards"]["news"]["articles"]) == 9
+            assert len(data["cards"]["news"]["articles"]) == 10
         finally:
             _mod._DASHBOARD_STATE_PATH = original
 
@@ -332,7 +332,7 @@ class TestFetchNewsInternal:
         with patch("prometheus.services.guardian_news._load_env_key", return_value=("", "")):
             articles, status = get_news()
         assert status == "demo"
-        assert len(articles) == 9
+        assert len(articles) == 10
 
     def test_fetch_news_returns_fallback_on_network_error(self):
         from prometheus.services.hud_state_writer import _fetch_news
@@ -342,12 +342,12 @@ class TestFetchNewsInternal:
                    return_value=("some-key", "https://api")):
             articles, status = _fetch_news()
         assert status == "fallback"
-        assert len(articles) == 9
+        assert len(articles) == 10
 
 
 # ── ReadonlyDashboard ─────────────────────────────────────────────────────────
 
-def _make_state_with_calendar(tmp_path: Path, cal_events: list | None = None, n_articles: int = 9) -> Path:
+def _make_state_with_calendar(tmp_path: Path, cal_events: list | None = None, n_articles: int = 10) -> Path:
     """Write a full dashboard_state.json to tmp_path and return the path."""
     state_file = tmp_path / "dashboard_state.json"
     state_file.write_text(json.dumps({
@@ -423,10 +423,10 @@ class TestReadonlyDashboard:
         assert "calendar" in d["cards"], "cards.calendar must be present in /state"
         assert d["cards"]["calendar"]["status"] == "live"
 
-    def test_news_has_9_articles(self):
+    def test_news_has_10_articles(self):
         code, body = self._get("/news")
         assert code == 200
-        assert len(json.loads(body)["articles"]) == 9
+        assert len(json.loads(body)["articles"]) == 10
 
     def test_root_html_is_html(self):
         code, body = self._get("/")
@@ -545,13 +545,13 @@ class TestGodotStateSchema:
 
     def test_news_articles_is_list(self):
         from prometheus.services.hud_state_writer import build_hud_state
-        articles = build_hud_state(_mock_articles(9), "live")["cards"]["news"]["articles"]
+        articles = build_hud_state(_mock_articles(10), "live")["cards"]["news"]["articles"]
         assert isinstance(articles, list)
-        assert len(articles) == 9
+        assert len(articles) == 10
 
     def test_each_article_has_title_and_section(self):
         from prometheus.services.hud_state_writer import build_hud_state
-        for a in build_hud_state(_mock_articles(9), "live")["cards"]["news"]["articles"]:
+        for a in build_hud_state(_mock_articles(10), "live")["cards"]["news"]["articles"]:
             assert "title" in a
             assert ("section" in a or "tag" in a)
 
@@ -568,15 +568,15 @@ class TestGodotStateSchema:
         articles_out = build_hud_state(articles_in, "live")["cards"]["news"]["articles"]
         assert articles_out[0]["thumb"] == "https://media.guim.co.uk/thumb.jpg"
 
-    def test_news_still_has_exactly_9_articles(self):
+    def test_news_still_has_exactly_10_articles(self):
         from prometheus.services.hud_state_writer import build_hud_state
-        state = build_hud_state(_mock_articles(9), "live", _mock_cal_events(3), "live", "2026-06-06")
-        assert len(state["cards"]["news"]["articles"]) == 9
+        state = build_hud_state(_mock_articles(10), "live", _mock_cal_events(3), "live", "2026-06-06")
+        assert len(state["cards"]["news"]["articles"]) == 10
 
 
 # ── Thumbnail end-to-end ──────────────────────────────────────────────────────
 
-def _mock_articles_with_thumb(n: int = 9) -> list[dict]:
+def _mock_articles_with_thumb(n: int = 10) -> list[dict]:
     articles = _mock_articles(n)
     articles[0]["thumb"] = "https://media.guim.co.uk/sample/500.jpg"
     articles[0]["thumbnail"] = "https://media.guim.co.uk/sample/500.jpg"
@@ -602,7 +602,7 @@ class TestThumbnailEndToEnd:
                     "title": "News",
                     "chip": "LIVE",
                     "status": "live",
-                    "articles": _mock_articles_with_thumb(9),
+                    "articles": _mock_articles_with_thumb(10),
                     "items": [],
                 },
                 "calendar": {
@@ -638,7 +638,7 @@ class TestThumbnailEndToEnd:
         assert code == 200
         data = json.loads(body)
         articles = data.get("articles", [])
-        assert len(articles) == 9
+        assert len(articles) == 10
         assert articles[0].get("thumb") == "https://media.guim.co.uk/sample/500.jpg"
 
     def test_html_includes_img_tag_when_thumb_present(self):
