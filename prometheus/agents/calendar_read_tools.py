@@ -47,6 +47,8 @@ def _to_rfc3339(dt: datetime) -> str:
 # ── Event serialization ───────────────────────────────────────────────────────
 
 def _event_to_dict(event: GoogleCalendarEvent) -> dict:
+    raw = event.raw or {}
+    color_id = str(raw.get("colorId") or "")
     return {
         "event_id": event.event_id,
         "title": event.title,
@@ -56,6 +58,7 @@ def _event_to_dict(event: GoogleCalendarEvent) -> dict:
         "description": event.description,
         "calendar_id": event.calendar_id,
         "is_all_day": _is_all_day(event),
+        "color_id": color_id,
     }
 
 

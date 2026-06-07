@@ -662,3 +662,184 @@ class TestThumbnailEndToEnd:
         text = body.decode().lower()
         assert "sk-" not in text
         assert "api_key" not in text or "[redacted]" in text or "read-only" in text
+
+
+# ── GOAL E: Calendar refresh default 60s ─────────────────────────────────────
+
+class TestCalendarRefreshDefault:
+
+    def test_cal_refresh_default_is_60s(self):
+        import importlib
+        import prometheus.services.hud_state_writer as _mod
+        saved = os.environ.pop("PROMETHEUS_CAL_REFRESH_SECONDS", None)
+        try:
+            importlib.reload(_mod)
+            assert _mod._CAL_REFRESH_SECONDS == 60
+        finally:
+            if saved is not None:
+                os.environ["PROMETHEUS_CAL_REFRESH_SECONDS"] = saved
+            importlib.reload(_mod)
+
+    def test_cal_refresh_env_override(self):
+        import importlib
+        import prometheus.services.hud_state_writer as _mod
+        saved = os.environ.get("PROMETHEUS_CAL_REFRESH_SECONDS")
+        os.environ["PROMETHEUS_CAL_REFRESH_SECONDS"] = "300"
+        try:
+            importlib.reload(_mod)
+            assert _mod._CAL_REFRESH_SECONDS == 300
+        finally:
+            if saved is not None:
+                os.environ["PROMETHEUS_CAL_REFRESH_SECONDS"] = saved
+            else:
+                os.environ.pop("PROMETHEUS_CAL_REFRESH_SECONDS", None)
+            importlib.reload(_mod)
+
+
+# ── GOAL F: Google Calendar event color fields ─────────────────────────────────
+
+class TestGoogleColorMap:
+
+    def test_color_map_has_11_entries(self):
+        from prometheus.services.hud_state_writer import _GOOGLE_COLOR_MAP
+        assert len(_GOOGLE_COLOR_MAP) == 11
+
+    def test_color_map_keys_are_strings_1_to_11(self):
+        from prometheus.services.hud_state_writer import _GOOGLE_COLOR_MAP
+        assert set(_GOOGLE_COLOR_MAP.keys()) == {str(i) for i in range(1, 12)}
+
+    def test_color_map_values_are_hex_strings(self):
+        from prometheus.services.hud_state_writer import _GOOGLE_COLOR_MAP
+        for k, v in _GOOGLE_COLOR_MAP.items():
+            assert v.startswith("#") and len(v) == 7, f"Bad hex for colorId {k!r}: {v!r}"
+
+    def test_peacock_is_correct_hex(self):
+        from prometheus.services.hud_state_writer import _GOOGLE_COLOR_MAP
+        assert _GOOGLE_COLOR_MAP["7"] == "#039BE5"  # Peacock
+
+
+class TestCalendarEventColorFields:
+
+    def _events_with_color(self, color_id: str = "7") -> list[dict]:
+        return [
+            {
+                "title": "Color Meeting",
+                "start_time": "2099-01-01T10:00:00+00:00",
+                "end_time": "2099-01-01T11:00:00+00:00",
+                "is_all_day": False,
+                "color_id": color_id,
+            }
+        ]
+
+    def test_event_with_color_id_gets_color_hex(self):
+        from prometheus.services.hud_state_writer import _calendar_card_payload
+        payload = _calendar_card_payload(self._events_with_color("7"), "2099-01-01", "live")
+        ev = payload["events"][0]
+        assert ev["color_id"] == "7"
+        assert ev["color_hex"] == "#039BE5"
+        assert ev["accent_color"] == "#039BE5"
+
+    def test_event_without_color_id_gets_empty_strings(self):
+        from prometheus.services.hud_state_writer import _calendar_card_payload
+        evs = [
+            {
+                "title": "No Color",
+                "start_time": "2099-01-01T10:00:00+00:00",
+                "end_time": "2099-01-01T11:00:00+00:00",
+                "is_all_day": False,
+            }
+        ]
+        payload = _calendar_card_payload(evs, "2099-01-01", "live")
+        ev = payload["events"][0]
+        assert ev["color_id"] == ""
+        assert ev["color_hex"] == ""
+        assert ev["accent_color"] == ""
+
+    def test_event_with_unknown_color_id_gets_empty_hex(self):
+        from prometheus.services.hud_state_writer import _calendar_card_payload
+        payload = _calendar_card_payload(self._events_with_color("99"), "2099-01-01", "live")
+        ev = payload["events"][0]
+        assert ev["color_id"] == "99"
+        assert ev["color_hex"] == ""
+        assert ev["accent_color"] == ""
+
+    def test_all_11_color_ids_resolve(self):
+        from prometheus.services.hud_state_writer import _calendar_card_payload, _GOOGLE_COLOR_MAP
+        for cid in [str(i) for i in range(1, 12)]:
+            evs = [
+                {
+                    "title": f"Event {cid}",
+                    "start_time": "2099-01-01T10:00:00+00:00",
+                    "end_time": "2099-01-01T11:00:00+00:00",
+                    "is_all_day": False,
+                    "color_id": cid,
+                }
+            ]
+            payload = _calendar_card_payload(evs, "2099-01-01", "live")
+            ev = payload["events"][0]
+            assert ev["color_hex"] == _GOOGLE_COLOR_MAP[cid], f"Wrong hex for colorId={cid}"
+            assert ev["accent_color"] == _GOOGLE_COLOR_MAP[cid]
+
+    def test_required_color_fields_always_present(self):
+        from prometheus.services.hud_state_writer import build_hud_state
+        evs = _mock_cal_events(3)
+        state = build_hud_state(_mock_articles(), "live", evs, "live", "2026-06-06")
+        for ev in state["cards"]["calendar"]["events"]:
+            assert "color_id" in ev, "color_id must be present"
+            assert "color_hex" in ev, "color_hex must be present"
+            assert "accent_color" in ev, "accent_color must be present"
+
+
+class TestEventToDictColorId:
+
+    def test_color_id_extracted_from_raw(self):
+        from prometheus.integrations.google_calendar import GoogleCalendarEvent
+        from prometheus.agents.calendar_read_tools import _event_to_dict
+        raw = {"colorId": "3", "summary": "Test Event"}
+        ev = GoogleCalendarEvent(
+            event_id="e1",
+            calendar_id="primary",
+            title="Test Event",
+            start_time="2026-06-06T09:00:00Z",
+            end_time="2026-06-06T10:00:00Z",
+            location=None,
+            description=None,
+            html_link=None,
+            raw=raw,
+        )
+        d = _event_to_dict(ev)
+        assert d["color_id"] == "3"
+
+    def test_color_id_empty_when_raw_missing(self):
+        from prometheus.integrations.google_calendar import GoogleCalendarEvent
+        from prometheus.agents.calendar_read_tools import _event_to_dict
+        ev = GoogleCalendarEvent(
+            event_id="e2",
+            calendar_id="primary",
+            title="No Color",
+            start_time="2026-06-06T09:00:00Z",
+            end_time=None,
+            location=None,
+            description=None,
+            html_link=None,
+            raw=None,
+        )
+        d = _event_to_dict(ev)
+        assert d["color_id"] == ""
+
+    def test_color_id_empty_when_colorId_absent_in_raw(self):
+        from prometheus.integrations.google_calendar import GoogleCalendarEvent
+        from prometheus.agents.calendar_read_tools import _event_to_dict
+        ev = GoogleCalendarEvent(
+            event_id="e3",
+            calendar_id="primary",
+            title="No Color Field",
+            start_time="2026-06-06T09:00:00Z",
+            end_time=None,
+            location=None,
+            description=None,
+            html_link=None,
+            raw={"summary": "No colorId"},
+        )
+        d = _event_to_dict(ev)
+        assert d["color_id"] == ""

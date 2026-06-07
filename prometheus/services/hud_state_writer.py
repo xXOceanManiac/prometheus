@@ -46,7 +46,7 @@ _MEMORY_PATH = Path.home() / ".jarvis" / "memory_v2" / "mission_state.json"
 
 _STATE_SYNC_SECONDS = int(os.getenv("PROMETHEUS_STATE_SYNC_SECONDS", "5"))
 _NEWS_REFRESH_SECONDS = int(os.getenv("PROMETHEUS_NEWS_REFRESH_SECONDS", "600"))
-_CAL_REFRESH_SECONDS = int(os.getenv("PROMETHEUS_CAL_REFRESH_SECONDS", "900"))
+_CAL_REFRESH_SECONDS = int(os.getenv("PROMETHEUS_CAL_REFRESH_SECONDS", "60"))
 _LOG_HEARTBEAT_SECONDS = 60.0
 
 _STATE_MAP = {
@@ -132,6 +132,24 @@ def _read_activity_lines(n: int = 6) -> list[str]:
         pass
     return list(reversed(lines)) if lines else ["HUD bridge active", "Prometheus monitoring"]
 
+
+# ── Google Calendar color map ─────────────────────────────────────────────────
+
+# Maps Google Calendar colorId (1-11) → hex color string.
+# Source: https://developers.google.com/calendar/api/v3/reference/colors
+_GOOGLE_COLOR_MAP: dict[str, str] = {
+    "1":  "#7986CB",  # Lavender
+    "2":  "#33B679",  # Sage
+    "3":  "#8E24AA",  # Grape
+    "4":  "#E67C73",  # Flamingo
+    "5":  "#F6BF26",  # Banana
+    "6":  "#F4511E",  # Tangerine
+    "7":  "#039BE5",  # Peacock
+    "8":  "#616161",  # Graphite
+    "9":  "#3F51B5",  # Blueberry
+    "10": "#0B8043",  # Basil
+    "11": "#D50000",  # Tomato
+}
 
 # ── Calendar helpers ──────────────────────────────────────────────────────────
 
@@ -232,6 +250,9 @@ def _calendar_card_payload(
                 is_next = True
                 first_future_marked = True
 
+        color_id = str(ev.get("color_id") or "")
+        color_hex = _GOOGLE_COLOR_MAP.get(color_id, "")
+
         hud_events.append({
             "title": title,
             "start_time": start,
@@ -241,6 +262,9 @@ def _calendar_card_payload(
             "source": "Google Calendar",
             "is_now": is_now,
             "is_next": is_next,
+            "color_id": color_id,
+            "color_hex": color_hex,
+            "accent_color": color_hex,
         })
 
         label = f"{time_label}  {title}" if time_label and time_label != "All Day" else title
