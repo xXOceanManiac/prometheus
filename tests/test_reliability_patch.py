@@ -80,10 +80,10 @@ class Test1ResponseGuardBlocksDuplicate(unittest.TestCase):
         log_file = LOG_DIR / f"{today}.jsonl"
         self.assertTrue(log_file.exists())
         logged = any(
-            "response_guard_blocked" in line
+            "response_create_skipped_active" in line
             for line in log_file.read_text().splitlines()[-20:]
         )
-        self.assertTrue(logged, "response_guard_blocked must be logged")
+        self.assertTrue(logged, "response_create_skipped_active must be logged")
 
 
 # ── 2. Guard resets correctly ─────────────────────────────────────────────────
