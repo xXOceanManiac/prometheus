@@ -34,6 +34,7 @@ class Test1ResponseGuardBlocksDuplicate(unittest.TestCase):
         from realtime_client import RealtimePrometheusClient
         c = object.__new__(RealtimePrometheusClient)
         c._response_active = False
+        c._current_trace_id = ""
         c.ws = MagicMock()
         return c
 
