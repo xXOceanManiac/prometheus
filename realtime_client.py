@@ -101,9 +101,9 @@ class RealtimePrometheusClient:
         self._turn_start_ts: float = 0.0  # monotonic time when user started speaking
         # Per-request trace ID — generated at begin_user_turn, propagated through all turn events
         self._current_trace_id: str = ""
-        # Bytes of audio sent since the last input_audio_buffer.committed event.
-        # Reset to 0 when server_vad auto-commits (or on turn start).
-        # Used in end_audio() to skip a redundant commit when the buffer is already empty.
+        # Bytes of audio sent since the last begin_user_turn() call.
+        # Reset to 0 on begin_user_turn() and on input_audio_buffer.committed.
+        # Used in end_audio() to skip a commit when no audio was captured.
         self._audio_bytes_since_commit: int = 0
 
         # Vault / workspace context injected before or during a session
@@ -765,6 +765,8 @@ class RealtimePrometheusClient:
             "voice": self.voice,
             "modalities": ["text", "audio"],
             "instructions_length": len(_instructions),
+            "turn_detection": "disabled",
+            "input_audio_transcription": "enabled",
         })
 
         # Audit headers — only Authorization is permitted
@@ -780,6 +782,12 @@ class RealtimePrometheusClient:
             "session": {
                 "type": "realtime",
                 "instructions": _instructions,
+                # PTT mode: disable server_vad so the server never auto-commits or
+                # auto-creates a response before the user releases the PTT button.
+                # Manual commit + manual response.create own the full turn lifecycle.
+                "turn_detection": None,
+                # Keep input transcription active so transcript events still fire.
+                "input_audio_transcription": {},
             },
         }
 
@@ -959,7 +967,7 @@ class RealtimePrometheusClient:
         Strips 'modalities' — unknown parameter in the GA Realtime API; session defaults apply.
         """
         if self._response_active:
-            log_event("response_guard_blocked", {"trace_id": self._current_trace_id, "context": context[:80]})
+            log_event("response_create_skipped_active", {"trace_id": self._current_trace_id, "context": context[:80]})
             print(f"[DBG] response.create BLOCKED (already active) ctx={context}")
             return False
         cleaned = {k: v for k, v in response_payload.items() if k != "modalities"}
@@ -1072,15 +1080,25 @@ class RealtimePrometheusClient:
         self._override_handled = False
         self._drop_audio_until = 0.0
 
-        # Yield one event-loop tick so the receiver can process any server events
-        # already in the WebSocket buffer (e.g. response.created or
-        # input_audio_buffer.committed from server_vad) before we decide to commit.
-        await asyncio.sleep(0)
-
+        # server_vad is disabled — no racing auto-commit or auto-response events.
+        # Guards are evaluated synchronously against current state.
         _MIN_COMMIT_BYTES = 3200
-        if self._response_active or self._audio_bytes_since_commit < _MIN_COMMIT_BYTES:
-            print(f"[DBG] end_audio: skip commit ({self._audio_bytes_since_commit} bytes, response_active={self._response_active})")
-            log_event("end_audio_skip", {"trace_id": self._current_trace_id, "bytes": self._audio_bytes_since_commit, "response_active": self._response_active})
+        if self._audio_bytes_since_commit < _MIN_COMMIT_BYTES:
+            log_event("user_turn_commit_skipped", {
+                "trace_id": self._current_trace_id,
+                "reason": "insufficient_audio",
+                "bytes": self._audio_bytes_since_commit,
+            })
+            print(f"[DBG] end_audio: commit skipped ({self._audio_bytes_since_commit} bytes < {_MIN_COMMIT_BYTES})")
+            self.busy = False
+            return
+
+        if self._response_active:
+            log_event("response_create_skipped_active", {
+                "trace_id": self._current_trace_id,
+                "context": "end_audio_ptt",
+            })
+            print("[DBG] end_audio: response.create skipped (response already active)")
             return
 
         log_event("user_turn_committed", {"trace_id": self._current_trace_id})
@@ -1404,7 +1422,11 @@ class RealtimePrometheusClient:
                     err_msg = str(err_obj.get("message") or str(event))[:200]
                     err_param = str(err_obj.get("param") or "")
                     err_event_id = str(err_obj.get("event_id") or "")
-                    log_event("realtime_api_error", {"code": err_code, "message": err_msg})
+                    log_event("realtime_api_error", {
+                        "trace_id": self._current_trace_id,
+                        "code": err_code,
+                        "message": err_msg,
+                    })
                     print(f"[DBG] REALTIME ERROR code={err_code!r} msg={err_msg!r} param={err_param!r} event_id={err_event_id!r}")
                     # Quota / billing errors — server will close the socket next;
                     # disable reconnect so _reconnect_with_backoff() aborts cleanly.
@@ -1413,15 +1435,18 @@ class RealtimePrometheusClient:
                         self._set_quota_exceeded(f"error_event:{err_code}")
                         self._fire_response_done_events()
                         continue  # server closes the socket next
-                    # Non-fatal errors that must not stop an active response:
-                    # - buffer errors: PTT double-commit after server_vad already committed
-                    # - already_active: server_vad and client both created a response
+                    # With server_vad disabled these should not occur, but kept as
+                    # non-fatal in case of transient server behaviour.
                     _NON_FATAL_ERRORS = {
                         "input_audio_buffer_commit_empty",
                         "input_audio_buffer_flush_empty",
                         "conversation_already_has_active_response",
                     }
                     if err_code in _NON_FATAL_ERRORS:
+                        log_event("realtime_unexpected_non_fatal_error", {
+                            "trace_id": self._current_trace_id,
+                            "code": err_code,
+                        })
                         continue
                     self.busy = False
                     self._response_active = False
@@ -1443,6 +1468,11 @@ class RealtimePrometheusClient:
                     == "conversation.item.input_audio_transcription.completed"
                 ):
                     transcript = event.get("transcript", "")
+                    log_event("input_transcript_completed", {
+                        "trace_id": self._current_trace_id,
+                        "length": len(transcript),
+                        "preview": transcript[:80] if transcript else "",
+                    })
                     if transcript:
                         notify(f"Heard: {transcript}")
                         ts_transcription_ms = (
