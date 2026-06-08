@@ -8,7 +8,7 @@ import shutil
 import subprocess
 import time
 import webbrowser
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 import requests
@@ -43,11 +43,131 @@ def notify_voice_error(action: str, error: str) -> None:
         pass
 
 
+class ToolStatus:
+    """String constants for ToolResult.status. Use these instead of bare strings."""
+    VERIFIED_SUCCESS = "verified_success"
+    ACCEPTED_UNVERIFIED = "accepted_unverified"
+    VERIFIED_FAILURE = "verified_failure"
+    TOOL_FAILURE = "tool_failure"
+    BLOCKED = "blocked"
+    PENDING_CONFIRMATION = "pending_confirmation"
+
+
 @dataclass
 class ToolResult:
+    """
+    Result of a tool execution.
+
+    status — one of ToolStatus constants:
+      verified_success    : tool ran AND post-execution check confirmed outcome
+      accepted_unverified : tool ran and reported ok=True; outcome not independently confirmed
+      verified_failure    : tool ran but post-execution check confirmed the action did not take effect
+      tool_failure        : tool raised an exception or returned ok=False at execution time
+      blocked             : action refused by policy or safety check before execution
+      pending_confirmation: action is queued awaiting explicit user confirmation
+
+    Backward compat: ToolResult(ok=True, message="...") is valid — status defaults to
+    "accepted_unverified" when ok=True, "tool_failure" when ok=False.
+    """
     ok: bool
     message: str
     data: dict[str, Any] | None = None
+    status: str = ""
+    verified: bool = False
+    verification_summary: str = ""
+    confidence: float = 0.0
+    expected_state: dict[str, Any] = field(default_factory=dict)
+    actual_state: dict[str, Any] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        if not self.status:
+            self.status = ToolStatus.ACCEPTED_UNVERIFIED if self.ok else ToolStatus.TOOL_FAILURE
+
+    # ── Factory class methods ─────────────────────────────────────────────────
+
+    @classmethod
+    def verified_success(
+        cls,
+        message: str,
+        *,
+        data: dict[str, Any] | None = None,
+        summary: str = "",
+        confidence: float = 1.0,
+        actual_state: dict[str, Any] | None = None,
+    ) -> "ToolResult":
+        return cls(
+            ok=True, message=message, data=data,
+            status=ToolStatus.VERIFIED_SUCCESS, verified=True,
+            verification_summary=summary, confidence=confidence,
+            actual_state=actual_state or {},
+        )
+
+    @classmethod
+    def accepted_unverified(
+        cls,
+        message: str,
+        *,
+        data: dict[str, Any] | None = None,
+        confidence: float = 0.0,
+    ) -> "ToolResult":
+        return cls(
+            ok=True, message=message, data=data,
+            status=ToolStatus.ACCEPTED_UNVERIFIED, verified=False,
+            confidence=confidence,
+        )
+
+    @classmethod
+    def verified_failure(
+        cls,
+        message: str,
+        *,
+        data: dict[str, Any] | None = None,
+        summary: str = "",
+        confidence: float = 0.9,
+        actual_state: dict[str, Any] | None = None,
+    ) -> "ToolResult":
+        return cls(
+            ok=False, message=message, data=data,
+            status=ToolStatus.VERIFIED_FAILURE, verified=False,
+            verification_summary=summary, confidence=confidence,
+            actual_state=actual_state or {},
+        )
+
+    @classmethod
+    def tool_failure(
+        cls,
+        message: str,
+        *,
+        data: dict[str, Any] | None = None,
+    ) -> "ToolResult":
+        return cls(
+            ok=False, message=message, data=data,
+            status=ToolStatus.TOOL_FAILURE, verified=False,
+        )
+
+    @classmethod
+    def blocked(
+        cls,
+        message: str,
+        *,
+        data: dict[str, Any] | None = None,
+    ) -> "ToolResult":
+        return cls(
+            ok=False, message=message, data=data,
+            status=ToolStatus.BLOCKED, verified=False,
+        )
+
+    @classmethod
+    def pending_confirmation(
+        cls,
+        message: str,
+        *,
+        data: dict[str, Any] | None = None,
+    ) -> "ToolResult":
+        return cls(
+            ok=True, message=message, data=data,
+            status=ToolStatus.PENDING_CONFIRMATION, verified=False,
+        )
 
 
 HARDCODED_HA_SCRIPTS: dict[str, str] = {
@@ -1524,6 +1644,9 @@ class ToolRegistry:
             "trace_id": trace_id,
             "action": action_name or "multi_action",
             "ok": out.ok,
+            "status": out.status,
+            "verified": out.verified,
+            "verification_summary": out.verification_summary[:100] if out.verification_summary else "",
             "message": out.message[:200],
             "data_keys": list((out.data or {}).keys()),
         })
