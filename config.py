@@ -89,6 +89,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "gesture_control_enabled": False,
     "vision_enabled": True,
     "vault_path": "",
+    "ha_light_entity": "",      # e.g. "light.rgb_strip" — leave empty to skip light verification
     "workspace_poll_interval": 5.0,
     "ollama_model": "mistral",
     "ollama_url": "http://localhost:11434",

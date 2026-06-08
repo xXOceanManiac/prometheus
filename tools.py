@@ -777,6 +777,7 @@ class ToolRegistry:
             episodes=self.episodes,
         )
         self.worker_pool: Any | None = None  # set by main.py after pool starts
+        self._current_trace_id: str = ""   # updated by execute() for sub-call access
 
     def schemas(self) -> list[dict[str, Any]]:
         return [
@@ -1620,6 +1621,7 @@ class ToolRegistry:
         return result.message
 
     def execute(self, payload: dict[str, Any], trace_id: str = "", chat_format: bool = False) -> ToolResult:
+        self._current_trace_id = trace_id
         log_event("tool_execute", {"trace_id": trace_id, "payload": payload})
         self._remember_last_request(payload)
         action_name = str(payload.get("action", "")).strip()
@@ -1890,6 +1892,17 @@ class ToolRegistry:
                         "current_mode": "movie" if "movie" in chosen else "",
                     }
                 )
+                try:
+                    from prometheus.integrations.ha_verifier import verify_ha_script
+                    verified = verify_ha_script(chosen, trace_id=self._current_trace_id)
+                    if verified is not None:
+                        return verified
+                except Exception as _ve:
+                    log_event("ha_verifier_error", {
+                        "trace_id": self._current_trace_id,
+                        "script": chosen,
+                        "error": str(_ve)[:200],
+                    })
             return result
         if action == "smart_action":
             request_text = str(
