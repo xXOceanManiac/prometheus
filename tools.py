@@ -9,8 +9,10 @@ import subprocess
 import time
 import webbrowser
 from dataclasses import dataclass, field
+from datetime import datetime as _datetime
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 import requests
 from config import CONFIG, VISUAL_STATE_PATH
 from memory import MemoryStore
@@ -2156,7 +2158,10 @@ class ToolRegistry:
                         stderr=subprocess.DEVNULL,
                     )
                 self.working.write({"last_tool_action": "open_app"})
-                return ToolResult(True, f"{app_key.capitalize()} is already open.")
+                return ToolResult.verified_success(
+                    f"{app_key.capitalize()} is already open.",
+                    summary="Confirmed via pgrep + wmctrl",
+                )
             # Otherwise launch fresh — pgrep-only match or neither confirmed
 
             # Launch with config → builtin fallback chain
@@ -2169,6 +2174,31 @@ class ToolRegistry:
                     data={"action": action, "app": app_key},
                 )
                 self.working.write({"last_tool_action": "open_app"})
+                # Brief post-launch check — process existence confirms launch, not window
+                post_launch_verified = False
+                if proc_name:
+                    try:
+                        time.sleep(0.5)
+                        pg2 = subprocess.run(
+                            ["pgrep", "-i", proc_name],
+                            capture_output=True, timeout=2.0,
+                        )
+                        post_launch_verified = pg2.returncode == 0
+                    except Exception:
+                        pass
+                log_event("open_app_launch_check", {
+                    "app": app_key,
+                    "proc": proc_name,
+                    "verified": post_launch_verified,
+                })
+                if post_launch_verified:
+                    return ToolResult.verified_success(
+                        f"Launched {app_key.capitalize()}.",
+                        summary="Process confirmed via pgrep post-launch",
+                    )
+                return ToolResult.accepted_unverified(
+                    f"Launch command sent for {app_key.capitalize()}.",
+                )
             else:
                 log_event("open_app_failed", {"app": app_key, "message": result.message})
             return result
@@ -2200,7 +2230,7 @@ class ToolRegistry:
                 data={"action": action, "url_key": url_key},
             )
             self.working.write({"last_tool_action": "open_url_key"})
-            return ToolResult(True, f"Opened {url_key}.")
+            return ToolResult.accepted_unverified(f"Opened {url_key} in browser.")
         if action == "open_url_keys":
             keys = [
                 str(x).strip().lower()
@@ -2227,6 +2257,10 @@ class ToolRegistry:
                     data={"action": action, "url_keys": keys},
                 )
                 self.working.write({"last_tool_action": "open_url_keys"})
+            if all_ok:
+                return ToolResult.accepted_unverified(
+                    " | ".join(results), data={"url_keys": keys}
+                )
             return ToolResult(all_ok, " | ".join(results), {"url_keys": keys})
         if action == "open_url_raw":
             url = str(payload.get("url", "")).strip()
@@ -2240,7 +2274,7 @@ class ToolRegistry:
                 data={"action": action, "url": url},
             )
             self.working.write({"last_tool_action": "open_url_raw"})
-            return ToolResult(True, f"Opened {url}.")
+            return ToolResult.accepted_unverified(f"Browser command sent for {url}.")
         if action == "web_search":
             query = str(
                 payload.get("query", "") or payload.get("request_text", "")
@@ -2650,9 +2684,16 @@ class ToolRegistry:
                 return ToolResult(False, result)
             return ToolResult(True, f"Screenshot saved to {result}.", {"path": result})
         if action == "tell_time":
+            tz_name = str(CONFIG.get("timezone") or "America/New_York")
+            try:
+                tz = ZoneInfo(tz_name)
+            except Exception:
+                tz = ZoneInfo("America/New_York")
+            now = _datetime.now(tz)
+            time_str = now.strftime("It is %I:%M %p.")
             return ToolResult.verified_success(
-                time.strftime("It is %I:%M %p."),
-                summary="Local system clock read — deterministic",
+                time_str,
+                summary=f"Local system clock read — {tz_name} — deterministic",
                 confidence=0.99,
             )
         if action == "projector_on":

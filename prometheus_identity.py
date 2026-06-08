@@ -8,8 +8,10 @@ from __future__ import annotations
 
 import json
 import time
+from datetime import datetime as _datetime
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 
 def build_system_prompt(
@@ -78,9 +80,17 @@ Voice:
         response_style = str(profile.get("preferred_response_style") or "direct, short, no preamble")
         faith_fitness = bool(profile.get("faith_fitness_legacy", True))
 
+        try:
+            tz = ZoneInfo(timezone)
+        except Exception:
+            tz = ZoneInfo("America/New_York")
+        now_local = _datetime.now(tz)
+        current_time_str = now_local.strftime("%I:%M %p %Z, %A %B %-d %Y").lstrip("0")
+
         who_lines = [
             f"USER: {name}",
             f"Timezone: {timezone}",
+            f"Current time: {current_time_str}",
             f"Working style: {working_style}",
             f"Response preference: {response_style}",
             "Dislikes: filler words, preamble, unnecessary commentary",
@@ -221,7 +231,7 @@ Voice:
         # ------------------------------------------------------------------
         # Section 8 — Time of day behavior
         # ------------------------------------------------------------------
-        hour = int(time.strftime("%H"))
+        hour = now_local.hour
         if 5 <= hour < 12:
             tod_note = (
                 "Morning session. Lead with a brief awareness of where things left off. "
