@@ -11,6 +11,79 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from tools import ToolResult
 
+
+def tool_response_instructions(result: "ToolResult", action: str) -> str:
+    """Return status-aware LLM response_instructions for any tool result.
+
+    Single source of truth for truthful wording policy.
+    Used as the fallback in _run_direct_tool and _handle_tool_call
+    when no action-specific handler exists.
+
+    Wording contract:
+    - verified_success   → may say "Done" or state the confirmed outcome
+    - accepted_unverified → must say command was sent; must not claim device state
+    - verified_failure   → must say "I tried but couldn't verify it worked"
+    - tool_failure       → must say "I couldn't complete that"
+    - blocked            → must explain why it was blocked
+    - pending_confirmation → must ask the user to confirm
+    """
+    from tools import ToolStatus  # runtime import — avoids module-level circular risk
+
+    status = result.status
+    message = (result.message or "")[:200]
+
+    if status == ToolStatus.VERIFIED_SUCCESS:
+        return (
+            f"The action was verified as successful. {message} "
+            "You may say 'Done.' or state the confirmed result. Be concise. No filler."
+        )
+
+    if status == ToolStatus.ACCEPTED_UNVERIFIED:
+        return (
+            f"The request was accepted. {message} "
+            "If this was a query (time, window state, file content), report the result directly. "
+            "If this was a command to a device or external service, say the command was sent — "
+            "do not claim the specific device state or outcome as confirmed fact. "
+            "Do not say 'Done' or any definite device outcome. "
+            "One or two sentences. No filler."
+        )
+
+    if status == ToolStatus.VERIFIED_FAILURE:
+        return (
+            f"The action was attempted but verification confirmed it did not take effect: {message} "
+            "Say exactly: 'I tried, but I couldn't verify it worked.' No filler."
+        )
+
+    if status == ToolStatus.TOOL_FAILURE:
+        return (
+            f"The action failed: {message} "
+            "Say: 'I couldn't complete that.' Briefly explain the error. One sentence. No filler."
+        )
+
+    if status == ToolStatus.BLOCKED:
+        return (
+            f"The action was blocked before execution. Reason: {message} "
+            "Tell the user exactly why it was blocked. One sentence. No filler."
+        )
+
+    if status == ToolStatus.PENDING_CONFIRMATION:
+        return (
+            f"{message} "
+            "Ask the user to confirm before proceeding. Do not execute. One sentence."
+        )
+
+    # Unknown or empty status — conservative fallback
+    if result.ok:
+        return (
+            f"The action completed. {message} "
+            "Report the result concisely. "
+            "Do not claim specific device or service outcomes unless explicitly stated in the result."
+        )
+    return (
+        f"The action failed: {message} "
+        "Tell the user in one sentence. No filler."
+    )
+
 _CALENDAR_ACTIONS: frozenset[str] = frozenset({
     "calendar_get_today",
     "calendar_get_tomorrow",
@@ -84,9 +157,7 @@ def synthesize_tool_response(
     if action in _CALENDAR_CREATE_ACTIONS:
         return _calendar_create_flow(action, data)
 
-    return (
-        "Briefly report the result in one or two sentences. Do not add preamble."
-    )
+    return tool_response_instructions(result, action)
 
 
 def is_calendar_action(action: str) -> bool:

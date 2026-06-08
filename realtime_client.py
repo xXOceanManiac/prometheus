@@ -20,7 +20,12 @@ from utils import log_event, notify, make_trace_id, _trace_slug
 from prometheus.core.intent_overrides import resolve_direct_intent
 from prometheus.core.session_context import build_instructions, build_live_state_block
 from prometheus.core.tool_followups import FOLLOWUP_ACTIONS
-from prometheus.execution.response_synthesizer import synthesize_tool_response, is_calendar_action, is_synthesized_action
+from prometheus.execution.response_synthesizer import (
+    synthesize_tool_response,
+    is_calendar_action,
+    is_synthesized_action,
+    tool_response_instructions,
+)
 
 
 SYSTEM_PROMPT = """
@@ -658,10 +663,7 @@ class RealtimePrometheusClient:
             elif is_synthesized_action(action):
                 response_instructions = synthesize_tool_response(action, result)
             else:
-                response_instructions = (
-                    "Briefly report the result in polished British butler style. "
-                    "Be precise and do not claim an app or project was already open unless the tool result explicitly shows that."
-                )
+                response_instructions = tool_response_instructions(result, action)
 
             await self._guarded_response_create(
                 {"modalities": ["audio", "text"], "instructions": response_instructions},
@@ -1315,11 +1317,7 @@ class RealtimePrometheusClient:
             elif is_synthesized_action(tool_action):
                 response_instructions = synthesize_tool_response(tool_action, result)
             else:
-                response_instructions = (
-                    "Briefly report the result in polished British butler style. "
-                    "Do not add filler. "
-                    "Do not claim something is already open unless the tool result explicitly says so."
-                )
+                response_instructions = tool_response_instructions(result, tool_action)
             await self._guarded_response_create(
                 {"modalities": ["audio", "text"], "instructions": response_instructions},
                 context="_handle_tool_call_followup",

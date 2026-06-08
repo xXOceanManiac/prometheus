@@ -2637,7 +2637,11 @@ class ToolRegistry:
                 return ToolResult(False, result)
             return ToolResult(True, f"Screenshot saved to {result}.", {"path": result})
         if action == "tell_time":
-            return ToolResult(True, time.strftime("It is %I:%M %p."))
+            return ToolResult.verified_success(
+                time.strftime("It is %I:%M %p."),
+                summary="Local system clock read — deterministic",
+                confidence=0.99,
+            )
         if action == "projector_on":
             script = Path(CONFIG.get("projector_on_script", "")).expanduser()
             if not script.exists():
