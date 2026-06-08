@@ -47,7 +47,25 @@ def build_live_state_block() -> str:
         from world_model import build_world_snapshot
         snap = build_world_snapshot()
 
+        # Always inject fresh local time — never rely on stale session instructions
+        _time_str = ""
+        try:
+            from datetime import datetime as _dt
+            from zoneinfo import ZoneInfo
+            from config import CONFIG
+            _tz_name = str(CONFIG.get("timezone") or "America/New_York")
+            try:
+                _tz = ZoneInfo(_tz_name)
+            except Exception:
+                _tz = ZoneInfo("America/New_York")
+            _now = _dt.now(_tz)
+            _time_str = _now.strftime("%I:%M %p %Z, %A %B %-d %Y").lstrip("0")
+        except Exception:
+            pass
+
         lines = [f"[LIVE STATE — {snap.get('timestamp', '')}]"]
+        if _time_str:
+            lines.append(f"Current time: {_time_str}")
 
         win = snap.get("active_window_title", "")
         app = snap.get("active_app", "")

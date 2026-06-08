@@ -2230,7 +2230,7 @@ class ToolRegistry:
                 data={"action": action, "url_key": url_key},
             )
             self.working.write({"last_tool_action": "open_url_key"})
-            return ToolResult.accepted_unverified(f"Opened {url_key} in browser.")
+            return ToolResult.accepted_unverified(f"Browser launch sent for {url_key}.")
         if action == "open_url_keys":
             keys = [
                 str(x).strip().lower()
@@ -2248,7 +2248,7 @@ class ToolRegistry:
                     results.append(f"Unknown URL key: {key}")
                     continue
                 webbrowser.open(url)
-                results.append(f"Opened {key}.")
+                results.append(f"Browser launch sent for {key}.")
             if all_ok:
                 self._episode(
                     "tool_action",
@@ -2690,11 +2690,13 @@ class ToolRegistry:
             except Exception:
                 tz = ZoneInfo("America/New_York")
             now = _datetime.now(tz)
-            time_str = now.strftime("It is %I:%M %p.")
+            # Include full date so date-query phrases ("what day is it") are answered
+            time_str = now.strftime("It is %I:%M %p, %A %B %-d %Y.").lstrip("0")
             return ToolResult.verified_success(
                 time_str,
                 summary=f"Local system clock read — {tz_name} — deterministic",
                 confidence=0.99,
+                data={"time": now.strftime("%H:%M"), "date": now.strftime("%Y-%m-%d"), "tz": tz_name},
             )
         if action == "projector_on":
             script = Path(CONFIG.get("projector_on_script", "")).expanduser()

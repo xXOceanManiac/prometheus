@@ -61,6 +61,17 @@ _TIME_PHRASES = (
     "current time",
     "tell me the time",
     "time please",
+    # Date variants — routed to tell_time so Prometheus never guesses the date
+    "do you know what time",   # "do you know what time it is"
+    "what time right now",
+    "what's today's date",
+    "whats today's date",
+    "what day is it",
+    "what's the date today",
+    "whats the date today",
+    "today's date",
+    "what date is it",
+    "what day is today",
 )
 
 _SCREENSHOT_PHRASES = (

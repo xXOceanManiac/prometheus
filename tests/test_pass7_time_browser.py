@@ -417,3 +417,192 @@ class TestOpenAppFreshLaunch:
             mock_launch.return_value = TR(False, "Could not find command for code.")
             result = registry.execute({"action": "open_app", "app": "code"})
         assert result.ok is False
+
+
+# ---------------------------------------------------------------------------
+# 10. Additional time phrase routing (date variants)
+# ---------------------------------------------------------------------------
+
+class TestTimePhraseRouting:
+    def _route(self, phrase: str):
+        from prometheus.core.intent_overrides import resolve_direct_intent
+        return resolve_direct_intent(phrase)
+
+    def test_what_day_is_it_routes_to_tell_time(self):
+        result = self._route("what day is it")
+        assert result is not None
+        assert result["type"] == "direct_tool"
+        assert result["payload"]["action"] == "tell_time"
+
+    def test_whats_todays_date_routes_to_tell_time(self):
+        result = self._route("what's today's date")
+        assert result is not None
+        assert result["payload"]["action"] == "tell_time"
+
+    def test_todays_date_routes_to_tell_time(self):
+        result = self._route("today's date")
+        assert result is not None
+        assert result["payload"]["action"] == "tell_time"
+
+    def test_what_date_is_it_routes_to_tell_time(self):
+        result = self._route("what date is it")
+        assert result is not None
+        assert result["payload"]["action"] == "tell_time"
+
+    def test_do_you_know_what_time_routes_to_tell_time(self):
+        result = self._route("do you know what time it is")
+        assert result is not None
+        assert result["payload"]["action"] == "tell_time"
+
+    def test_what_time_right_now_routes_to_tell_time(self):
+        result = self._route("what time right now")
+        assert result is not None
+        assert result["payload"]["action"] == "tell_time"
+
+
+# ---------------------------------------------------------------------------
+# 11. tell_time response includes date (frozen datetime)
+# ---------------------------------------------------------------------------
+
+class TestTellTimeDateInResponse:
+    def test_tell_time_message_contains_day_of_week(self):
+        """tell_time must include day-of-week so date queries are answered."""
+        from zoneinfo import ZoneInfo
+        frozen = _datetime(2026, 6, 7, 14, 30, 0, tzinfo=ZoneInfo("America/New_York"))
+        registry = _make_tool_registry()
+        with patch("tools.CONFIG", {"timezone": "America/New_York"}):
+            with patch("tools._datetime") as mock_dt:
+                mock_dt.now.return_value = frozen
+                result = registry.execute({"action": "tell_time"})
+        msg = result.message
+        assert "Sunday" in msg, f"Expected day of week in message, got: {msg!r}"
+
+    def test_tell_time_message_contains_month(self):
+        from zoneinfo import ZoneInfo
+        frozen = _datetime(2026, 6, 7, 14, 30, 0, tzinfo=ZoneInfo("America/New_York"))
+        registry = _make_tool_registry()
+        with patch("tools.CONFIG", {"timezone": "America/New_York"}):
+            with patch("tools._datetime") as mock_dt:
+                mock_dt.now.return_value = frozen
+                result = registry.execute({"action": "tell_time"})
+        assert "June" in result.message
+
+    def test_tell_time_message_contains_year(self):
+        from zoneinfo import ZoneInfo
+        frozen = _datetime(2026, 6, 7, 14, 30, 0, tzinfo=ZoneInfo("America/New_York"))
+        registry = _make_tool_registry()
+        with patch("tools.CONFIG", {"timezone": "America/New_York"}):
+            with patch("tools._datetime") as mock_dt:
+                mock_dt.now.return_value = frozen
+                result = registry.execute({"action": "tell_time"})
+        assert "2026" in result.message
+
+    def test_tell_time_data_contains_structured_fields(self):
+        """tell_time data dict must contain time, date, and tz fields."""
+        registry = _make_tool_registry()
+        result = registry.execute({"action": "tell_time"})
+        assert result.data is not None
+        assert "time" in result.data
+        assert "date" in result.data
+        assert "tz" in result.data
+
+    def test_tell_time_frozen_utc_shows_ny_time(self):
+        """Frozen UTC 18:45 must appear as 2:45 PM ET (UTC-4 in June)."""
+        from zoneinfo import ZoneInfo
+        frozen_utc = _datetime(2026, 6, 7, 18, 45, 0, tzinfo=ZoneInfo("UTC"))
+        ny = ZoneInfo("America/New_York")
+        frozen_local = frozen_utc.astimezone(ny)
+        registry = _make_tool_registry()
+        with patch("tools.CONFIG", {"timezone": "America/New_York"}):
+            with patch("tools._datetime") as mock_dt:
+                mock_dt.now.return_value = frozen_local
+                result = registry.execute({"action": "tell_time"})
+        assert "2:45 PM" in result.message, f"Expected 2:45 PM, got: {result.message!r}"
+
+
+# ---------------------------------------------------------------------------
+# 12. open_url_key / open_url_keys messages do not claim URL is open
+# ---------------------------------------------------------------------------
+
+class TestUrlKeyMessageTruthfulness:
+    def test_open_url_key_message_does_not_say_opened(self):
+        """'Opened X in browser' implies confirmed state — must not appear."""
+        registry = _make_tool_registry()
+        with patch("tools.CONFIG", {"urls": {"youtube": "https://youtube.com"}, "apps": {}}):
+            with patch("webbrowser.open"):
+                result = registry.execute({"action": "open_url_key", "url_key": "youtube"})
+        assert "opened youtube in browser" not in result.message.lower()
+
+    def test_open_url_key_message_says_launch_sent(self):
+        """Message must communicate that a command was sent, not that the URL is open."""
+        registry = _make_tool_registry()
+        with patch("tools.CONFIG", {"urls": {"google": "https://google.com"}, "apps": {}}):
+            with patch("webbrowser.open"):
+                result = registry.execute({"action": "open_url_key", "url_key": "google"})
+        msg = result.message.lower()
+        assert "browser" in msg or "launch" in msg or "sent" in msg, (
+            f"Message should indicate browser command, got: {result.message!r}"
+        )
+
+    def test_open_url_keys_message_does_not_say_opened(self):
+        """open_url_keys items must not say 'Opened X.' — that implies confirmed state."""
+        registry = _make_tool_registry()
+        with patch("tools.CONFIG", {"urls": {"youtube": "https://youtube.com",
+                                             "gmail": "https://mail.google.com"}, "apps": {}}):
+            with patch("webbrowser.open"):
+                result = registry.execute({"action": "open_url_keys",
+                                           "url_keys": ["youtube", "gmail"]})
+        msg = result.message.lower()
+        # Old wording "opened youtube." or "opened gmail." must not appear
+        assert "opened youtube." not in msg
+        assert "opened gmail." not in msg
+
+
+# ---------------------------------------------------------------------------
+# 13. Live state block contains current time
+# ---------------------------------------------------------------------------
+
+class TestLiveStateBlockTime:
+    def test_live_state_block_contains_current_time_label(self):
+        """build_live_state_block must include 'Current time:' line."""
+        from prometheus.core.session_context import build_live_state_block
+        block = build_live_state_block()
+        assert "Current time:" in block, (
+            "Live state block missing 'Current time:' — LLM may answer with stale time"
+        )
+
+    def test_live_state_block_time_contains_am_or_pm(self):
+        from prometheus.core.session_context import build_live_state_block
+        block = build_live_state_block()
+        assert "AM" in block or "PM" in block, (
+            "Live state block time format missing AM/PM"
+        )
+
+    def test_live_state_block_time_is_fresh(self):
+        """Time in live state block must match current local time (within 2 minutes)."""
+        import re
+        from zoneinfo import ZoneInfo
+        from prometheus.core.session_context import build_live_state_block
+        from config import CONFIG
+        block = build_live_state_block()
+        # Extract HH:MM from block
+        m = re.search(r"(\d{1,2}):(\d{2})\s*(AM|PM)", block)
+        assert m, f"Could not parse time from live state block: {block[:200]!r}"
+        # Compare to actual current time — allow 2-minute window
+        tz_name = str(CONFIG.get("timezone") or "America/New_York")
+        try:
+            tz = ZoneInfo(tz_name)
+        except Exception:
+            tz = ZoneInfo("America/New_York")
+        now = _datetime.now(tz)
+        now_hour = int(now.strftime("%I"))
+        now_min = now.minute
+        block_hour = int(m.group(1))
+        block_min = int(m.group(2))
+        # Allow ±2 minutes
+        total_now = now_hour * 60 + now_min
+        total_block = block_hour * 60 + block_min
+        diff = abs(total_now - total_block)
+        assert diff <= 2 or diff >= 60 * 12 - 2, (  # 12h format wraps at noon/midnight
+            f"Live state block time {block_hour}:{block_min:02d} differs from current time by {diff} min"
+        )
