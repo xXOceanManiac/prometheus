@@ -1,0 +1,21 @@
+{
+  "request_id": "req-direct-92fd7f763d6c",
+  "reviewed_at": "2026-06-08T03:24:29.056182+00:00",
+  "all_dry_run": true,
+  "approved": false,
+  "original_operations": [
+    {
+      "operation_type": "create_event",
+      "title": "Standup",
+      "start_time": "2026-06-08T10:00:00",
+      "end_time": "2026-06-08T10:30:00",
+      "calendar_id": "primary",
+      "requires_prometheus_approval": true,
+      "dry_run": true
+    }
+  ],
+  "results": [],
+  "no_live_execution": true,
+  "source": "nl_calendar_create_direct",
+  "approval_mode": "direct_user_command"
+}

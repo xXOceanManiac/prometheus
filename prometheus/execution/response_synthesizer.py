@@ -29,7 +29,7 @@ def tool_response_instructions(result: "ToolResult", action: str) -> str:
     """
     from tools import ToolStatus  # runtime import — avoids module-level circular risk
 
-    status = result.status
+    status = getattr(result, "status", "")
     message = (result.message or "")[:200]
 
     if status == ToolStatus.VERIFIED_SUCCESS:
