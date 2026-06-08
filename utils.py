@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import random
+import re as _re
 import shlex
 import subprocess
 import time
@@ -10,6 +12,22 @@ from typing import Any
 import numpy as np
 
 from config import LOG_DIR
+
+
+_TRACE_STOP_WORDS = {"a", "an", "the", "to", "in", "on", "at", "for", "of", "and", "or", "is", "it", "my", "me", "i"}
+
+
+def make_trace_id() -> str:
+    """Generate a unique per-request trace ID: YYYYMMDD-HHMMSS-rnd4."""
+    rnd = "".join(random.choices("abcdefghijklmnopqrstuvwxyz0123456789", k=4))
+    return f"{time.strftime('%Y%m%d-%H%M%S')}-{rnd}"
+
+
+def _trace_slug(text: str, max_words: int = 2) -> str:
+    """Derive a short dash-joined slug from the first N significant words of text."""
+    words = _re.sub(r"[^a-z0-9 ]", "", text.lower()).split()
+    words = [w for w in words if w not in _TRACE_STOP_WORDS and len(w) > 1]
+    return "-".join(words[:max_words])
 
 
 def ts() -> str:

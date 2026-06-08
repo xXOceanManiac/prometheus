@@ -1499,8 +1499,8 @@ class ToolRegistry:
         # Generic: prefer message, trim raw data
         return result.message
 
-    def execute(self, payload: dict[str, Any], chat_format: bool = False) -> ToolResult:
-        log_event("tool_execute", {"payload": payload})
+    def execute(self, payload: dict[str, Any], trace_id: str = "", chat_format: bool = False) -> ToolResult:
+        log_event("tool_execute", {"trace_id": trace_id, "payload": payload})
         self._remember_last_request(payload)
         action_name = str(payload.get("action", "")).strip()
         self._episode(
@@ -1513,20 +1513,21 @@ class ToolRegistry:
         if isinstance(actions, list) and actions:
             result = self._execute_many(actions)
             r = self._remember_tool_result(payload, result)
-            if chat_format:
-                return ToolResult(r.ok, self._format_result_for_chat("multi_action", r), r.data)
-            return r
-        action = str(payload.get("action", "")).strip()
-        if not action:
-            return self._remember_tool_result(
-                payload,
-                ToolResult(False, "No action was provided."),
-            )
-        result = self._execute_one(payload)
-        r = self._remember_tool_result(payload, result)
-        if chat_format:
-            return ToolResult(r.ok, self._format_result_for_chat(action, r), r.data)
-        return r
+            out = ToolResult(r.ok, self._format_result_for_chat("multi_action", r), r.data) if chat_format else r
+        elif not action_name:
+            out = self._remember_tool_result(payload, ToolResult(False, "No action was provided."))
+        else:
+            result = self._execute_one(payload)
+            r = self._remember_tool_result(payload, result)
+            out = ToolResult(r.ok, self._format_result_for_chat(action_name, r), r.data) if chat_format else r
+        log_event("tool_result", {
+            "trace_id": trace_id,
+            "action": action_name or "multi_action",
+            "ok": out.ok,
+            "message": out.message[:200],
+            "data_keys": list((out.data or {}).keys()),
+        })
+        return out
 
     def _execute_one(self, payload: dict[str, Any]) -> ToolResult:
         action = str(payload.get("action", "")).strip()

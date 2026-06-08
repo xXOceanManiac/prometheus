@@ -16,7 +16,7 @@ from websockets.exceptions import ConnectionClosed
 from audio import Speaker, pcm16_16k_to_base64_24k
 from config import CONFIG
 from tools import ToolRegistry
-from utils import log_event, notify
+from utils import log_event, notify, make_trace_id, _trace_slug
 from prometheus.core.intent_overrides import resolve_direct_intent
 from prometheus.core.session_context import build_instructions, build_live_state_block
 from prometheus.core.tool_followups import FOLLOWUP_ACTIONS
@@ -94,6 +94,8 @@ class RealtimePrometheusClient:
 
         # Voice latency tracking — reset on each PTT press / begin_user_turn
         self._turn_start_ts: float = 0.0  # monotonic time when user started speaking
+        # Per-request trace ID — generated at begin_user_turn, propagated through all turn events
+        self._current_trace_id: str = ""
         # Bytes of audio sent since the last input_audio_buffer.committed event.
         # Reset to 0 when server_vad auto-commits (or on turn start).
         # Used in end_audio() to skip a redundant commit when the buffer is already empty.
@@ -365,6 +367,7 @@ class RealtimePrometheusClient:
             risk = result.get("risk", "safe")
 
             log_event("contextual_intent_override", {
+                "trace_id": self._current_trace_id,
                 "command": transcript[:80],
                 "intent": intent,
                 "confidence": result.get("confidence", 0),
@@ -428,11 +431,12 @@ class RealtimePrometheusClient:
             else None
         )
         log_event("direct_tool_override", {
+            "trace_id": self._current_trace_id,
             "payload": payload,
             "ts_to_first_tool_ms": ts_to_first_tool_ms,
         })
 
-        result = self.tools.execute(payload)
+        result = self.tools.execute(payload, trace_id=self._current_trace_id)
         self._override_handled = True
 
         try:
@@ -861,7 +865,7 @@ class RealtimePrometheusClient:
                     path = "tool"
                     payload = override["payload"]
                     result = await loop.run_in_executor(
-                        None, lambda p=payload: self.tools.execute(p, chat_format=True)
+                        None, lambda p=payload, tid=self._current_trace_id: self.tools.execute(p, trace_id=tid, chat_format=True)
                     )
                     response_text = result.message
 
@@ -953,7 +957,7 @@ class RealtimePrometheusClient:
         Strips 'modalities' — unknown parameter in the GA Realtime API; session defaults apply.
         """
         if self._response_active:
-            log_event("response_guard_blocked", {"context": context[:80]})
+            log_event("response_guard_blocked", {"trace_id": self._current_trace_id, "context": context[:80]})
             print(f"[DBG] response.create BLOCKED (already active) ctx={context}")
             return False
         cleaned = {k: v for k, v in response_payload.items() if k != "modalities"}
@@ -1037,7 +1041,8 @@ class RealtimePrometheusClient:
         self.awaiting_user_audio = True
         self._turn_start_ts = time.monotonic()
         self._audio_bytes_since_commit = 0
-        log_event("user_turn_started", {})
+        self._current_trace_id = make_trace_id()
+        log_event("user_turn_started", {"trace_id": self._current_trace_id})
 
     async def send_audio(self, chunk: bytes) -> None:
         if not self.awaiting_user_audio:
@@ -1073,10 +1078,10 @@ class RealtimePrometheusClient:
         _MIN_COMMIT_BYTES = 3200
         if self._response_active or self._audio_bytes_since_commit < _MIN_COMMIT_BYTES:
             print(f"[DBG] end_audio: skip commit ({self._audio_bytes_since_commit} bytes, response_active={self._response_active})")
-            log_event("end_audio_skip", {"bytes": self._audio_bytes_since_commit, "response_active": self._response_active})
+            log_event("end_audio_skip", {"trace_id": self._current_trace_id, "bytes": self._audio_bytes_since_commit, "response_active": self._response_active})
             return
 
-        log_event("user_turn_committed", {})
+        log_event("user_turn_committed", {"trace_id": self._current_trace_id})
         print("[DBG] end_audio: sending input_audio_buffer.commit")
         await self.send({"type": "input_audio_buffer.commit"})
         print("[DBG] end_audio: commit sent — sending response.create")
@@ -1090,9 +1095,9 @@ class RealtimePrometheusClient:
             args = {}
 
         print("Tool call:", args)
-        log_event("tool_call_received", {"args": args})
+        log_event("tool_call_received", {"trace_id": self._current_trace_id, "args": args})
 
-        result = self.tools.execute(args)
+        result = self.tools.execute(args, trace_id=self._current_trace_id)
 
         try:
             from working_memory import WorkingMemory
@@ -1447,7 +1452,15 @@ class RealtimePrometheusClient:
                             if self._turn_start_ts > 0
                             else None
                         )
+                        # Refine trace_id with transcript slug so tool events read as
+                        # e.g. "20260607-221405-lights-red-f3a9" — grep rnd4 for full turn.
+                        slug = _trace_slug(transcript)
+                        if slug and self._current_trace_id:
+                            _parts = self._current_trace_id.rsplit("-", 1)
+                            if len(_parts) == 2:
+                                self._current_trace_id = f"{_parts[0]}-{slug}-{_parts[1]}"
                         log_event("transcript", {
+                            "trace_id": self._current_trace_id,
                             "transcript": transcript[:300],
                             "ts_to_transcription_ms": ts_transcription_ms,
                         })
