@@ -29,6 +29,8 @@ from prometheus.services.guardian_news import (
     _fallback_articles,
     _time_ago,
     _VIOLENT_TITLE_TERMS,
+    _is_disallowed_hud_headline,
+    _HARD_EXCLUSION_TITLE_PATTERNS,
 )
 
 
@@ -250,6 +252,146 @@ class TestViolentTitlePenalty:
     def test_all_violent_terms_are_lowercase(self):
         for term in _VIOLENT_TITLE_TERMS:
             assert term == term.lower(), f"Violent term must be lowercase: {term!r}"
+
+
+# ── _is_disallowed_hud_headline (hard exclusion) ─────────────────────────────
+
+class TestHardExclusion:
+    """Tests for _is_disallowed_hud_headline hard-exclusion filter."""
+
+    def test_obituary_in_title_excluded(self):
+        assert _is_disallowed_hud_headline(
+            "Richard Scolyer, acclaimed researcher — obituary", "World", ""
+        ) is True
+
+    def test_obituary_section_excluded(self):
+        assert _is_disallowed_hud_headline(
+            "Ruth Artmonsky", "Obituaries", ""
+        ) is True
+
+    def test_obituaries_section_case_insensitive(self):
+        assert _is_disallowed_hud_headline(
+            "Someone Notable", "obituaries", ""
+        ) is True
+
+    def test_dies_aged_excluded(self):
+        assert _is_disallowed_hud_headline(
+            "Cancer researcher dies aged 59", "World", ""
+        ) is True
+
+    def test_died_aged_excluded(self):
+        assert _is_disallowed_hud_headline(
+            "Former president died aged 91", "World", ""
+        ) is True
+
+    def test_has_died_excluded(self):
+        assert _is_disallowed_hud_headline(
+            "Nobel laureate has died", "Science", ""
+        ) is True
+
+    def test_drone_hits_nuclear_fuel_excluded(self):
+        assert _is_disallowed_hud_headline(
+            "Russian drone hits building storing spent nuclear fuel near Chornobyl",
+            "World", ""
+        ) is True
+
+    def test_drone_hits_excluded(self):
+        assert _is_disallowed_hud_headline(
+            "Drone hits hospital in conflict zone", "World", ""
+        ) is True
+
+    def test_nuclear_disaster_excluded(self):
+        assert _is_disallowed_hud_headline(
+            "Nuclear disaster risk grows at stricken plant", "World", ""
+        ) is True
+
+    def test_ai_article_not_excluded(self):
+        assert _is_disallowed_hud_headline(
+            "OpenAI releases new agent framework for developers", "Technology", ""
+        ) is False
+
+    def test_microschool_article_not_excluded(self):
+        assert _is_disallowed_hud_headline(
+            "Microschool movement grows in Florida", "Education", ""
+        ) is False
+
+    def test_nuclear_energy_policy_not_excluded(self):
+        assert _is_disallowed_hud_headline(
+            "Why nuclear energy is back on the table for US grid resilience", "Energy", ""
+        ) is False
+
+    def test_startup_article_not_excluded(self):
+        assert _is_disallowed_hud_headline(
+            "Founder builds marketplace for indie developers", "Business", ""
+        ) is False
+
+    def test_hard_exclusion_patterns_nonempty(self):
+        assert len(_HARD_EXCLUSION_TITLE_PATTERNS) >= 5
+
+    def test_obituary_excluded_from_get_news(self):
+        """get_news must not return obituary headlines even if they appear in the live feed."""
+        obit_raw = [
+            {
+                "id": f"obit/{i}",
+                "webTitle": f"Famous person — obituary" if i == 0 else f"Someone, dies aged {50 + i}",
+                "webUrl": f"https://guardian.com/obit/{i}",
+                "sectionName": "World",
+                "webPublicationDate": datetime.now(timezone.utc).isoformat(),
+                "fields": {"trailText": "Obituary text.", "thumbnail": ""},
+            }
+            for i in range(5)
+        ]
+        calm_raw = [
+            {
+                "id": f"calm/{i}",
+                "webTitle": f"AI developer tools advance rapidly {i}",
+                "webUrl": f"https://guardian.com/calm/{i}",
+                "sectionName": "Technology",
+                "webPublicationDate": datetime.now(timezone.utc).isoformat(),
+                "fields": {"trailText": "Progress in AI tooling.", "thumbnail": ""},
+            }
+            for i in range(15)
+        ]
+        mock_raw = obit_raw + calm_raw
+        with patch("prometheus.services.guardian_news.fetch_guardian_articles", return_value=mock_raw), \
+             patch("prometheus.services.guardian_news._load_env_key", return_value=("key", "url")):
+            articles, status = get_news(api_key="key")
+        titles = [a["title"].lower() for a in articles]
+        for title in titles:
+            assert "obituary" not in title, f"Obituary must not appear: {title!r}"
+            assert "dies aged" not in title, f"Death notice must not appear: {title!r}"
+
+    def test_drone_nuclear_excluded_from_get_news(self):
+        """Drone hits nuclear fuel framing must not appear in results."""
+        bad_raw = [
+            {
+                "id": "drone/1",
+                "webTitle": "Russian drone hits building storing spent nuclear fuel near Chornobyl",
+                "webUrl": "https://guardian.com/drone/1",
+                "sectionName": "World",
+                "webPublicationDate": datetime.now(timezone.utc).isoformat(),
+                "fields": {"trailText": "Incident near Chornobyl.", "thumbnail": ""},
+            }
+        ]
+        calm_raw = [
+            {
+                "id": f"calm/{i}",
+                "webTitle": f"Space technology and engineering news {i}",
+                "webUrl": f"https://guardian.com/calm/{i}",
+                "sectionName": "Science",
+                "webPublicationDate": datetime.now(timezone.utc).isoformat(),
+                "fields": {"trailText": "Space news.", "thumbnail": ""},
+            }
+            for i in range(15)
+        ]
+        mock_raw = bad_raw + calm_raw
+        with patch("prometheus.services.guardian_news.fetch_guardian_articles", return_value=mock_raw), \
+             patch("prometheus.services.guardian_news._load_env_key", return_value=("key", "url")):
+            articles, status = get_news(api_key="key")
+        titles = [a["title"].lower() for a in articles]
+        for title in titles:
+            assert "drone hits" not in title, f"Drone-hits title must not appear: {title!r}"
+            assert "nuclear fuel" not in title, f"Nuclear fuel disaster must not appear: {title!r}"
 
 
 # ── pad_to_ten ────────────────────────────────────────────────────────────────

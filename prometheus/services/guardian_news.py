@@ -145,6 +145,7 @@ _VIOLENT_TITLE_TERMS: list[str] = [
     "dead body", "bodies found", "corpse",
     "bombing", "bomb blast", "bomb attack",
     "missile strike", "drone strike", "airstrike", "air strike",
+    "drone hits", "drone hit",
     "massacre",
     "rape", "sexual assault",
     "horror", "horrifying",
@@ -157,7 +158,69 @@ _VIOLENT_TITLE_TERMS: list[str] = [
     "famine", "starvation",
     "tragedy", "tragic death",
     "death toll", "casualties",
+    # Obituary / death notice title terms
+    "obituary",
+    "died aged", "dies aged",
+    "has died",
+    "nuclear disaster",
+    "spent nuclear fuel",
 ]
+
+# ── Hard exclusion ─────────────────────────────────────────────────────────────
+# Articles matching these patterns are ALWAYS excluded before relevance ranking.
+# Keeps the Prometheus HUD free of obituaries, death notices, and violent
+# framing that is not useful or appropriate for a daily mission-control display.
+
+_HARD_EXCLUSION_TITLE_PATTERNS: list[str] = [
+    # Obituaries
+    "obituary",
+    # Death notices
+    "dies aged",
+    "died aged",
+    "dies at ",
+    "died at ",
+    "has died",
+    "found dead",
+    "death notice",
+    "in memoriam",
+    "passed away",
+    # Nuclear disaster / violence framing (not energy policy)
+    "nuclear disaster",
+    "spent nuclear fuel",
+    "nuclear fuel near",
+    # Direct violent infrastructure hits (headline level)
+    "drone hits",
+    "drone hit",
+    "missile hits",
+    "bomb hits",
+]
+
+_HARD_EXCLUSION_SECTIONS: list[str] = [
+    "obituaries",
+]
+
+
+def _is_disallowed_hud_headline(title: str, section: str, trail_text: str) -> bool:
+    """
+    Return True if this article should never appear in the Prometheus HUD.
+
+    Applied before relevance ranking. Hard-excludes:
+    - Obituaries (section or title pattern)
+    - Death notices ("dies aged", "has died", "passed away", etc.)
+    - Nuclear disaster / violent drone framing
+    """
+    title_lower = title.lower()
+    section_lower = section.lower()
+
+    for excl in _HARD_EXCLUSION_SECTIONS:
+        if excl in section_lower:
+            return True
+
+    for pattern in _HARD_EXCLUSION_TITLE_PATTERNS:
+        if pattern in title_lower:
+            return True
+
+    return False
 
 
 def prometheus_relevance_score(article: dict) -> float:
@@ -408,6 +471,11 @@ def get_news(
         raw = fetch_guardian_articles(api_key=api_key, base_url=base_url, page_size=page_size)
         normalized = [normalize_article(r) for r in raw]
         normalized = [a for a in normalized if a["title"] and a["href"]]
+        # Hard exclusion: remove obituaries, death notices, violent drone/nuclear framing
+        normalized = [
+            a for a in normalized
+            if not _is_disallowed_hud_headline(a["title"], a["tag"], a["summary"])
+        ]
         normalized.sort(key=prometheus_relevance_score, reverse=True)
         best = normalized[:_BEST_COUNT]
         padded = pad_to_ten(best)
