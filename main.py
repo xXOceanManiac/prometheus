@@ -619,10 +619,12 @@ class PrometheusCore:
         if not self.user_turn_active:
             return
         source = self.user_turn_source
-        self.user_turn_active = False
         self.user_turn_source = ""
         self.visuals.set_state("processing")
+        # Keep user_turn_active=True until end_audio() returns so the run() loop
+        # continues delivering mic chunks to send_audio() during the drain window.
         await self.client.end_audio()
+        self.user_turn_active = False
         self.mic.drain()
         log_event("turn_committed", {"reason": reason, "source": source})
 
@@ -648,6 +650,9 @@ class PrometheusCore:
                 await self._commit_turn("wakeword_silence")
 
     async def _handle_idle_chunk(self, chunk: np.ndarray) -> None:
+        # Yield one event-loop iteration so call_soon_threadsafe callbacks (PTT begin/commit
+        # tasks) are processed before we check user_turn_active or run wakeword detection.
+        await asyncio.sleep(0)
         if self.user_turn_active:
             return
         if self.wakeword.is_ready and self.wakeword.process(chunk):

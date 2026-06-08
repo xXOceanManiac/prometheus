@@ -105,6 +105,10 @@ class RealtimePrometheusClient:
         # Reset to 0 on begin_user_turn() and on input_audio_buffer.committed.
         # Used in end_audio() to skip a commit when no audio was captured.
         self._audio_bytes_since_commit: int = 0
+        # Per-turn audio observability counters — reset in begin_user_turn()
+        self._audio_chunks_appended: int = 0
+        self._first_audio_ts: float = 0.0
+        self._last_audio_ts: float = 0.0
 
         # Vault / workspace context injected before or during a session
         self._vault_context: str = ""
@@ -948,6 +952,10 @@ class RealtimePrometheusClient:
         self.busy = False
         self.waiting_for_tool_followup = False
         self._override_handled = False
+        # Clear the guard immediately so that end_audio() can proceed if the user
+        # presses PTT before the server sends response.cancelled.
+        # response.cancelled will also set it False — the double-clear is harmless.
+        self._response_active = False
         if self.connected and self.ws:
             try:
                 await self.send({"type": "response.cancel"})
@@ -1051,14 +1059,24 @@ class RealtimePrometheusClient:
         self.awaiting_user_audio = True
         self._turn_start_ts = time.monotonic()
         self._audio_bytes_since_commit = 0
+        self._audio_chunks_appended = 0
+        self._first_audio_ts = 0.0
+        self._last_audio_ts = 0.0
         self._current_trace_id = make_trace_id()
         log_event("user_turn_started", {"trace_id": self._current_trace_id})
+        log_event("ptt_audio_capture_started", {"trace_id": self._current_trace_id})
 
     async def send_audio(self, chunk: bytes) -> None:
         if not self.awaiting_user_audio:
             return
 
         self._audio_bytes_since_commit += len(chunk)
+        self._audio_chunks_appended += 1
+        _now = time.monotonic()
+        if self._first_audio_ts == 0.0:
+            self._first_audio_ts = _now
+        self._last_audio_ts = _now
+
         arr = np.frombuffer(chunk, dtype=np.int16)
         b64 = pcm16_16k_to_base64_24k(arr)
 
@@ -1069,25 +1087,54 @@ class RealtimePrometheusClient:
             }
         )
 
+        # Throttled observability: log every 5 chunks so live logs show audio is flowing
+        if self._audio_chunks_appended % 5 == 0:
+            log_event("realtime_audio_append_sent", {
+                "trace_id": self._current_trace_id,
+                "chunks_so_far": self._audio_chunks_appended,
+                "bytes_so_far": self._audio_bytes_since_commit,
+            })
+
     async def end_audio(self) -> None:
         if not self.awaiting_user_audio:
             return
 
-        self.awaiting_user_audio = False
+        _MIN_COMMIT_BYTES = 3200
+
+        # Race guard: if begin_user_turn and end_audio are scheduled in the same event-loop
+        # cycle (quick PTT tap), _audio_bytes_since_commit may be 0 because the main run()
+        # loop hasn't had a chance to process mic chunks yet.  Yield briefly so the loop
+        # can deliver buffered audio before we evaluate the threshold.
+        # awaiting_user_audio stays True during the sleep so send_audio() continues counting.
+        if self._audio_bytes_since_commit == 0:
+            await asyncio.sleep(0.15)
+
+        self.awaiting_user_audio = False   # no more audio accepted after this point
         self.current_text = ""
         self.busy = True
         self.waiting_for_tool_followup = False
         self._override_handled = False
         self._drop_audio_until = 0.0
 
-        # server_vad is disabled — no racing auto-commit or auto-response events.
-        # Guards are evaluated synchronously against current state.
-        _MIN_COMMIT_BYTES = 3200
+        _dur_ms = (
+            int((self._last_audio_ts - self._first_audio_ts) * 1000)
+            if self._first_audio_ts > 0.0
+            else 0
+        )
+        log_event("ptt_audio_capture_stopped", {
+            "trace_id": self._current_trace_id,
+            "bytes": self._audio_bytes_since_commit,
+            "chunks": self._audio_chunks_appended,
+            "duration_ms": _dur_ms,
+        })
+
         if self._audio_bytes_since_commit < _MIN_COMMIT_BYTES:
             log_event("user_turn_commit_skipped", {
                 "trace_id": self._current_trace_id,
                 "reason": "insufficient_audio",
                 "bytes": self._audio_bytes_since_commit,
+                "chunks": self._audio_chunks_appended,
+                "min_bytes": _MIN_COMMIT_BYTES,
             })
             print(f"[DBG] end_audio: commit skipped ({self._audio_bytes_since_commit} bytes < {_MIN_COMMIT_BYTES})")
             self.busy = False
@@ -1101,6 +1148,12 @@ class RealtimePrometheusClient:
             print("[DBG] end_audio: response.create skipped (response already active)")
             return
 
+        log_event("user_turn_commit_attempt", {
+            "trace_id": self._current_trace_id,
+            "bytes": self._audio_bytes_since_commit,
+            "chunks": self._audio_chunks_appended,
+            "duration_ms": _dur_ms,
+        })
         log_event("user_turn_committed", {"trace_id": self._current_trace_id})
         print("[DBG] end_audio: sending input_audio_buffer.commit")
         await self.send({"type": "input_audio_buffer.commit"})
