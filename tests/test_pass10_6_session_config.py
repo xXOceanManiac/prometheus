@@ -500,15 +500,10 @@ class TestSimulatedPTTTranscriptFlow:
         client._contextual_override = AsyncMock(return_value=False)
         client._current_trace_id = "20260609-120000-flow-xx02"
 
-        asyncio.run(client._handle_ptt_transcript("what time is it"))
+        asyncio.run(client._handle_ptt_transcript("20260609-120000-flow-xx02", "what time is it"))
 
-        # Verify full trace
+        # Verify full trace — trace_id is stable (no slug mutation in Pass 12.5)
         transcript_log = [p for k, p in logged if k == "input_transcript_completed"]
         assert transcript_log, "input_transcript_completed must be in log after full flow"
-        # trace_id may have a transcript slug inserted (e.g. -what-time-) — check prefix and suffix
-        logged_trace = transcript_log[0].get("trace_id", "")
-        assert logged_trace.startswith("20260609-120000-flow"), \
-            f"trace_id must start with 20260609-120000-flow, got: {logged_trace}"
-        assert logged_trace.endswith("xx02"), \
-            f"trace_id must end with xx02, got: {logged_trace}"
+        assert transcript_log[0].get("trace_id") == "20260609-120000-flow-xx02"
         assert transcript_log[0].get("source") == "standalone_stt"

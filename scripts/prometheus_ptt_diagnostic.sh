@@ -164,12 +164,32 @@ process_trace() {
         fi
     fi
 
+    # ── Routing bridge (ptt_transcript_route_started) ────────────────────────
+    local route_started route_failed route_failed_err
+    route_started=$(echo "$events" | jq -r 'select(.kind == "ptt_transcript_route_started") | .ts // ""' | head -1)
+    route_failed=$(echo "$events" | jq -r 'select(.kind == "ptt_transcript_route_failed") | .ts // ""' | head -1)
+    route_failed_err=$(echo "$events" | jq -r 'select(.kind == "ptt_transcript_route_failed") | .error // ""' | head -1)
+
+    if [[ -n "$route_started" ]]; then
+        ok "ptt_transcript_route_started @ $route_started"
+    elif [[ -n "$stt_completed" ]]; then
+        fail "ptt_transcript_route_started NOT found — STT succeeded but routing bridge not entered"
+    fi
+
+    if [[ -n "$route_failed" ]]; then
+        fail "ptt_transcript_route_failed: $route_failed_err"
+    fi
+
     # ── Transcript ───────────────────────────────────────────────────────────
     local transcript transcript_source
     transcript=$(echo "$events" | jq -r 'select(.kind == "input_transcript_completed") | .transcript // ""' | head -1)
     transcript_source=$(echo "$events" | jq -r 'select(.kind == "input_transcript_completed") | .source // ""' | head -1)
     if [[ -n "$transcript" ]]; then
         ok "input_transcript_completed (source=$transcript_source): \"$transcript\""
+    elif [[ -n "$stt_completed" && -z "$route_started" ]]; then
+        fail "input_transcript_completed NOT found — STT succeeded but transcript routing failed"
+    elif [[ -n "$stt_completed" ]]; then
+        fail "input_transcript_completed NOT found — routing bridge entered but logging failed"
     else
         fail "input_transcript_completed NOT found"
     fi
@@ -216,8 +236,17 @@ process_trace() {
         echo -e "${GREEN}${BOLD}  TURN COMPLETE: audio → STT → tool → result ✓${RESET}"
     elif [[ -n "$commit_skipped" ]]; then
         echo -e "${RED}${BOLD}  TURN DROPPED: insufficient audio (hold PTT longer)${RESET}"
+    elif [[ -n "$route_failed" ]]; then
+        echo -e "${RED}${BOLD}  TURN STALLED: STT succeeded but transcript routing failed${RESET}"
+        echo "  → Check ptt_transcript_route_failed error above"
+    elif [[ -n "$stt_completed" && -z "$route_started" ]]; then
+        echo -e "${RED}${BOLD}  TURN STALLED: STT succeeded but transcript routing failed${RESET}"
+        echo "  → ptt_transcript_route_started not found; _handle_ptt_transcript may have crashed"
     elif [[ -n "$stt_failed" ]]; then
         echo -e "${RED}${BOLD}  TURN STALLED: STT failed — check API key and network${RESET}"
+    elif [[ -z "$transcript" && -n "$stt_completed" ]]; then
+        echo -e "${RED}${BOLD}  TURN STALLED: STT succeeded but transcript routing failed${RESET}"
+        echo "  → input_transcript_completed not logged after successful STT"
     elif [[ -z "$transcript" ]]; then
         echo -e "${YELLOW}${BOLD}  TURN STALLED: STT did not produce a transcript${RESET}"
         echo "  → Check stt_transcription_failed events and API key"

@@ -25,7 +25,7 @@ _LOG_DIR = Path.home() / ".jarvis" / "logs"
 _TRACE_EVENTS = [
     "user_turn_started",
     "ptt_audio_capture_started",
-    "ptt_audio_captured",          # throttled every 5 chunks (replaces realtime_audio_append_sent)
+    "ptt_audio_captured",              # throttled every 5 chunks
     "ptt_released",
     "ptt_audio_capture_stopped",
     "user_turn_commit_attempt",
@@ -36,6 +36,10 @@ _TRACE_EVENTS = [
     "stt_transcription_failed",
     "stt_empty_transcript",
     "stt_all_models_failed",
+    "ptt_transcript_route_started",    # fired at entry of _handle_ptt_transcript
+    "ptt_transcript_route_direct_tool",# fired when direct_tool_override matches
+    "ptt_transcript_route_no_tool",    # fired when no override — falls to Realtime chat
+    "ptt_transcript_route_failed",     # fired if _handle_ptt_transcript raises
     "input_transcript_completed",
     "direct_tool_override",
     "tool_execute",
@@ -216,11 +220,23 @@ def _print_trace(trace_id: str, lines: list[dict]) -> None:
     elif r_stt_start:
         fail("stt_transcription_completed NOT found (in-flight or crashed?)")
 
+    # ptt_transcript_route_started
+    r_route_started = first("ptt_transcript_route_started")
+    r_route_failed = first("ptt_transcript_route_failed")
+    if r_route_started:
+        ok(f"ptt_transcript_route_started: len={r_route_started.get('transcript_len', '?')}")
+    elif r_stt_done and not r_stt_fail and not r_stt_all_fail:
+        fail("ptt_transcript_route_started NOT found — _handle_ptt_transcript not called after STT")
+    if r_route_failed:
+        fail(f"ptt_transcript_route_failed: {r_route_failed.get('error', '?')[:120]}")
+
     # input_transcript_completed
     r = first("input_transcript_completed")
     if r:
         txt = r.get("transcript", "")
         ok(f"input_transcript_completed: \"{txt}\"")
+    elif r_stt_done:
+        fail("input_transcript_completed NOT found — STT succeeded but routing bridge failed")
     else:
         fail("input_transcript_completed NOT found")
 
@@ -256,6 +272,7 @@ def _print_trace(trace_id: str, lines: list[dict]) -> None:
 
     has_stt = bool(r_stt_done)
     has_stt_fail = bool(r_stt_fail or r_stt_all_fail)
+    has_route_failed = bool(r_route_failed)
 
     if transcript and has_routing and has_result:
         print(_c("green", _c("bold", "  TURN COMPLETE: audio → STT → tool → result ✓")))
@@ -265,6 +282,12 @@ def _print_trace(trace_id: str, lines: list[dict]) -> None:
         print(_c("red", _c("bold", "  TURN DROPPED: _response_active not cleared")))
     elif has_stt_fail:
         print(_c("red", _c("bold", "  TURN STALLED: STT failed — check API key and network")))
+    elif has_route_failed:
+        print(_c("red", _c("bold", "  TURN STALLED: STT succeeded but transcript routing failed")))
+        print("  → Check ptt_transcript_route_failed error above")
+    elif has_stt and not transcript:
+        print(_c("red", _c("bold", "  TURN STALLED: STT succeeded but transcript routing failed")))
+        print("  → ptt_transcript_route_started not fired; _handle_ptt_transcript may have crashed")
     elif not has_stt and r_stt_start:
         print(_c("yellow", _c("bold", "  TURN STALLED: STT started but did not complete")))
     elif not transcript:
@@ -279,7 +302,8 @@ def _print_trace(trace_id: str, lines: list[dict]) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--last", type=int, default=1, metavar="N", help="Show last N real traces (default: 1)")
+    parser.add_argument("--last", type=int, nargs="?", const=1, default=1, metavar="N",
+                        help="Show last N real traces (default: 1); --last with no value shows 1")
     parser.add_argument("--trace-id", metavar="ID", help="Show a specific trace by ID")
     parser.add_argument("--date", default=date.today().isoformat(), metavar="YYYY-MM-DD", help="Log date (default: today)")
     args = parser.parse_args()

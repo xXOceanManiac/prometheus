@@ -1257,9 +1257,16 @@ class RealtimePrometheusClient:
                 })
 
                 if transcript:
-                    # Route through tool pipeline with the STT-provided trace context
                     self._current_trace_id = trace_id
-                    await self._handle_ptt_transcript(transcript)
+                    try:
+                        await self._handle_ptt_transcript(trace_id, transcript)
+                    except Exception as exc:
+                        log_event("ptt_transcript_route_failed", {
+                            "trace_id": trace_id,
+                            "error": str(exc)[:300],
+                            "transcript_len": len(transcript),
+                        })
+                        self.busy = False
                 else:
                     log_event("stt_empty_transcript", {
                         "trace_id": trace_id,
@@ -1285,17 +1292,24 @@ class RealtimePrometheusClient:
         })
         self.busy = False
 
-    async def _handle_ptt_transcript(self, transcript: str) -> None:
-        """Route a standalone-STT transcript through the existing tool pipeline."""
-        # Refine trace_id with transcript slug for grep-friendly log correlation
-        slug = _trace_slug(transcript)
-        if slug and self._current_trace_id:
-            _parts = self._current_trace_id.rsplit("-", 1)
-            if len(_parts) == 2:
-                self._current_trace_id = f"{_parts[0]}-{slug}-{_parts[1]}"
+    async def _handle_ptt_transcript(self, trace_id: str, transcript: str) -> None:
+        """Route a standalone-STT transcript through the existing tool pipeline.
+
+        trace_id is passed explicitly and never mutated — this keeps every event
+        in the turn under the same ID so grep-based diagnostic tools work correctly.
+        self._current_trace_id is updated once here so downstream tool execution
+        logs the correct trace.
+        """
+        self._current_trace_id = trace_id
+
+        log_event("ptt_transcript_route_started", {
+            "trace_id": trace_id,
+            "transcript_len": len(transcript),
+            "preview": transcript[:80],
+        })
 
         log_event("input_transcript_completed", {
-            "trace_id": self._current_trace_id,
+            "trace_id": trace_id,
             "transcript": transcript[:300],
             "length": len(transcript),
             "source": "standalone_stt",
@@ -1306,12 +1320,20 @@ class RealtimePrometheusClient:
         # Direct tool override — deterministic routing, no LLM, lowest latency
         override = self._direct_intent_override(transcript)
         if override and override.get("type") == "direct_tool":
+            log_event("ptt_transcript_route_direct_tool", {
+                "trace_id": trace_id,
+                "action": override["payload"].get("action", "?"),
+            })
             self.awaiting_user_audio = False
             self.busy = True
             await self._run_direct_tool(override["payload"])
             return
 
         if override and override.get("type") == "vault_recall":
+            log_event("ptt_transcript_route_direct_tool", {
+                "trace_id": trace_id,
+                "action": "vault_recall",
+            })
             self.awaiting_user_audio = False
             self.busy = True
             await self._handle_vault_recall(override["query"])
@@ -1321,7 +1343,12 @@ class RealtimePrometheusClient:
         if await self._contextual_override(transcript):
             return
 
-        # No tool match — send transcript as text input to Realtime for a spoken response
+        # No deterministic match — fall through to Realtime for a spoken response
+        log_event("ptt_transcript_route_no_tool", {
+            "trace_id": trace_id,
+            "preview": transcript[:80],
+        })
+
         if self.connected and self.ws:
             try:
                 state_block = self._build_live_state_block()
@@ -1348,7 +1375,7 @@ class RealtimePrometheusClient:
                 )
             except Exception as exc:
                 log_event("ptt_stt_response_error", {
-                    "trace_id": self._current_trace_id,
+                    "trace_id": trace_id,
                     "error": str(exc)[:200],
                 })
                 self.busy = False

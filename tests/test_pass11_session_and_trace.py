@@ -433,7 +433,7 @@ class TestSimulatedPTTTellTime:
         client._contextual_override = AsyncMock(return_value=False)
         client._current_trace_id = "20260609-140000-test-xx11"
 
-        asyncio.run(client._handle_ptt_transcript("what time is it"))
+        asyncio.run(client._handle_ptt_transcript("20260609-140000-test-xx11", "what time is it"))
 
         # Transcript must have been logged
         transcript_logs = [p for k, p in logged if k == "input_transcript_completed"]
