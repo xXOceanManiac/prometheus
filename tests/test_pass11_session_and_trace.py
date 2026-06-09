@@ -137,16 +137,20 @@ class TestConnectPayloadOmitsTurnDetection:
 class TestPayloadAuditBlocksTurnDetection:
     """The structural guard in connect() must block any session that has turn_detection."""
 
-    def test_connect_source_has_turn_detection_structural_guard(self):
-        """connect() must contain a check that 'turn_detection' in session dict is blocked."""
+    def test_connect_source_has_structural_guard(self):
+        """connect() must contain a check that blocks turn_detection and
+        input_audio_transcription before sending the session.update."""
         import realtime_client as rc
         src = inspect.getsource(rc.RealtimePrometheusClient.connect)
-        assert "turn_detection_not_supported_by_live_endpoint" in src, (
-            "connect() must block turn_detection with reason "
-            "'turn_detection_not_supported_by_live_endpoint'"
+        assert "not_supported_by_live_endpoint" in src, (
+            "connect() must block unsupported keys with reason 'not_supported_by_live_endpoint'"
         )
         assert "realtime_payload_blocked" in src, (
             "connect() must log realtime_payload_blocked"
+        )
+        # Must check for turn_detection as a blocked key
+        assert "turn_detection" in src and "input_audio_transcription" in src, (
+            "connect() must guard against both turn_detection and input_audio_transcription"
         )
 
     def test_clean_payload_does_not_trigger_audit(self):
