@@ -55,6 +55,10 @@ Voice:
 
 
 class RealtimePrometheusClient:
+    # Transcription model for input_audio_transcription in session config.
+    # Using gpt-4o-mini-transcribe (GA); whisper-1 is blocked by the payload audit.
+    _TRANSCRIPTION_MODEL = "gpt-4o-mini-transcribe"
+
     def __init__(self, speaker: Speaker, tools: ToolRegistry) -> None:
         self.api_key = CONFIG.get("openai_api_key", "")
         self.model = CONFIG.get("realtime_model", "gpt-realtime")
@@ -268,7 +272,11 @@ class RealtimePrometheusClient:
         return build_live_state_block()
 
     async def _update_session_instructions(self) -> None:
-        """Push updated instructions to an already-connected session via session.update."""
+        """Push updated instructions to an already-connected session via session.update.
+
+        Explicitly repeats turn_detection: null so that mid-session updates never
+        accidentally reset the server back to server_vad defaults.
+        """
         if not self.connected or not self.ws:
             return
         try:
@@ -277,6 +285,9 @@ class RealtimePrometheusClient:
                 "session": {
                     "type": "realtime",
                     "instructions": self._build_instructions(),
+                    # Repeat explicitly — partial session.update keeps existing values,
+                    # but being explicit prevents any future ambiguity about VAD state.
+                    "turn_detection": None,
                 },
             })
             log_event("vault_context_injected", {
@@ -769,8 +780,11 @@ class RealtimePrometheusClient:
             "voice": self.voice,
             "modalities": ["text", "audio"],
             "instructions_length": len(_instructions),
-            "turn_detection": "disabled",
-            "input_audio_transcription": "enabled",
+            "has_turn_detection": True,
+            "turn_detection_value": "null",          # None → JSON null → server VAD disabled
+            "has_input_transcription_config": True,
+            "transcription_model": self._TRANSCRIPTION_MODEL,
+            "session_type": "realtime",
         })
 
         # Audit headers — only Authorization is permitted
@@ -786,22 +800,31 @@ class RealtimePrometheusClient:
             "session": {
                 "type": "realtime",
                 "instructions": _instructions,
-                # PTT mode: disable server_vad so the server never auto-commits or
-                # auto-creates a response before the user releases the PTT button.
-                # Manual commit + manual response.create own the full turn lifecycle.
+                # PTT mode: null disables server VAD so the server never auto-commits
+                # or auto-creates a response before the user releases PTT.
+                # Manual input_audio_buffer.commit + response.create own the lifecycle.
                 "turn_detection": None,
-                # Keep input transcription active so transcript events still fire.
-                "input_audio_transcription": {},
+                # Explicit model required — empty {} does not enable transcription.
+                # gpt-4o-mini-transcribe is the GA-compatible model (whisper-1 blocked
+                # by the payload audit below).
+                "input_audio_transcription": {"model": self._TRANSCRIPTION_MODEL},
             },
         }
 
         # Log session keys before sending — never log secrets
         _sess = _session_update["session"]
+        _td = _sess.get("turn_detection")
         log_event("realtime_session_update_keys", {
             "session_keys": list(_sess.keys()),
+            "has_turn_detection": "turn_detection" in _sess,
+            "turn_detection_value": "null" if _td is None else str(_td),
+            "has_input_transcription": "input_audio_transcription" in _sess,
+            "transcription_model": (_sess.get("input_audio_transcription") or {}).get("model", ""),
         })
 
-        # Hard audit: block send if any forbidden beta field appears in the payload
+        # Hard audit: block send if any forbidden field appears in the payload.
+        # "server_vad" must never appear in PTT mode — its presence means the manual
+        # turn lifecycle will race with server auto-commits, dropping turns silently.
         _forbidden_payload_strings = [
             "OpenAI-Beta",
             "realtime=v1",
@@ -810,11 +833,13 @@ class RealtimePrometheusClient:
             "additionalProperties",
             "whisper-1",
             "input_audio_transcription_model",
+            "server_vad",                            # PTT mode: server VAD must be null
         ]
         _payload_text = json.dumps(_session_update)
         _hits = [s for s in _forbidden_payload_strings if s in _payload_text]
         if _hits:
-            log_event("realtime_payload_blocked", {"forbidden": _hits})
+            _reason = "server_vad_not_allowed_in_ptt_mode" if "server_vad" in _hits else "forbidden_payload_field"
+            log_event("realtime_payload_blocked", {"forbidden": _hits, "reason": _reason})
             notify(f"Realtime payload blocked: forbidden fields {_hits}")
             self._should_reconnect = False
             return
