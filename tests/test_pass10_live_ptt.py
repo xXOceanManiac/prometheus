@@ -430,30 +430,47 @@ class TestObservabilityLogs:
 # ── Session config guard ──────────────────────────────────────────────────────
 
 class TestSessionConfigUnchanged:
-    """Confirm turn_detection is still None and transcription is still enabled
-    after the Pass 10 changes."""
+    """Confirm turn_detection is OMITTED and transcription is still enabled (Pass 11)."""
 
-    def test_turn_detection_none_in_session_payload(self):
+    def test_connect_session_omits_turn_detection(self):
+        """connect() session.update must NOT contain turn_detection in any form.
+        The GA Realtime API rejects it as unknown_parameter."""
+        import asyncio
+        import json
         import realtime_client as rc
-        client = rc.RealtimePrometheusClient(
-            speaker=MagicMock(),
-            tools=MagicMock(),
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        client = rc.RealtimePrometheusClient(speaker=MagicMock(), tools=MagicMock())
+        client.api_key = "sk-test-placeholder"
+        sent: list[dict] = []
+
+        async def _fake_send_raw(data):
+            sent.append(json.loads(data))
+
+        fake_ws = MagicMock()
+        fake_ws.send = _fake_send_raw
+
+        async def _run():
+            with patch("websockets.connect", new_callable=AsyncMock) as mock_conn, \
+                 patch("asyncio.create_task"), \
+                 patch("realtime_client.log_event"), \
+                 patch("realtime_client.notify"):
+                mock_conn.return_value = fake_ws
+                await client.connect()
+
+        asyncio.run(_run())
+
+        session_updates = [m for m in sent if m.get("type") == "session.update"]
+        assert session_updates, "connect() must send session.update"
+        sess = session_updates[0].get("session", {})
+        assert "turn_detection" not in sess, (
+            f"turn_detection must be OMITTED (GA API rejects it). "
+            f"Got session keys: {list(sess.keys())}"
         )
-        # _build_session_payload is private; access the session update dict via connect mock
-        sent = []
-
-        async def mock_connect():
-            # Simulate what connect() sends
-            payload = client._build_session_payload() if hasattr(client, "_build_session_payload") else None
-            if payload:
-                sent.append(payload)
-
-        # If _build_session_payload doesn't exist, check the connect source instead
-        import inspect
-        src = inspect.getsource(rc.RealtimePrometheusClient.connect)
-        assert "turn_detection" in src, "connect() must set turn_detection"
-        assert '"None"' in src or "'None'" in src or "None" in src, \
-            "turn_detection must be set to null/None"
+        raw = json.dumps(session_updates[0])
+        assert '"turn_detection"' not in raw, (
+            f"turn_detection must not appear in session.update JSON: {raw[:300]}"
+        )
 
     def test_input_audio_transcription_enabled(self):
         import realtime_client as rc

@@ -618,6 +618,8 @@ class PrometheusCore:
     async def _commit_turn(self, reason: str) -> None:
         if not self.user_turn_active:
             return
+        if reason == "ptt_release":
+            log_event("ptt_released", {"trace_id": self.client._current_trace_id})
         source = self.user_turn_source
         self.user_turn_source = ""
         self.visuals.set_state("processing")

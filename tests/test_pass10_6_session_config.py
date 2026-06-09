@@ -1,15 +1,15 @@
 """
 tests/test_pass10_6_session_config.py
 
-Pass 10.6 — Realtime session config correctness for PTT mode.
+Pass 10.6 → Pass 11 — Realtime session config correctness for PTT mode.
 
 Verifies:
 1. connect() session.update never contains server_vad
-2. connect() session.update has turn_detection: null (Python None → JSON null)
+2. connect() session.update OMITS turn_detection entirely (GA API rejects the key)
 3. connect() input_audio_transcription specifies an explicit model (not empty {})
-4. payload audit guard blocks server_vad before sending
-5. _update_session_instructions() includes turn_detection: null (no accidental reset)
-6. Debug log events include actual turn_detection value and transcription model
+4. payload audit guard blocks server_vad and turn_detection before sending
+5. _update_session_instructions() OMITS turn_detection (GA API rejects it mid-session too)
+6. Debug log reports has_turn_detection=False, turn_detection_value='omitted'
 7. Simulated PTT commit + mock transcript event → input_transcript_completed logged
 
 All tests are offline — no live Realtime API.
@@ -78,7 +78,7 @@ def _run_connect_capture(client, logged: list | None = None) -> list[dict]:
 # ── 1. connect() never sends server_vad ───────────────────────────────────────
 
 class TestConnectPayloadNeverHasServerVad:
-    """The session.update sent by connect() must not contain server_vad."""
+    """The session.update sent by connect() must not contain server_vad or turn_detection."""
 
     def test_connect_payload_json_does_not_contain_server_vad(self):
         client = _make_client()
@@ -93,7 +93,9 @@ class TestConnectPayloadNeverHasServerVad:
                 f"session.update must not contain server_vad, got: {raw[:200]}"
             )
 
-    def test_connect_session_turn_detection_is_null(self):
+    def test_connect_session_omits_turn_detection(self):
+        """turn_detection must be OMITTED entirely. The GA Realtime API rejects it
+        as unknown_parameter — sending null or any value causes the session update to fail."""
         client = _make_client()
         sent = _run_connect_capture(client)
 
@@ -101,12 +103,14 @@ class TestConnectPayloadNeverHasServerVad:
         assert session_updates
 
         sess = session_updates[0].get("session", {})
-        assert "turn_detection" in sess, "turn_detection must be present in session"
-        assert sess["turn_detection"] is None, (
-            f"turn_detection must be null (None) for PTT mode, got {sess['turn_detection']!r}"
+        assert "turn_detection" not in sess, (
+            f"turn_detection must be OMITTED from session.update — GA Realtime API "
+            f"rejects it with unknown_parameter. Got session keys: {list(sess.keys())}"
         )
 
-    def test_connect_session_turn_detection_serializes_to_json_null(self):
+    def test_connect_session_turn_detection_absent_from_json(self):
+        """turn_detection must not appear anywhere in the session.update JSON.
+        The GA Realtime API rejects the key entirely (unknown_parameter error)."""
         client = _make_client()
         sent = _run_connect_capture(client)
 
@@ -114,8 +118,9 @@ class TestConnectPayloadNeverHasServerVad:
         assert session_updates
 
         raw = json.dumps(session_updates[0])
-        assert '"turn_detection": null' in raw or '"turn_detection":null' in raw, (
-            "turn_detection must serialize to JSON null, not omitted or server_vad"
+        assert '"turn_detection"' not in raw, (
+            f"turn_detection must not appear in session.update JSON — GA API rejects it. "
+            f"Found in: {raw[:300]}"
         )
 
 
@@ -234,10 +239,11 @@ class TestTranscriptionConfig:
 # ── 4. _update_session_instructions does not reset turn_detection ─────────────
 
 class TestUpdateSessionInstructionsTurnDetection:
-    """Mid-session instruction updates must carry turn_detection: null so they never
-    accidentally reset the server back to server_vad defaults."""
+    """Mid-session instruction updates must OMIT turn_detection. The GA Realtime API
+    rejects the key as unknown_parameter — even sending null causes the update to fail."""
 
-    def test_update_session_instructions_includes_turn_detection_null(self):
+    def test_update_session_instructions_omits_turn_detection(self):
+        """_update_session_instructions must NOT send turn_detection in any form."""
         client = _make_client()
         sent: list[dict] = []
 
@@ -252,10 +258,9 @@ class TestUpdateSessionInstructionsTurnDetection:
 
         assert sent, "_update_session_instructions must call send"
         sess = sent[0].get("session", {})
-        assert "turn_detection" in sess, \
-            "turn_detection must be present in _update_session_instructions payload"
-        assert sess["turn_detection"] is None, (
-            f"turn_detection must be null in _update_session_instructions, got {sess['turn_detection']!r}"
+        assert "turn_detection" not in sess, (
+            f"turn_detection must be OMITTED from _update_session_instructions — "
+            f"GA Realtime API rejects the key. Got session keys: {list(sess.keys())}"
         )
 
     def test_update_session_instructions_no_server_vad(self):
@@ -296,7 +301,8 @@ class TestUpdateSessionInstructionsTurnDetection:
         assert "instructions" in sess, "instructions must still be present"
         assert sess["instructions"], "instructions must not be empty"
 
-    def test_update_session_instructions_turn_detection_serializes_null(self):
+    def test_update_session_instructions_turn_detection_absent_from_json(self):
+        """turn_detection must not appear in the JSON sent by _update_session_instructions."""
         client = _make_client()
         sent: list[dict] = []
 
@@ -311,12 +317,9 @@ class TestUpdateSessionInstructionsTurnDetection:
 
         assert sent
         raw = json.dumps(sent[0])
-        assert "server_vad" not in raw
-        # turn_detection must either be absent or null — not a non-null VAD config
-        assert ('"turn_detection": null' in raw or
-                '"turn_detection":null' in raw or
-                '"turn_detection": null' in raw), (
-            f"turn_detection must serialize to null in the JSON output: {raw[:300]}"
+        assert "server_vad" not in raw, "_update_session_instructions must not contain server_vad"
+        assert '"turn_detection"' not in raw, (
+            f"turn_detection must be absent from _update_session_instructions JSON: {raw[:300]}"
         )
 
 
@@ -324,7 +327,7 @@ class TestUpdateSessionInstructionsTurnDetection:
 
 class TestSessionDebugLogging:
     """realtime_session_payload_debug and realtime_session_update_keys must log
-    actual config values so the live log can confirm the session is in PTT mode."""
+    actual config values so the live log can confirm turn_detection is omitted."""
 
     def test_payload_debug_log_has_turn_detection_value(self):
         client = _make_client()
@@ -336,8 +339,10 @@ class TestSessionDebugLogging:
         ev = debug_events[0]
         assert "turn_detection_value" in ev, \
             "realtime_session_payload_debug must include turn_detection_value"
-        assert ev["turn_detection_value"] == "null", \
-            f"turn_detection_value must be 'null' in PTT mode, got {ev['turn_detection_value']!r}"
+        assert ev["turn_detection_value"] == "omitted", (
+            f"turn_detection_value must be 'omitted' (key not sent to GA API), "
+            f"got {ev['turn_detection_value']!r}"
+        )
 
     def test_payload_debug_log_has_transcription_model(self):
         client = _make_client()
@@ -360,13 +365,24 @@ class TestSessionDebugLogging:
         assert key_events, "realtime_session_update_keys must be logged"
         ev = key_events[0]
         assert "has_turn_detection" in ev, "must log has_turn_detection"
-        assert ev["has_turn_detection"] is True
+        assert ev["has_turn_detection"] is False, (
+            f"has_turn_detection must be False (key omitted from payload), "
+            f"got {ev['has_turn_detection']!r}"
+        )
         assert "turn_detection_value" in ev, "must log turn_detection_value"
-        assert ev["turn_detection_value"] == "null"
+        assert ev["turn_detection_value"] == "omitted", (
+            f"turn_detection_value must be 'omitted', got {ev['turn_detection_value']!r}"
+        )
         assert "has_input_transcription" in ev
         assert ev["has_input_transcription"] is True
         assert "transcription_model" in ev
         assert ev["transcription_model"]   # non-empty
+        # turn_detection must NOT appear in session_keys list
+        session_keys = ev.get("session_keys", [])
+        assert "turn_detection" not in session_keys, (
+            f"turn_detection must not be in session_keys — key was omitted from payload. "
+            f"Got: {session_keys}"
+        )
 
 
 # ── 6. Simulated PTT turn → transcript event → handler fires ──────────────────

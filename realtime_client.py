@@ -274,8 +274,9 @@ class RealtimePrometheusClient:
     async def _update_session_instructions(self) -> None:
         """Push updated instructions to an already-connected session via session.update.
 
-        Explicitly repeats turn_detection: null so that mid-session updates never
-        accidentally reset the server back to server_vad defaults.
+        turn_detection is intentionally OMITTED. The GA Realtime API rejects
+        'session.turn_detection' as an unknown parameter. Omitting it leaves PTT
+        mode unchanged from the initial session.update sent in connect().
         """
         if not self.connected or not self.ws:
             return
@@ -285,9 +286,6 @@ class RealtimePrometheusClient:
                 "session": {
                     "type": "realtime",
                     "instructions": self._build_instructions(),
-                    # Repeat explicitly — partial session.update keeps existing values,
-                    # but being explicit prevents any future ambiguity about VAD state.
-                    "turn_detection": None,
                 },
             })
             log_event("vault_context_injected", {
@@ -734,6 +732,11 @@ class RealtimePrometheusClient:
         if not self.api_key:
             raise RuntimeError("Missing OpenAI API key.")
 
+        # Clear stale trace ID from previous session — errors during connect/reconnect
+        # must not inherit a trace_id that belonged to a previous user turn.
+        if not self.awaiting_user_audio:
+            self._current_trace_id = ""
+
         url = f"wss://api.openai.com/v1/realtime?model={self.model}"
         # GA Realtime API — no OpenAI-Beta header; Authorization only
         headers = {
@@ -780,8 +783,8 @@ class RealtimePrometheusClient:
             "voice": self.voice,
             "modalities": ["text", "audio"],
             "instructions_length": len(_instructions),
-            "has_turn_detection": True,
-            "turn_detection_value": "null",          # None → JSON null → server VAD disabled
+            "has_turn_detection": False,             # GA API rejects turn_detection — key is omitted
+            "turn_detection_value": "omitted",
             "has_input_transcription_config": True,
             "transcription_model": self._TRANSCRIPTION_MODEL,
             "session_type": "realtime",
@@ -800,10 +803,9 @@ class RealtimePrometheusClient:
             "session": {
                 "type": "realtime",
                 "instructions": _instructions,
-                # PTT mode: null disables server VAD so the server never auto-commits
-                # or auto-creates a response before the user releases PTT.
-                # Manual input_audio_buffer.commit + response.create own the lifecycle.
-                "turn_detection": None,
+                # turn_detection is intentionally OMITTED — the GA Realtime API rejects
+                # 'session.turn_detection' as an unknown parameter (unknown_parameter error).
+                # PTT lifecycle is owned by manual input_audio_buffer.commit + response.create.
                 # Explicit model required — empty {} does not enable transcription.
                 # gpt-4o-mini-transcribe is the GA-compatible model (whisper-1 blocked
                 # by the payload audit below).
@@ -813,16 +815,26 @@ class RealtimePrometheusClient:
 
         # Log session keys before sending — never log secrets
         _sess = _session_update["session"]
-        _td = _sess.get("turn_detection")
         log_event("realtime_session_update_keys", {
             "session_keys": list(_sess.keys()),
-            "has_turn_detection": "turn_detection" in _sess,
-            "turn_detection_value": "null" if _td is None else str(_td),
+            "has_turn_detection": False,             # omitted — GA API rejects the key
+            "turn_detection_value": "omitted",
             "has_input_transcription": "input_audio_transcription" in _sess,
             "transcription_model": (_sess.get("input_audio_transcription") or {}).get("model", ""),
         })
 
-        # Hard audit: block send if any forbidden field appears in the payload.
+        # Structural guard: turn_detection must never appear in the session dict.
+        # The GA Realtime API rejects it with unknown_parameter, breaking the entire session.
+        if "turn_detection" in _sess:
+            log_event("realtime_payload_blocked", {
+                "forbidden": ["turn_detection"],
+                "reason": "turn_detection_not_supported_by_live_endpoint",
+            })
+            notify("Realtime payload blocked: turn_detection not supported by live endpoint")
+            self._should_reconnect = False
+            return
+
+        # Hard audit: block send if any forbidden string appears in the full payload JSON.
         # "server_vad" must never appear in PTT mode — its presence means the manual
         # turn lifecycle will race with server auto-commits, dropping turns silently.
         _forbidden_payload_strings = [
@@ -833,7 +845,7 @@ class RealtimePrometheusClient:
             "additionalProperties",
             "whisper-1",
             "input_audio_transcription_model",
-            "server_vad",                            # PTT mode: server VAD must be null
+            "server_vad",                            # PTT mode: server VAD must never be set
         ]
         _payload_text = json.dumps(_session_update)
         _hits = [s for s in _forbidden_payload_strings if s in _payload_text]

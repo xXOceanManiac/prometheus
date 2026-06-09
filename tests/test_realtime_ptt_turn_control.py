@@ -1,11 +1,11 @@
 """
 tests/test_realtime_ptt_turn_control.py
 
-PTT turn-control tests (Pass 2.5):
+PTT turn-control tests (Pass 2.5 → Pass 11):
 
 - PTT release with empty buffer skips commit and logs user_turn_commit_skipped
 - Active response blocks duplicate response.create and logs response_create_skipped_active
-- Session config sets turn_detection=null (no server_vad auto-response)
+- Session config OMITS turn_detection (GA API rejects it as unknown_parameter)
 - input_transcript_completed carries active trace_id
 - Transcript routes to direct tool override (_direct_intent_override path)
 - "what time is it" produces tool_execute / tool_result in simulated flow
@@ -40,12 +40,14 @@ def _make_client():
     return client
 
 
-# ── Task 3: Session config has turn_detection=null ───────────────────────────
+# ── Task 3: Session config omits turn_detection ───────────────────────────────
 
 class TestSessionConfigTurnDetection:
 
-    def test_connect_sends_turn_detection_null(self):
-        """Session update payload must include turn_detection: null."""
+    def test_connect_omits_turn_detection(self):
+        """Session update must OMIT turn_detection entirely.
+        The GA Realtime API rejects it as unknown_parameter — any value causes the
+        session.update to fail and no transcription events are ever received."""
         client = _make_client()
         client.connected = False
 
@@ -68,9 +70,9 @@ class TestSessionConfigTurnDetection:
         session_updates = [m for m in sent if m.get("type") == "session.update"]
         assert session_updates, "No session.update sent"
         sess = session_updates[0]["session"]
-        assert "turn_detection" in sess, "turn_detection key missing from session config"
-        assert sess["turn_detection"] is None, (
-            f"turn_detection should be None (disabled) but got {sess['turn_detection']!r}"
+        assert "turn_detection" not in sess, (
+            f"turn_detection must be OMITTED — GA API rejects it with unknown_parameter. "
+            f"Got session keys: {list(sess.keys())}"
         )
 
     def test_connect_includes_input_audio_transcription(self):
