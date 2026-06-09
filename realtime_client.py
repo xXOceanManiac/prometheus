@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import io
 import json
 import os
 import time
+import wave
 from pathlib import Path
 from typing import Any
 
+import httpx
 import numpy as np
 import orjson
 import websockets
@@ -113,6 +116,9 @@ class RealtimePrometheusClient:
         self._audio_chunks_appended: int = 0
         self._first_audio_ts: float = 0.0
         self._last_audio_ts: float = 0.0
+        # Raw PCM16 bytes captured during the current PTT turn for standalone STT.
+        # Accumulated in send_audio(); used in end_audio() → _transcribe_ptt().
+        self._captured_audio: bytearray = bytearray()
 
         # Vault / workspace context injected before or during a session
         self._vault_context: str = ""
@@ -1100,11 +1106,18 @@ class RealtimePrometheusClient:
         self._audio_chunks_appended = 0
         self._first_audio_ts = 0.0
         self._last_audio_ts = 0.0
+        self._captured_audio = bytearray()
         self._current_trace_id = make_trace_id()
         log_event("user_turn_started", {"trace_id": self._current_trace_id})
         log_event("ptt_audio_capture_started", {"trace_id": self._current_trace_id})
 
     async def send_audio(self, chunk: bytes) -> None:
+        """Accumulate raw PTT audio locally for standalone STT on release.
+
+        Realtime input_audio_buffer is NOT used in PTT mode — the server has
+        consistently failed with buffer_commit_empty errors. Audio is held locally
+        and transcribed via the standalone OpenAI transcription endpoint on release.
+        """
         if not self.awaiting_user_audio:
             return
 
@@ -1115,35 +1128,33 @@ class RealtimePrometheusClient:
             self._first_audio_ts = _now
         self._last_audio_ts = _now
 
-        arr = np.frombuffer(chunk, dtype=np.int16)
-        b64 = pcm16_16k_to_base64_24k(arr)
-
-        await self.send(
-            {
-                "type": "input_audio_buffer.append",
-                "audio": b64,
-            }
-        )
+        # Accumulate raw PCM16 bytes for STT — do NOT send to Realtime audio buffer
+        self._captured_audio.extend(chunk)
 
         # Throttled observability: log every 5 chunks so live logs show audio is flowing
         if self._audio_chunks_appended % 5 == 0:
-            log_event("realtime_audio_append_sent", {
+            log_event("ptt_audio_captured", {
                 "trace_id": self._current_trace_id,
                 "chunks_so_far": self._audio_chunks_appended,
                 "bytes_so_far": self._audio_bytes_since_commit,
             })
 
     async def end_audio(self) -> None:
+        """Called on PTT release. Routes captured audio to standalone STT.
+
+        Realtime input_audio_buffer.commit is NOT called — the server has
+        consistently failed with buffer_commit_empty (0.00ms) errors.
+        Realtime is used for output (speaking) only; all input goes through
+        the standalone OpenAI transcription endpoint.
+        """
         if not self.awaiting_user_audio:
             return
 
         _MIN_COMMIT_BYTES = 3200
 
-        # Race guard: if begin_user_turn and end_audio are scheduled in the same event-loop
-        # cycle (quick PTT tap), _audio_bytes_since_commit may be 0 because the main run()
-        # loop hasn't had a chance to process mic chunks yet.  Yield briefly so the loop
-        # can deliver buffered audio before we evaluate the threshold.
-        # awaiting_user_audio stays True during the sleep so send_audio() continues counting.
+        # Race guard: if begin_user_turn and end_audio fire in the same event-loop
+        # cycle (quick PTT tap), bytes may be 0 because the mic loop hasn't run yet.
+        # Yield briefly so accumulated audio can be delivered before we evaluate.
         if self._audio_bytes_since_commit == 0:
             await asyncio.sleep(0.15)
 
@@ -1174,30 +1185,175 @@ class RealtimePrometheusClient:
                 "chunks": self._audio_chunks_appended,
                 "min_bytes": _MIN_COMMIT_BYTES,
             })
-            print(f"[DBG] end_audio: commit skipped ({self._audio_bytes_since_commit} bytes < {_MIN_COMMIT_BYTES})")
             self.busy = False
             return
 
-        if self._response_active:
-            log_event("response_create_skipped_active", {
-                "trace_id": self._current_trace_id,
-                "context": "end_audio_ptt",
-            })
-            print("[DBG] end_audio: response.create skipped (response already active)")
-            return
+        # Snapshot captured audio bytes before releasing the turn
+        _pcm_snapshot = bytes(self._captured_audio)
+        _trace_snapshot = self._current_trace_id
 
         log_event("user_turn_commit_attempt", {
-            "trace_id": self._current_trace_id,
+            "trace_id": _trace_snapshot,
             "bytes": self._audio_bytes_since_commit,
             "chunks": self._audio_chunks_appended,
             "duration_ms": _dur_ms,
+            "stt_mode": "standalone",
         })
-        log_event("user_turn_committed", {"trace_id": self._current_trace_id})
-        print("[DBG] end_audio: sending input_audio_buffer.commit")
-        await self.send({"type": "input_audio_buffer.commit"})
-        print("[DBG] end_audio: commit sent — sending response.create")
-        await self._guarded_response_create({}, context="end_audio_ptt")
-        print("Committing audio and requesting response")
+
+        # Transcribe locally via standalone STT (async task — does not block the mic loop)
+        asyncio.create_task(self._transcribe_ptt(_pcm_snapshot, _trace_snapshot))
+
+    # ── Standalone STT ────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _pcm_to_wav(pcm_bytes: bytes, sample_rate: int = 16000) -> bytes:
+        """Wrap raw PCM16 mono bytes in a WAV container for the transcription API."""
+        buf = io.BytesIO()
+        with wave.open(buf, "wb") as wf:
+            wf.setnchannels(1)
+            wf.setsampwidth(2)         # 16-bit
+            wf.setframerate(sample_rate)
+            wf.writeframes(pcm_bytes)
+        return buf.getvalue()
+
+    async def _transcribe_ptt(self, pcm_bytes: bytes, trace_id: str) -> None:
+        """Transcribe a PTT turn using OpenAI standalone audio transcriptions.
+
+        Tries _TRANSCRIPTION_MODEL first, falls back to whisper-1 on any error.
+        On success calls _handle_ptt_transcript(); on total failure clears busy.
+        """
+        n_bytes = len(pcm_bytes)
+        _t0 = time.monotonic()
+        _stt_models = [self._TRANSCRIPTION_MODEL, "whisper-1"]
+        wav_bytes = self._pcm_to_wav(pcm_bytes)
+
+        for model in _stt_models:
+            log_event("stt_transcription_started", {
+                "trace_id": trace_id,
+                "model": model,
+                "bytes": n_bytes,
+            })
+            try:
+                async with httpx.AsyncClient(timeout=30.0) as hx:
+                    resp = await hx.post(
+                        "https://api.openai.com/v1/audio/transcriptions",
+                        headers={"Authorization": f"Bearer {self.api_key}"},
+                        data={"model": model, "response_format": "text"},
+                        files={"file": ("ptt_audio.wav", wav_bytes, "audio/wav")},
+                    )
+
+                if resp.status_code != 200:
+                    raise RuntimeError(f"HTTP {resp.status_code}: {resp.text[:200]}")
+
+                transcript = resp.text.strip()
+                _dur_ms = round((time.monotonic() - _t0) * 1000)
+                log_event("stt_transcription_completed", {
+                    "trace_id": trace_id,
+                    "model": model,
+                    "bytes": n_bytes,
+                    "duration_ms": _dur_ms,
+                    "transcript_len": len(transcript),
+                    "preview": transcript[:80],
+                })
+
+                if transcript:
+                    # Route through tool pipeline with the STT-provided trace context
+                    self._current_trace_id = trace_id
+                    await self._handle_ptt_transcript(transcript)
+                else:
+                    log_event("stt_empty_transcript", {
+                        "trace_id": trace_id,
+                        "model": model,
+                    })
+                    self.busy = False
+                return
+
+            except Exception as exc:
+                log_event("stt_transcription_failed", {
+                    "trace_id": trace_id,
+                    "model": model,
+                    "error": str(exc)[:300],
+                    "bytes": n_bytes,
+                })
+                # Continue to next model
+                continue
+
+        # All models failed
+        log_event("stt_all_models_failed", {
+            "trace_id": trace_id,
+            "models_tried": _stt_models,
+        })
+        self.busy = False
+
+    async def _handle_ptt_transcript(self, transcript: str) -> None:
+        """Route a standalone-STT transcript through the existing tool pipeline."""
+        # Refine trace_id with transcript slug for grep-friendly log correlation
+        slug = _trace_slug(transcript)
+        if slug and self._current_trace_id:
+            _parts = self._current_trace_id.rsplit("-", 1)
+            if len(_parts) == 2:
+                self._current_trace_id = f"{_parts[0]}-{slug}-{_parts[1]}"
+
+        log_event("input_transcript_completed", {
+            "trace_id": self._current_trace_id,
+            "transcript": transcript[:300],
+            "length": len(transcript),
+            "source": "standalone_stt",
+        })
+
+        notify(f"Heard: {transcript[:80]}")
+
+        # Direct tool override — deterministic routing, no LLM, lowest latency
+        override = self._direct_intent_override(transcript)
+        if override and override.get("type") == "direct_tool":
+            self.awaiting_user_audio = False
+            self.busy = True
+            await self._run_direct_tool(override["payload"])
+            return
+
+        if override and override.get("type") == "vault_recall":
+            self.awaiting_user_audio = False
+            self.busy = True
+            await self._handle_vault_recall(override["query"])
+            return
+
+        # Contextual override — handles vague commands ("fix that", "continue", etc.)
+        if await self._contextual_override(transcript):
+            return
+
+        # No tool match — send transcript as text input to Realtime for a spoken response
+        if self.connected and self.ws:
+            try:
+                state_block = self._build_live_state_block()
+                if state_block:
+                    await self.send({
+                        "type": "conversation.item.create",
+                        "item": {
+                            "type": "message",
+                            "role": "system",
+                            "content": [{"type": "input_text", "text": state_block}],
+                        },
+                    })
+                await self.send({
+                    "type": "conversation.item.create",
+                    "item": {
+                        "type": "message",
+                        "role": "user",
+                        "content": [{"type": "input_text", "text": transcript}],
+                    },
+                })
+                await self._guarded_response_create(
+                    {"modalities": ["audio", "text"]},
+                    context="ptt_stt_chat",
+                )
+            except Exception as exc:
+                log_event("ptt_stt_response_error", {
+                    "trace_id": self._current_trace_id,
+                    "error": str(exc)[:200],
+                })
+                self.busy = False
+        else:
+            self.busy = False
 
     async def _handle_tool_call(self, event: dict[str, Any]) -> None:
         try:

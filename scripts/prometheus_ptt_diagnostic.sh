@@ -8,7 +8,7 @@
 #
 # Reads: ~/.jarvis/logs/YYYY-MM-DD.jsonl  (today's date)
 # Log field: "kind" (not "event")
-# Outputs: per-turn trace showing audio bytes/chunks, commit/skip, transcript, tools.
+# Covers: PTT capture → standalone STT → tool routing → result
 #
 # Requires: jq ≥ 1.6
 
@@ -63,11 +63,9 @@ echo ""
 # Filter: non-empty, not test traces (-test-), not readiness probes (readiness-)
 TRACE_IDS=$(
     jq -r 'select(.kind == "user_turn_started") | .trace_id // empty' "$LOG_FILE" 2>/dev/null \
-    | grep -v '^$' \
-    | grep -v -- '-test-' \
-    | grep -v '^readiness-' \
-    | tail -"$LAST_N"
+    | grep -v '^$' || true
 )
+TRACE_IDS=$(echo "$TRACE_IDS" | grep -v -- '-test-' | grep -v '^readiness-' | tail -"$LAST_N" || true)
 
 if [[ -n "$TARGET_TRACE" ]]; then
     TRACE_IDS="$TARGET_TRACE"
@@ -109,109 +107,124 @@ process_trace() {
     if [[ -n "$ptt_released_ts" && "$ptt_released_ts" != "?" ]]; then
         ok "ptt_released @ $ptt_released_ts"
     else
-        warn "ptt_released not found (added in Pass 11; check main.py _commit_turn)"
+        warn "ptt_released not logged (only in ptt_release path)"
     fi
 
-    # ── Audio frames ─────────────────────────────────────────────────────────
-    local append_count
-    append_count=$(echo "$events" | jq -r 'select(.kind == "realtime_audio_append_sent")' | wc -l)
-    if [[ "$append_count" -gt 0 ]]; then
-        local last_bytes last_chunks
-        last_bytes=$(echo "$events" | jq -r 'select(.kind == "realtime_audio_append_sent") | .bytes_so_far // 0' | tail -1)
-        last_chunks=$(echo "$events" | jq -r 'select(.kind == "realtime_audio_append_sent") | .chunks_so_far // 0' | tail -1)
-        ok "realtime_audio_append_sent: $append_count log events, last=$last_chunks chunks / $last_bytes bytes"
-    else
-        warn "realtime_audio_append_sent: 0 log events (audio may have been very short)"
-    fi
-
-    # ── Capture stopped ───────────────────────────────────────────────────────
+    # ── Local audio captured ─────────────────────────────────────────────────
     local stopped_bytes stopped_chunks stopped_ms
     stopped_bytes=$(echo "$events" | jq -r 'select(.kind == "ptt_audio_capture_stopped") | .bytes // 0' | head -1)
     stopped_chunks=$(echo "$events" | jq -r 'select(.kind == "ptt_audio_capture_stopped") | .chunks // 0' | head -1)
     stopped_ms=$(echo "$events" | jq -r 'select(.kind == "ptt_audio_capture_stopped") | .duration_ms // 0' | head -1)
 
     if [[ -n "$stopped_bytes" && "$stopped_bytes" != "0" ]]; then
-        ok "ptt_audio_capture_stopped: ${stopped_bytes} bytes / ${stopped_chunks} chunks / ${stopped_ms}ms"
+        ok "local audio captured: ${stopped_bytes} bytes / ${stopped_chunks} chunks / ${stopped_ms}ms"
     else
         fail "ptt_audio_capture_stopped NOT found (or 0 bytes)"
     fi
 
     # ── Commit attempt vs skip ────────────────────────────────────────────────
-    local commit_attempt commit_skipped skipped_active
+    local commit_attempt commit_skipped
     commit_attempt=$(echo "$events" | jq -c 'select(.kind == "user_turn_commit_attempt")' | head -1)
     commit_skipped=$(echo "$events" | jq -c 'select(.kind == "user_turn_commit_skipped")' | head -1)
-    skipped_active=$(echo "$events" | jq -r 'select(.kind == "response_create_skipped_active") | .context // ""' | head -1)
 
     if [[ -n "$commit_attempt" ]]; then
-        ok "user_turn_commit_attempt: $(echo "$commit_attempt" | jq -c '{bytes,chunks,duration_ms} // .')"
+        local stt_mode
+        stt_mode=$(echo "$commit_attempt" | jq -r '.stt_mode // "unknown"')
+        ok "user_turn_commit_attempt: stt_mode=$stt_mode"
     elif [[ -n "$commit_skipped" ]]; then
-        fail "user_turn_commit_skipped: $(echo "$commit_skipped" | jq -c '.')"
-    elif [[ -n "$skipped_active" ]]; then
-        fail "response_create_skipped_active: context=$skipped_active"
+        local skip_reason skip_bytes
+        skip_reason=$(echo "$commit_skipped" | jq -r '.reason // "?"')
+        skip_bytes=$(echo "$commit_skipped" | jq -r '.bytes // 0')
+        fail "user_turn_commit_skipped: reason=$skip_reason bytes=$skip_bytes"
+    fi
+
+    # ── Standalone STT ───────────────────────────────────────────────────────
+    local stt_started stt_model stt_completed stt_failed
+    stt_started=$(echo "$events" | jq -r 'select(.kind == "stt_transcription_started") | .ts // ""' | head -1)
+    stt_model=$(echo "$events" | jq -r 'select(.kind == "stt_transcription_started") | .model // ""' | head -1)
+    stt_completed=$(echo "$events" | jq -r 'select(.kind == "stt_transcription_completed") | .ts // ""' | head -1)
+    stt_failed=$(echo "$events" | jq -r 'select(.kind == "stt_transcription_failed") | .error // ""' | head -3)
+
+    if [[ -n "$stt_started" ]]; then
+        ok "stt_transcription_started @ $stt_started (model=$stt_model)"
     else
-        fail "No commit attempt, skip, or active-response block found"
+        fail "stt_transcription_started NOT found"
+    fi
+
+    if [[ -n "$stt_completed" ]]; then
+        local stt_dur stt_preview
+        stt_dur=$(echo "$events" | jq -r 'select(.kind == "stt_transcription_completed") | .duration_ms // "?"' | head -1)
+        stt_preview=$(echo "$events" | jq -r 'select(.kind == "stt_transcription_completed") | .preview // ""' | head -1)
+        ok "stt_transcription_completed @ $stt_completed (${stt_dur}ms) preview=\"$stt_preview\""
+    else
+        if [[ -n "$stt_failed" ]]; then
+            fail "stt_transcription_failed: $stt_failed"
+        else
+            fail "stt_transcription_completed NOT found"
+        fi
     fi
 
     # ── Transcript ───────────────────────────────────────────────────────────
-    local transcript
+    local transcript transcript_source
     transcript=$(echo "$events" | jq -r 'select(.kind == "input_transcript_completed") | .transcript // ""' | head -1)
+    transcript_source=$(echo "$events" | jq -r 'select(.kind == "input_transcript_completed") | .source // ""' | head -1)
     if [[ -n "$transcript" ]]; then
-        ok "input_transcript_completed: \"$transcript\""
+        ok "input_transcript_completed (source=$transcript_source): \"$transcript\""
     else
-        fail "input_transcript_completed NOT found — transcription never arrived"
+        fail "input_transcript_completed NOT found"
     fi
 
-    # ── Tool routing ──────────────────────────────────────────────────────────
-    local direct_override tool_exec tool_result
-    direct_override=$(echo "$events" | jq -r 'select(.kind == "direct_tool_override") | .action // ""' | head -1)
-    tool_exec=$(echo "$events" | jq -r 'select(.kind == "tool_execute") | .action // ""' | head -1)
-    tool_result=$(echo "$events" | jq -r 'select(.kind == "tool_result") | .status // ""' | head -1)
-
-    if [[ -n "$direct_override" ]]; then
-        ok "direct_tool_override → action=$direct_override"
-    elif [[ -n "$tool_exec" ]]; then
-        info "tool_execute (LLM path) → action=$tool_exec"
+    # ── Direct tool override ──────────────────────────────────────────────────
+    local direct_override direct_action
+    direct_override=$(echo "$events" | jq -c 'select(.kind == "direct_tool_override")' | head -1)
+    direct_action=$(echo "$direct_override" | jq -r '.payload.action // ""' 2>/dev/null || true)
+    if [[ -n "$direct_override" && -n "$direct_action" ]]; then
+        ok "direct_tool_override → action=$direct_action"
+    elif [[ -n "$transcript" ]]; then
+        info "direct_tool_override not triggered (LLM/chat path or no match)"
     else
-        fail "No tool routing found (direct_tool_override or tool_execute)"
+        fail "direct_tool_override NOT found"
     fi
 
-    if [[ -n "$tool_result" ]]; then
-        ok "tool_result: status=$tool_result"
+    # ── Tool execution ────────────────────────────────────────────────────────
+    local tool_exec_action tool_exec_status
+    tool_exec_action=$(echo "$events" | jq -r 'select(.kind == "tool_execute") | .payload.action // ""' | head -1)
+    tool_exec_status=$(echo "$events" | jq -r 'select(.kind == "tool_result") | .status // ""' | head -1)
+
+    if [[ -n "$tool_exec_action" ]]; then
+        ok "tool_execute: action=$tool_exec_action"
+    elif [[ -n "$direct_override" ]]; then
+        fail "tool_execute NOT found (direct_tool_override fired but tool_execute missing)"
+    fi
+
+    if [[ -n "$tool_exec_status" ]]; then
+        ok "tool_result: status=$tool_exec_status"
+    elif [[ -n "$tool_exec_action" ]]; then
+        fail "tool_result NOT found"
     fi
 
     # ── Realtime API errors ───────────────────────────────────────────────────
     local api_errors
-    api_errors=$(echo "$events" | jq -r 'select(.kind == "realtime_api_error") | .error // .message // ""' | head -5)
+    api_errors=$(echo "$events" | jq -r 'select(.kind == "realtime_api_error") | .message // ""' | head -5)
     if [[ -n "$api_errors" ]]; then
-        fail "realtime_api_error: $api_errors"
-    fi
-
-    # ── Session payload audit ─────────────────────────────────────────────────
-    local payload_blocked
-    payload_blocked=$(grep -F "realtime_payload_blocked" "$LOG_FILE" 2>/dev/null | jq -r '.reason // ""' | head -3)
-    if [[ -n "$payload_blocked" ]]; then
-        fail "realtime_payload_blocked: $payload_blocked"
-    fi
-
-    local unknown_param
-    unknown_param=$(grep -F "unknown_parameter" "$LOG_FILE" 2>/dev/null | jq -r '.message // ""' | head -3)
-    if [[ -n "$unknown_param" ]]; then
-        fail "unknown_parameter error: $unknown_param"
+        warn "realtime_api_error: $api_errors"
     fi
 
     # ── Summary ───────────────────────────────────────────────────────────────
     echo ""
-    if [[ -n "$transcript" && (-n "$direct_override" || -n "$tool_exec") && -n "$tool_result" ]]; then
-        echo -e "${GREEN}${BOLD}  TURN COMPLETE: transcript → routing → tool result ✓${RESET}"
+    if [[ -n "$transcript" && (-n "$direct_action" || -n "$tool_exec_action") && -n "$tool_exec_status" ]]; then
+        echo -e "${GREEN}${BOLD}  TURN COMPLETE: audio → STT → tool → result ✓${RESET}"
     elif [[ -n "$commit_skipped" ]]; then
-        echo -e "${RED}${BOLD}  TURN DROPPED: insufficient audio (check mic and PTT hold time)${RESET}"
-    elif [[ -n "$skipped_active" ]]; then
-        echo -e "${RED}${BOLD}  TURN DROPPED: interrupt() did not clear _response_active${RESET}"
+        echo -e "${RED}${BOLD}  TURN DROPPED: insufficient audio (hold PTT longer)${RESET}"
+    elif [[ -n "$stt_failed" ]]; then
+        echo -e "${RED}${BOLD}  TURN STALLED: STT failed — check API key and network${RESET}"
     elif [[ -z "$transcript" ]]; then
-        echo -e "${YELLOW}${BOLD}  TURN STALLED: audio committed but no transcript arrived${RESET}"
-        echo "  → Check Realtime API connection and audio quality"
-    else
+        echo -e "${YELLOW}${BOLD}  TURN STALLED: STT did not produce a transcript${RESET}"
+        echo "  → Check stt_transcription_failed events and API key"
+    elif [[ -z "$tool_exec_action" ]]; then
         echo -e "${YELLOW}${BOLD}  TURN PARTIAL: transcript arrived but no tool was routed${RESET}"
+    else
+        echo -e "${YELLOW}${BOLD}  TURN PARTIAL: tool ran but no result status logged${RESET}"
     fi
     echo ""
 }
@@ -226,4 +239,5 @@ echo -e "${BOLD}═════════════════════�
 echo ""
 echo "  To follow live:  tail -f $LOG_FILE | jq '.'"
 echo "  To search trace: $0 --trace <trace_id>"
+echo "  Trace debugger:  python3 tools/prometheus_trace_debug.py --last 1"
 echo ""

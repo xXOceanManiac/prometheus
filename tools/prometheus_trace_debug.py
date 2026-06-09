@@ -25,13 +25,17 @@ _LOG_DIR = Path.home() / ".jarvis" / "logs"
 _TRACE_EVENTS = [
     "user_turn_started",
     "ptt_audio_capture_started",
-    "realtime_audio_append_sent",
+    "ptt_audio_captured",          # throttled every 5 chunks (replaces realtime_audio_append_sent)
     "ptt_released",
     "ptt_audio_capture_stopped",
     "user_turn_commit_attempt",
     "user_turn_commit_skipped",
     "response_create_skipped_active",
-    "user_turn_committed",
+    "stt_transcription_started",
+    "stt_transcription_completed",
+    "stt_transcription_failed",
+    "stt_empty_transcript",
+    "stt_all_models_failed",
     "input_transcript_completed",
     "direct_tool_override",
     "tool_execute",
@@ -136,15 +140,15 @@ def _print_trace(trace_id: str, lines: list[dict]) -> None:
     else:
         fail("ptt_audio_capture_started NOT found")
 
-    # realtime_audio_append_sent
-    n = count("realtime_audio_append_sent")
+    # ptt_audio_captured (logged every 5 chunks during local accumulation)
+    n = count("ptt_audio_captured")
     if n > 0:
-        last = [r for r in events if r.get("kind") == "realtime_audio_append_sent"][-1]
+        last = [r for r in events if r.get("kind") == "ptt_audio_captured"][-1]
         chunks = last.get("chunks_so_far", "?")
         byt = last.get("bytes_so_far", "?")
-        ok(f"realtime_audio_append_sent: {n} log events, last={chunks} chunks / {byt} bytes")
+        ok(f"ptt_audio_captured: {n} log events, last={chunks} chunks / {byt} bytes")
     else:
-        warn("realtime_audio_append_sent: 0 events (very short audio?)")
+        warn("ptt_audio_captured: 0 events (very short audio or pre-pass12 log?)")
 
     # ptt_released
     t = ts("ptt_released")
@@ -182,10 +186,35 @@ def _print_trace(trace_id: str, lines: list[dict]) -> None:
     else:
         fail("No commit attempt or skip found")
 
-    # user_turn_committed
-    t = ts("user_turn_committed")
-    if t:
-        ok(f"user_turn_committed @ {t}")
+    # stt_transcription_started
+    r_stt_start = first("stt_transcription_started")
+    r_stt_done = first("stt_transcription_completed")
+    r_stt_fail = first("stt_transcription_failed")
+    r_stt_empty = first("stt_empty_transcript")
+    r_stt_all_fail = first("stt_all_models_failed")
+
+    if r_stt_start:
+        model = r_stt_start.get("model", "?")
+        ok(f"stt_transcription_started: model={model}")
+    elif r_attempt:
+        fail("stt_transcription_started NOT found")
+
+    if r_stt_done:
+        model = r_stt_done.get("model", "?")
+        ms = r_stt_done.get("duration_ms", "?")
+        preview = r_stt_done.get("preview", "")
+        ok(f"stt_transcription_completed: model={model} ({ms}ms) preview=\"{preview}\"")
+    elif r_stt_fail:
+        err = r_stt_fail.get("error", "?")
+        model = r_stt_fail.get("model", "?")
+        fail(f"stt_transcription_failed: model={model} error={err}")
+    elif r_stt_all_fail:
+        models = r_stt_all_fail.get("models_tried", [])
+        fail(f"stt_all_models_failed: tried {models}")
+    elif r_stt_empty:
+        warn(f"stt_empty_transcript: STT returned blank text")
+    elif r_stt_start:
+        fail("stt_transcription_completed NOT found (in-flight or crashed?)")
 
     # input_transcript_completed
     r = first("input_transcript_completed")
@@ -225,17 +254,26 @@ def _print_trace(trace_id: str, lines: list[dict]) -> None:
     has_routing = bool(r_dto or r_tex)
     has_result = bool(r_res)
 
+    has_stt = bool(r_stt_done)
+    has_stt_fail = bool(r_stt_fail or r_stt_all_fail)
+
     if transcript and has_routing and has_result:
-        print(_c("green", _c("bold", "  TURN COMPLETE: transcript → routing → tool result ✓")))
+        print(_c("green", _c("bold", "  TURN COMPLETE: audio → STT → tool → result ✓")))
     elif r_skip:
-        print(_c("red", _c("bold", "  TURN DROPPED: insufficient audio")))
+        print(_c("red", _c("bold", "  TURN DROPPED: insufficient audio (hold PTT longer)")))
     elif r_active:
         print(_c("red", _c("bold", "  TURN DROPPED: _response_active not cleared")))
+    elif has_stt_fail:
+        print(_c("red", _c("bold", "  TURN STALLED: STT failed — check API key and network")))
+    elif not has_stt and r_stt_start:
+        print(_c("yellow", _c("bold", "  TURN STALLED: STT started but did not complete")))
     elif not transcript:
-        print(_c("yellow", _c("bold", "  TURN STALLED: audio committed but no transcript arrived")))
-        print("  → Check Realtime API errors above and session payload log")
-    else:
+        print(_c("yellow", _c("bold", "  TURN STALLED: no transcript (STT not started — audio too short?)")))
+        print("  → Check stt_transcription_failed or stt_empty_transcript events above")
+    elif not has_routing:
         print(_c("yellow", _c("bold", "  TURN PARTIAL: transcript arrived but no tool was routed")))
+    else:
+        print(_c("yellow", _c("bold", "  TURN PARTIAL: tool ran but no result logged")))
     print()
 
 
