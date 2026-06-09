@@ -58,8 +58,9 @@ class TestInterruptClearsResponseActive:
         assert client._response_active is False, \
             "interrupt() must set _response_active=False immediately"
 
-    def test_interrupt_allows_next_end_audio_to_commit(self, monkeypatch):
-        """After interrupt, end_audio with sufficient bytes must commit, not skip."""
+    def test_interrupt_allows_next_end_audio_to_trigger_stt(self, monkeypatch):
+        """After interrupt, end_audio with sufficient bytes must trigger standalone STT.
+        Pass 12: Realtime commit is never called — STT fires instead."""
         client = _make_client()
         client._response_active = True
 
@@ -73,16 +74,21 @@ class TestInterruptClearsResponseActive:
         client.awaiting_user_audio = True
         client._audio_bytes_since_commit = 9999
         client._audio_chunks_appended = 12
+        client._captured_audio = bytearray(b"\x00" * 9999)
         client._current_trace_id = "20260608-120000-int-xx01"
 
-        asyncio.run(client.end_audio())
+        with patch.object(client, "_transcribe_ptt", new_callable=AsyncMock):
+            asyncio.run(client.end_audio())
 
         skipped_active = [p for k, p in logged if k == "response_create_skipped_active"]
         assert not skipped_active, \
-            "After interrupt(), end_audio must not log response_create_skipped_active"
+            "end_audio must not log response_create_skipped_active (that guard is in _guarded_response_create)"
 
+        attempt = [p for k, p in logged if k == "user_turn_commit_attempt"]
+        assert attempt, "end_audio with sufficient bytes must log user_turn_commit_attempt"
+        # Realtime commit must never be sent
         committed = [d for d in sent if d.get("type") == "input_audio_buffer.commit"]
-        assert committed, "After interrupt(), end_audio with sufficient bytes must commit"
+        assert not committed, "input_audio_buffer.commit must never be sent in PTT mode"
 
     def test_interrupt_without_connection_still_clears_flag(self):
         client = _make_client()
@@ -150,7 +156,8 @@ class TestDrainWindowOnZeroBytes:
 
     def test_drain_window_allows_audio_to_accumulate(self, monkeypatch):
         """If send_audio() is called while end_audio() is sleeping (drain window),
-        the bytes are counted and the turn commits successfully."""
+        the bytes are counted and standalone STT is triggered (not skipped).
+        Pass 12: Realtime commit is never called — STT fires instead."""
         client = _make_client()
         client.awaiting_user_audio = True
         client._audio_bytes_since_commit = 0
@@ -166,31 +173,32 @@ class TestDrainWindowOnZeroBytes:
         import numpy as np
 
         async def run_with_audio():
-            # Start end_audio (which will sleep 150ms since bytes=0)
-            end_task = asyncio.create_task(client.end_audio())
-            # Yield so end_audio starts executing and hits asyncio.sleep
-            await asyncio.sleep(0)
-            # Now simulate mic chunks arriving during the drain window
-            # (awaiting_user_audio is still True because end_audio is sleeping)
-            chunk = np.zeros(1280, dtype=np.int16).tobytes()
-            for _ in range(5):  # 5 chunks × 2560 bytes = 12800 bytes > 3200 threshold
-                await client.send_audio(chunk)
-            # Wait for end_audio to complete
-            await end_task
+            with patch.object(client, "_transcribe_ptt", new_callable=AsyncMock):
+                end_task = asyncio.create_task(client.end_audio())
+                await asyncio.sleep(0)
+                chunk = np.zeros(1280, dtype=np.int16).tobytes()
+                for _ in range(5):  # 5 chunks × 2560 bytes = 12800 bytes > 3200 threshold
+                    await client.send_audio(chunk)
+                await end_task
 
         asyncio.run(run_with_audio())
 
-        committed = [d for d in sent if d.get("type") == "input_audio_buffer.commit"]
-        assert committed, "turn must commit after audio arrives during drain window"
+        attempt = [p for k, p in logged if k == "user_turn_commit_attempt"]
+        assert attempt, "turn must trigger STT after audio arrives during drain window"
         skipped = [p for k, p in logged if k == "user_turn_commit_skipped"]
         assert not skipped, "must not skip after audio arrives during drain window"
+        # Realtime commit must never be sent
+        committed = [d for d in sent if d.get("type") == "input_audio_buffer.commit"]
+        assert not committed, "input_audio_buffer.commit must never be sent in PTT mode"
 
-    def test_sufficient_bytes_skips_drain_and_commits(self, monkeypatch):
-        """If bytes >= threshold on entry, no drain window; commits immediately."""
+    def test_sufficient_bytes_skips_drain_and_triggers_stt(self, monkeypatch):
+        """If bytes >= threshold on entry, no drain window; STT fires immediately.
+        Pass 12: Realtime commit is never called — STT fires instead."""
         client = _make_client()
         client.awaiting_user_audio = True
         client._audio_bytes_since_commit = 9999
         client._audio_chunks_appended = 10
+        client._captured_audio = bytearray(b"\x00" * 9999)
         client._current_trace_id = "20260608-120000-drain-xx05"
         client._response_active = False
 
@@ -199,10 +207,13 @@ class TestDrainWindowOnZeroBytes:
         monkeypatch.setattr("realtime_client.log_event", lambda k, p: logged.append((k, p)))
         client.send = _fake_send_factory(sent)
 
-        asyncio.run(client.end_audio())
+        with patch.object(client, "_transcribe_ptt", new_callable=AsyncMock):
+            asyncio.run(client.end_audio())
 
+        attempt = [p for k, p in logged if k == "user_turn_commit_attempt"]
+        assert attempt, "sufficient bytes must trigger STT without drain window"
         committed = [d for d in sent if d.get("type") == "input_audio_buffer.commit"]
-        assert committed, "sufficient bytes must commit without drain window"
+        assert not committed, "input_audio_buffer.commit must never be sent in PTT mode"
 
 
 # ── Per-turn counter reset ────────────────────────────────────────────────────
@@ -403,6 +414,8 @@ class TestObservabilityLogs:
         assert stopped[0]["chunks"] == 10
 
     def test_send_audio_throttled_log_every_five_chunks(self, monkeypatch):
+        """send_audio logs ptt_audio_captured every 5 chunks (was realtime_audio_append_sent).
+        Pass 12: audio is accumulated locally, not sent to Realtime."""
         import numpy as np
         client = _make_client()
         client.awaiting_user_audio = True
@@ -422,9 +435,12 @@ class TestObservabilityLogs:
 
         asyncio.run(send_many())
 
-        throttled = [p for k, p in logged if k == "realtime_audio_append_sent"]
+        throttled = [p for k, p in logged if k == "ptt_audio_captured"]
         # 10 chunks: throttled at chunks 5 and 10 → 2 log events
         assert len(throttled) == 2, f"expected 2 throttled logs for 10 chunks, got {len(throttled)}"
+        # Must NOT log realtime_audio_append_sent (old Realtime path)
+        old_style = [p for k, p in logged if k == "realtime_audio_append_sent"]
+        assert not old_style, "realtime_audio_append_sent must not be logged in Pass 12 PTT mode"
 
 
 # ── Session config guard ──────────────────────────────────────────────────────

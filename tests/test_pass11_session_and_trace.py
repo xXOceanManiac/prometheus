@@ -389,12 +389,15 @@ class TestSimulatedPTTTellTime:
     """Simulate a full PTT turn: begin → audio → end → transcript → tool."""
 
     def test_what_time_is_it_routes_to_tell_time(self, monkeypatch):
+        """Pass 12: end_audio triggers standalone STT; _handle_ptt_transcript routes to tell_time.
+        Realtime buffer commit is never called."""
         import realtime_client as rc
 
         client = _make_client()
         client.awaiting_user_audio = True
         client._audio_bytes_since_commit = 9999
         client._audio_chunks_appended = 10
+        client._captured_audio = bytearray(b"\x00" * 9999)
         client._current_trace_id = "20260609-140000-test-xx11"
         client._response_active = False
         client._turn_start_ts = 0.0
@@ -404,64 +407,41 @@ class TestSimulatedPTTTellTime:
         monkeypatch.setattr("realtime_client.log_event", lambda k, p: logged.append((k, p)))
         monkeypatch.setattr("realtime_client.notify", lambda *a: None)
 
-        # end_audio: commit turn
+        # Phase 1: end_audio — must trigger STT task, not Realtime commit
         sent = []
         client.send = AsyncMock(side_effect=lambda d: sent.append(d))
-        asyncio.run(client.end_audio())
+        with patch.object(client, "_transcribe_ptt", new_callable=AsyncMock):
+            asyncio.run(client.end_audio())
 
         committed = [d for d in sent if d.get("type") == "input_audio_buffer.commit"]
-        assert committed, "end_audio must send input_audio_buffer.commit"
+        assert not committed, "end_audio must NOT send input_audio_buffer.commit in Pass 12"
 
-        # Simulate transcript event arriving in the receiver
-        class _OneShotWS:
-            def __init__(self, events):
-                self._events = iter(events)
-            async def recv(self):
-                try:
-                    return json.dumps(next(self._events))
-                except StopIteration:
-                    raise Exception("done")
+        attempt = [p for k, p in logged if k == "user_turn_commit_attempt"]
+        assert attempt, "user_turn_commit_attempt must be logged"
 
-        client.ws = _OneShotWS([
-            {
-                "type": "conversation.item.input_audio_transcription.completed",
-                "transcript": "what time is it",
-            }
-        ])
-        client.connected = True
-
+        # Phase 2: simulate standalone STT result via _handle_ptt_transcript
         routed_actions = []
 
-        async def _fake_run_direct_tool(transcript: str) -> bool:
-            override = client._direct_intent_override(transcript)
-            if override:
-                routed_actions.append(override)
-                return True
-            return False
+        async def _fake_run_direct_tool(payload: dict) -> None:
+            routed_actions.append(payload)
+            client.busy = False
 
         client._run_direct_tool = _fake_run_direct_tool
         client._guarded_response_create = AsyncMock(return_value=True)
         client.send = AsyncMock()
         client._handle_vault_recall = AsyncMock()
         client._contextual_override = AsyncMock(return_value=False)
-        client._update_session_instructions = AsyncMock()
+        client._current_trace_id = "20260609-140000-test-xx11"
 
-        async def _run():
-            try:
-                await client._receiver()
-            except Exception:
-                pass
-
-        asyncio.run(_run())
+        asyncio.run(client._handle_ptt_transcript("what time is it"))
 
         # Transcript must have been logged
         transcript_logs = [p for k, p in logged if k == "input_transcript_completed"]
         assert transcript_logs, "input_transcript_completed must be logged"
+        assert transcript_logs[0].get("source") == "standalone_stt"
 
         # The direct intent override must have fired for "what time is it"
         assert routed_actions, (
             "direct_tool_override must route 'what time is it' — check _direct_intent_override"
         )
-        action = routed_actions[0]
-        # The override should produce tell_time or similar
-        assert action, f"override returned empty action: {action!r}"
+        assert routed_actions[0].get("action") == "tell_time"

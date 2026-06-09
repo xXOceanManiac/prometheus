@@ -212,32 +212,27 @@ class TestEmptyBufferSkipsCommit:
         asyncio.run(_run())
         assert "input_audio_buffer.commit" not in sent_types
 
-    def test_sufficient_audio_sends_commit(self):
-        """Buffer at or above _MIN_COMMIT_BYTES must send commit."""
+    def test_sufficient_audio_triggers_stt(self):
+        """Buffer at or above _MIN_COMMIT_BYTES must log user_turn_commit_attempt with stt_mode=standalone.
+        Pass 12: PTT audio is transcribed locally — input_audio_buffer.commit is never sent."""
         client = _make_client()
         client.awaiting_user_audio = True
         client._audio_bytes_since_commit = 3200  # exactly at threshold
+        client._captured_audio = bytearray(b"\x00" * 3200)
         client._current_trace_id = "20260607-000000-test-aa04"
         client._response_active = False
 
-        sent_types: list[str] = []
+        logged: list[tuple] = []
 
-        async def _fake_send(data):
-            sent_types.append(data.get("type", ""))
+        with patch("realtime_client.log_event", side_effect=lambda k, p: logged.append((k, p))):
+            with patch.object(client, "_transcribe_ptt", new_callable=AsyncMock):
+                asyncio.run(client.end_audio())
 
-        client.send = _fake_send
-
-        # Patch _guarded_response_create to avoid sending response.create in the test
-        async def _fake_guarded(*args, **kwargs):
-            return True
-
-        client._guarded_response_create = _fake_guarded
-
-        async def _run():
-            await client.end_audio()
-
-        asyncio.run(_run())
-        assert "input_audio_buffer.commit" in sent_types
+        attempt = [p for k, p in logged if k == "user_turn_commit_attempt"]
+        assert attempt, "user_turn_commit_attempt must be logged for sufficient audio"
+        assert attempt[0].get("stt_mode") == "standalone"
+        # Realtime commit must never be sent
+        assert "input_audio_buffer.commit" not in [k for k, _ in logged]
 
 
 # ── Task 4: Active response prevents duplicate response.create ────────────────
@@ -288,15 +283,17 @@ class TestActiveResponsePreventsCreate:
         ev = skipped[0]
         assert ev.get("trace_id") == "20260607-000000-test-bb02"
 
-    def test_end_audio_skips_response_create_when_active(self):
-        """end_audio must skip response.create if _response_active is True."""
+    def test_end_audio_never_sends_realtime_commit_or_response_create(self):
+        """end_audio must never send input_audio_buffer.commit or response.create.
+        Pass 12: audio routes to standalone STT instead — Realtime is output-only."""
         client = _make_client()
         client.awaiting_user_audio = True
         client._audio_bytes_since_commit = 5000  # sufficient audio
-        client._response_active = True  # already responding
+        client._captured_audio = bytearray(b"\x00" * 5000)
+        client._response_active = True
         client._current_trace_id = "20260607-000000-test-bb03"
 
-        logged = []
+        logged: list[tuple] = []
         sent_types: list[str] = []
 
         async def _fake_send(data):
@@ -305,15 +302,16 @@ class TestActiveResponsePreventsCreate:
         client.send = _fake_send
 
         with patch("realtime_client.log_event", side_effect=lambda k, p: logged.append((k, p))):
-            async def _run():
-                await client.end_audio()
-            asyncio.run(_run())
+            with patch.object(client, "_transcribe_ptt", new_callable=AsyncMock):
+                asyncio.run(client.end_audio())
 
-        assert "input_audio_buffer.commit" not in sent_types
-        assert "response.create" not in sent_types
-        skipped = [p for k, p in logged if k == "response_create_skipped_active"]
-        assert skipped, "response_create_skipped_active not logged when active response blocks end_audio"
-        assert skipped[0].get("trace_id") == "20260607-000000-test-bb03"
+        assert "input_audio_buffer.commit" not in sent_types, \
+            "input_audio_buffer.commit must never be sent in PTT mode"
+        assert "response.create" not in sent_types, \
+            "response.create must not be sent directly by end_audio"
+        # STT path fires: user_turn_commit_attempt must be logged
+        attempt = [p for k, p in logged if k == "user_turn_commit_attempt"]
+        assert attempt, "user_turn_commit_attempt must be logged for sufficient audio"
 
 
 # ── Task 5: input_transcript_completed log event ──────────────────────────────

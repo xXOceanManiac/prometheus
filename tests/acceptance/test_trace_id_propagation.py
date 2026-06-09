@@ -163,42 +163,50 @@ class TestPTTTraceIdPropagation:
         assert skip_events, "user_turn_commit_skipped not logged"
         assert skip_events[0]["trace_id"] == "20260608-120000-test-skip-xx01"
 
-    def test_end_audio_active_response_skip_carries_trace_id(self, monkeypatch):
+    def test_end_audio_stt_attempt_carries_trace_id(self, monkeypatch):
+        """With sufficient audio, end_audio logs user_turn_commit_attempt with the current trace_id.
+        Pass 12: _response_active is not checked in end_audio — STT fires regardless."""
         client = _make_client()
         client.awaiting_user_audio = True
-        client._audio_bytes_since_commit = 9999  # enough bytes
+        client._audio_bytes_since_commit = 9999
+        client._captured_audio = bytearray(b"\x00" * 9999)
         client._current_trace_id = "20260608-120000-test-active-xx02"
-        client._response_active = True  # block guard
+        client._response_active = True  # no longer blocks end_audio in Pass 12
 
         logged = []
         monkeypatch.setattr("realtime_client.log_event", lambda k, p: logged.append((k, p)))
 
         async def fake_send(d): pass
         client.send = fake_send
-        asyncio.run(client.end_audio())
+        with patch.object(client, "_transcribe_ptt", new_callable=AsyncMock):
+            asyncio.run(client.end_audio())
 
-        skip_events = [p for k, p in logged if k == "response_create_skipped_active"]
-        assert skip_events, "response_create_skipped_active not logged"
-        assert skip_events[0]["trace_id"] == "20260608-120000-test-active-xx02"
+        attempt = [p for k, p in logged if k == "user_turn_commit_attempt"]
+        assert attempt, "user_turn_commit_attempt not logged"
+        assert attempt[0]["trace_id"] == "20260608-120000-test-active-xx02"
 
-    def test_end_audio_commit_carries_trace_id(self, monkeypatch):
+    def test_end_audio_commit_attempt_carries_trace_id(self, monkeypatch):
+        """user_turn_commit_attempt must carry the current trace_id.
+        Pass 12: replaces the old user_turn_committed (Realtime buffer commit) event."""
         client = _make_client()
         client.awaiting_user_audio = True
         client._audio_bytes_since_commit = 9999
+        client._captured_audio = bytearray(b"\x00" * 9999)
         client._response_active = False
         client._current_trace_id = "20260608-120000-test-commit-xx03"
 
-        sent = []
         logged = []
         monkeypatch.setattr("realtime_client.log_event", lambda k, p: logged.append((k, p)))
 
-        async def fake_send(d): sent.append(d)
+        async def fake_send(d): pass
         client.send = fake_send
-        asyncio.run(client.end_audio())
+        with patch.object(client, "_transcribe_ptt", new_callable=AsyncMock):
+            asyncio.run(client.end_audio())
 
-        committed = [p for k, p in logged if k == "user_turn_committed"]
-        assert committed, "user_turn_committed not logged"
-        assert committed[0]["trace_id"] == "20260608-120000-test-commit-xx03"
+        attempt = [p for k, p in logged if k == "user_turn_commit_attempt"]
+        assert attempt, "user_turn_commit_attempt not logged"
+        assert attempt[0]["trace_id"] == "20260608-120000-test-commit-xx03"
+        assert attempt[0].get("stt_mode") == "standalone"
 
 
 # ── Gate: trace_id flows through tool execution ───────────────────────────────

@@ -457,14 +457,17 @@ class TestSimulatedPTTTranscriptFlow:
         )
         assert transcript_logs[0].get("trace_id") == "20260609-120000-sim-xx01"
 
-    def test_commit_then_response_then_transcript_produces_complete_trace(self, monkeypatch):
-        """Simulate: end_audio commit → response.created → transcript event → logging."""
+    def test_commit_then_stt_then_transcript_produces_complete_trace(self, monkeypatch):
+        """Simulate: end_audio → STT task → _handle_ptt_transcript → input_transcript_completed.
+        Pass 12: audio routes to standalone STT; Realtime buffer commit is never called."""
         import realtime_client as rc
+        from unittest.mock import patch as _patch
 
         client = _make_client()
         client.awaiting_user_audio = True
         client._audio_bytes_since_commit = 9999
         client._audio_chunks_appended = 10
+        client._captured_audio = bytearray(b"\x00" * 9999)
         client._current_trace_id = "20260609-120000-flow-xx02"
         client._response_active = False
         client._turn_start_ts = 0.0
@@ -474,54 +477,38 @@ class TestSimulatedPTTTranscriptFlow:
         monkeypatch.setattr("realtime_client.log_event", lambda k, p: logged.append((k, p)))
         monkeypatch.setattr("realtime_client.notify", lambda *a: None)
 
-        # Phase 1: end_audio commit
+        # Phase 1: end_audio — should trigger STT task, not Realtime commit
         sent = []
         client.send = AsyncMock(side_effect=lambda d: sent.append(d))
-        asyncio.run(client.end_audio())
+        with _patch.object(client, "_transcribe_ptt", new_callable=AsyncMock):
+            asyncio.run(client.end_audio())
 
-        # Confirm commit was sent
-        committed = [d for d in sent if d.get("type") == "input_audio_buffer.commit"]
-        assert committed, "end_audio must send input_audio_buffer.commit"
+        # Confirm Realtime commit was NOT sent
+        committed_sent = [d for d in sent if d.get("type") == "input_audio_buffer.commit"]
+        assert not committed_sent, "end_audio must NOT send input_audio_buffer.commit in Pass 12"
 
-        # Phase 2: simulate receiver processing transcript event
-        class _OneShotWS:
-            def __init__(self, events):
-                self._events = iter(events)
-            async def recv(self):
-                try:
-                    return json.dumps(next(self._events))
-                except StopIteration:
-                    raise Exception("no more events")
+        # Confirm user_turn_commit_attempt (STT mode) was logged
+        attempt_log = [p for k, p in logged if k == "user_turn_commit_attempt"]
+        assert attempt_log, "user_turn_commit_attempt must be in log"
+        assert attempt_log[0].get("stt_mode") == "standalone"
 
-        events = [
-            {"type": "input_audio_buffer.committed"},
-            {"type": "response.created"},
-            {
-                "type": "conversation.item.input_audio_transcription.completed",
-                "transcript": "what time is it",
-            },
-        ]
-        client.ws = _OneShotWS(events)
-        client.connected = True
+        # Phase 2: simulate standalone STT result arriving via _handle_ptt_transcript
         client._run_direct_tool = AsyncMock()
         client._guarded_response_create = AsyncMock(return_value=True)
         client.send = AsyncMock()
         client._handle_vault_recall = AsyncMock()
         client._contextual_override = AsyncMock(return_value=False)
-        client._update_session_instructions = AsyncMock()
+        client._current_trace_id = "20260609-120000-flow-xx02"
 
-        async def _run_receiver():
-            try:
-                await client._receiver()
-            except Exception:
-                pass
-
-        asyncio.run(_run_receiver())
+        asyncio.run(client._handle_ptt_transcript("what time is it"))
 
         # Verify full trace
-        committed_log = [p for k, p in logged if k == "user_turn_committed"]
-        assert committed_log, "user_turn_committed must be in log"
-
         transcript_log = [p for k, p in logged if k == "input_transcript_completed"]
         assert transcript_log, "input_transcript_completed must be in log after full flow"
-        assert transcript_log[0].get("trace_id") == "20260609-120000-flow-xx02"
+        # trace_id may have a transcript slug inserted (e.g. -what-time-) — check prefix and suffix
+        logged_trace = transcript_log[0].get("trace_id", "")
+        assert logged_trace.startswith("20260609-120000-flow"), \
+            f"trace_id must start with 20260609-120000-flow, got: {logged_trace}"
+        assert logged_trace.endswith("xx02"), \
+            f"trace_id must end with xx02, got: {logged_trace}"
+        assert transcript_log[0].get("source") == "standalone_stt"

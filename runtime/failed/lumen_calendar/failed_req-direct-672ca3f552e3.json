@@ -1,0 +1,19 @@
+{
+  "request_id": "req-direct-672ca3f552e3",
+  "executed_at": "2026-06-09T06:33:51.554361+00:00",
+  "success": false,
+  "operation_count": 1,
+  "operation_results": [
+    {
+      "operation_index": 0,
+      "operation_type": "create_event",
+      "success": false,
+      "dry_run": false,
+      "message": "HTTP 400: Invalid time zone definition for start time.",
+      "status_code": 400,
+      "event_id": null,
+      "calendar_id": "primary"
+    }
+  ],
+  "message": "One or more operations failed during execution."
+}
