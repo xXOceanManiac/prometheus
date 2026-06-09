@@ -116,20 +116,19 @@ class TestConnectPayloadOmitsTurnDetection:
             f"server_vad must not appear in session.update JSON: {raw[:300]}"
         )
 
-    def test_input_audio_transcription_has_explicit_model(self):
+    def test_session_omits_input_audio_transcription(self):
+        """input_audio_transcription must be OMITTED.
+        The gpt-realtime model rejects it as unknown_parameter.
+        Transcription is auto-enabled by the model's default configuration."""
         client = _make_client()
         sent = _run_connect_capture(client)
 
         session_updates = [p for p in sent if p.get("type") == "session.update"]
         assert session_updates
         sess = session_updates[0].get("session", {})
-        iat = sess.get("input_audio_transcription")
-        assert isinstance(iat, dict) and "model" in iat, (
-            f"input_audio_transcription must have a 'model' field, got: {iat!r}"
-        )
-        assert iat["model"], "transcription model must not be empty"
-        assert "whisper" not in iat["model"].lower(), (
-            f"whisper-1 is blocked by the payload audit: {iat['model']!r}"
+        assert "input_audio_transcription" not in sess, (
+            f"input_audio_transcription must be OMITTED — gpt-realtime rejects it as "
+            f"unknown_parameter. Got session keys: {list(sess.keys())}"
         )
 
 
@@ -187,7 +186,8 @@ class TestPayloadAuditBlocksTurnDetection:
 # ── 3. Debug logs report omitted turn_detection ───────────────────────────────
 
 class TestSessionDebugLogsOmitted:
-    """realtime_session_payload_debug must report has_turn_detection=False, value=omitted."""
+    """realtime_session_payload_debug must report both turn_detection and
+    input_audio_transcription as False/omitted (gpt-realtime rejects both)."""
 
     def test_payload_debug_has_turn_detection_false(self):
         client = _make_client()
@@ -212,6 +212,19 @@ class TestSessionDebugLogsOmitted:
             f"turn_detection_value must be 'omitted', got {debug[0].get('turn_detection_value')!r}"
         )
 
+    def test_payload_debug_has_input_transcription_config_false(self):
+        """has_input_transcription_config must be False — field is omitted."""
+        client = _make_client()
+        logged: list = []
+        _run_connect_capture(client, logged)
+
+        debug = [p for k, p in logged if k == "realtime_session_payload_debug"]
+        assert debug
+        assert debug[0].get("has_input_transcription_config") is False, (
+            f"has_input_transcription_config must be False (field omitted), "
+            f"got {debug[0].get('has_input_transcription_config')!r}"
+        )
+
     def test_session_update_keys_has_turn_detection_false(self):
         client = _make_client()
         logged: list = []
@@ -226,9 +239,16 @@ class TestSessionDebugLogsOmitted:
         assert ev.get("turn_detection_value") == "omitted", (
             f"turn_detection_value must be 'omitted', got {ev.get('turn_detection_value')!r}"
         )
+        assert ev.get("has_input_transcription") is False, (
+            f"has_input_transcription must be False (field omitted), "
+            f"got {ev.get('has_input_transcription')!r}"
+        )
         session_keys = ev.get("session_keys", [])
         assert "turn_detection" not in session_keys, (
             f"turn_detection must not appear in session_keys: {session_keys}"
+        )
+        assert "input_audio_transcription" not in session_keys, (
+            f"input_audio_transcription must not appear in session_keys: {session_keys}"
         )
 
 

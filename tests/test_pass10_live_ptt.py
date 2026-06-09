@@ -472,9 +472,34 @@ class TestSessionConfigUnchanged:
             f"turn_detection must not appear in session.update JSON: {raw[:300]}"
         )
 
-    def test_input_audio_transcription_enabled(self):
+    def test_connect_session_has_instructions_key(self):
+        """connect() session.update must include instructions (always required)."""
+        import asyncio
+        import json
         import realtime_client as rc
-        import inspect
-        src = inspect.getsource(rc.RealtimePrometheusClient.connect)
-        assert "input_audio_transcription" in src, \
-            "connect() must configure input_audio_transcription"
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        client = rc.RealtimePrometheusClient(speaker=MagicMock(), tools=MagicMock())
+        client.api_key = "sk-test-placeholder"
+        sent: list[dict] = []
+
+        async def _fake_send_raw(data):
+            sent.append(json.loads(data))
+
+        fake_ws = MagicMock()
+        fake_ws.send = _fake_send_raw
+
+        async def _run():
+            with patch("websockets.connect", new_callable=AsyncMock) as mock_conn, \
+                 patch("asyncio.create_task"), \
+                 patch("realtime_client.log_event"), \
+                 patch("realtime_client.notify"):
+                mock_conn.return_value = fake_ws
+                await client.connect()
+
+        asyncio.run(_run())
+
+        session_updates = [m for m in sent if m.get("type") == "session.update"]
+        assert session_updates, "connect() must send session.update"
+        sess = session_updates[0].get("session", {})
+        assert "instructions" in sess, "session.update must always include instructions"

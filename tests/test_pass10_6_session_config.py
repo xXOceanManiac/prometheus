@@ -175,12 +175,15 @@ class TestPayloadAuditBlocksServerVad:
         )
 
 
-# ── 3. input_audio_transcription has an explicit model ────────────────────────
+# ── 3. input_audio_transcription is OMITTED (model rejects it) ───────────────
 
 class TestTranscriptionConfig:
-    """input_audio_transcription must specify a model — empty {} does not enable transcription."""
+    """input_audio_transcription must be OMITTED from session.update.
+    The gpt-realtime model rejects the field as unknown_parameter (same as turn_detection).
+    Transcription is auto-enabled by the model's default session configuration."""
 
-    def test_connect_transcription_has_model_field(self):
+    def test_connect_session_omits_input_audio_transcription(self):
+        """input_audio_transcription must be OMITTED. The model rejects it as unknown_parameter."""
         client = _make_client()
         sent = _run_connect_capture(client)
 
@@ -188,52 +191,40 @@ class TestTranscriptionConfig:
         assert session_updates
 
         sess = session_updates[0].get("session", {})
-        transcription = sess.get("input_audio_transcription")
-
-        assert transcription is not None, "input_audio_transcription must not be null/absent"
-        assert isinstance(transcription, dict), \
-            f"input_audio_transcription must be a dict, got {type(transcription)}"
-        assert "model" in transcription, (
-            f"input_audio_transcription must have a 'model' field, got {transcription!r} — "
-            "empty {{}} does not enable transcription on the GA Realtime API"
+        assert "input_audio_transcription" not in sess, (
+            f"input_audio_transcription must be OMITTED — gpt-realtime rejects it as "
+            f"unknown_parameter. Got session keys: {list(sess.keys())}"
         )
-        assert transcription["model"], "transcription model must not be empty"
 
-    def test_connect_transcription_model_is_not_whisper_1(self):
-        """whisper-1 is blocked by the payload audit — must use a GA-compatible model."""
+    def test_connect_session_json_has_no_transcription_key(self):
+        """No 'input_audio_transcription' key should appear in the session.update JSON."""
         client = _make_client()
         sent = _run_connect_capture(client)
 
         session_updates = [p for p in sent if p.get("type") == "session.update"]
         assert session_updates
-
         raw = json.dumps(session_updates[0])
-        assert "whisper-1" not in raw, (
-            "whisper-1 is in the forbidden payload strings — must use a GA model like gpt-4o-mini-transcribe"
+        assert '"input_audio_transcription"' not in raw, (
+            f"input_audio_transcription must be absent from session JSON: {raw[:300]}"
         )
 
     def test_transcription_model_constant_is_defined(self):
-        """RealtimePrometheusClient._TRANSCRIPTION_MODEL must be set to a valid model name."""
+        """_TRANSCRIPTION_MODEL constant must still exist as a reference value."""
         import realtime_client as rc
         model = rc.RealtimePrometheusClient._TRANSCRIPTION_MODEL
-        assert model, "_TRANSCRIPTION_MODEL must not be empty"
-        assert "whisper" not in model.lower(), \
-            f"_TRANSCRIPTION_MODEL must not use whisper (blocked by audit): {model!r}"
-        assert "gpt" in model.lower() or "transcribe" in model.lower(), \
-            f"_TRANSCRIPTION_MODEL should be a GA transcription model, got: {model!r}"
+        assert model, "_TRANSCRIPTION_MODEL must not be empty (kept for reference)"
 
-    def test_transcription_model_not_in_forbidden_strings(self):
-        """The chosen transcription model must pass the payload audit."""
-        import realtime_client as rc
-        model = rc.RealtimePrometheusClient._TRANSCRIPTION_MODEL
-        _forbidden = [
-            "OpenAI-Beta", "realtime=v1", "input_audio_format", "output_audio_format",
-            "additionalProperties", "whisper-1", "input_audio_transcription_model", "server_vad",
-        ]
-        for forbidden in _forbidden:
-            assert forbidden not in model, (
-                f"_TRANSCRIPTION_MODEL '{model}' would trigger the payload audit because it contains '{forbidden}'"
-            )
+    def test_connect_session_has_no_whisper_in_json(self):
+        """whisper-1 must not appear in the session.update JSON."""
+        client = _make_client()
+        sent = _run_connect_capture(client)
+
+        session_updates = [p for p in sent if p.get("type") == "session.update"]
+        assert session_updates
+        raw = json.dumps(session_updates[0])
+        assert "whisper" not in raw, (
+            f"whisper must not appear in session.update JSON: {raw[:300]}"
+        )
 
 
 # ── 4. _update_session_instructions does not reset turn_detection ─────────────
@@ -354,7 +345,12 @@ class TestSessionDebugLogging:
         ev = debug_events[0]
         assert "transcription_model" in ev, \
             "realtime_session_payload_debug must include transcription_model"
+        # Model is "model_default" since we omit the field and rely on model defaults
         assert ev["transcription_model"], "transcription_model must not be empty"
+        assert ev.get("has_input_transcription_config") is False, (
+            f"has_input_transcription_config must be False (field omitted): "
+            f"{ev.get('has_input_transcription_config')!r}"
+        )
 
     def test_session_update_keys_log_has_turn_detection_state(self):
         client = _make_client()
@@ -374,9 +370,12 @@ class TestSessionDebugLogging:
             f"turn_detection_value must be 'omitted', got {ev['turn_detection_value']!r}"
         )
         assert "has_input_transcription" in ev
-        assert ev["has_input_transcription"] is True
+        assert ev["has_input_transcription"] is False, (
+            f"has_input_transcription must be False (field omitted — model rejects it), "
+            f"got {ev.get('has_input_transcription')!r}"
+        )
         assert "transcription_model" in ev
-        assert ev["transcription_model"]   # non-empty
+        assert ev["transcription_model"]   # non-empty ("model_default")
         # turn_detection must NOT appear in session_keys list
         session_keys = ev.get("session_keys", [])
         assert "turn_detection" not in session_keys, (

@@ -75,8 +75,10 @@ class TestSessionConfigTurnDetection:
             f"Got session keys: {list(sess.keys())}"
         )
 
-    def test_connect_includes_input_audio_transcription(self):
-        """Session update must include input_audio_transcription to keep transcription active."""
+    def test_connect_omits_input_audio_transcription(self):
+        """Session update must OMIT input_audio_transcription.
+        The gpt-realtime model rejects it as unknown_parameter.
+        Transcription is auto-enabled by the model's default configuration."""
         client = _make_client()
         client.connected = False
 
@@ -90,7 +92,9 @@ class TestSessionConfigTurnDetection:
 
         async def _run():
             with patch("websockets.connect", new_callable=AsyncMock) as mock_conn, \
-                 patch("asyncio.create_task"):
+                 patch("asyncio.create_task"), \
+                 patch("realtime_client.log_event"), \
+                 patch("realtime_client.notify"):
                 mock_conn.return_value = fake_ws
                 await client.connect()
 
@@ -99,8 +103,9 @@ class TestSessionConfigTurnDetection:
         session_updates = [m for m in sent if m.get("type") == "session.update"]
         assert session_updates
         sess = session_updates[0]["session"]
-        assert "input_audio_transcription" in sess, (
-            "input_audio_transcription missing — transcription will not work"
+        assert "input_audio_transcription" not in sess, (
+            f"input_audio_transcription must be OMITTED — gpt-realtime rejects it. "
+            f"Got session keys: {list(sess.keys())}"
         )
 
     def test_session_payload_passes_forbidden_audit(self):

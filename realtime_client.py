@@ -783,10 +783,10 @@ class RealtimePrometheusClient:
             "voice": self.voice,
             "modalities": ["text", "audio"],
             "instructions_length": len(_instructions),
-            "has_turn_detection": False,             # GA API rejects turn_detection — key is omitted
+            "has_turn_detection": False,             # gpt-realtime rejects — key is omitted
             "turn_detection_value": "omitted",
-            "has_input_transcription_config": True,
-            "transcription_model": self._TRANSCRIPTION_MODEL,
+            "has_input_transcription_config": False, # gpt-realtime rejects — key is omitted
+            "transcription_model": "model_default",  # model auto-enables transcription
             "session_type": "realtime",
         })
 
@@ -803,13 +803,13 @@ class RealtimePrometheusClient:
             "session": {
                 "type": "realtime",
                 "instructions": _instructions,
-                # turn_detection is intentionally OMITTED — the GA Realtime API rejects
-                # 'session.turn_detection' as an unknown parameter (unknown_parameter error).
-                # PTT lifecycle is owned by manual input_audio_buffer.commit + response.create.
-                # Explicit model required — empty {} does not enable transcription.
-                # gpt-4o-mini-transcribe is the GA-compatible model (whisper-1 blocked
-                # by the payload audit below).
-                "input_audio_transcription": {"model": self._TRANSCRIPTION_MODEL},
+                # turn_detection is intentionally OMITTED — the gpt-realtime model rejects
+                # it as unknown_parameter. PTT lifecycle is owned by manual
+                # input_audio_buffer.commit + response.create.
+                #
+                # input_audio_transcription is intentionally OMITTED — the gpt-realtime
+                # model also rejects it as unknown_parameter. Transcription is
+                # auto-enabled by the model's default session configuration.
             },
         }
 
@@ -817,20 +817,22 @@ class RealtimePrometheusClient:
         _sess = _session_update["session"]
         log_event("realtime_session_update_keys", {
             "session_keys": list(_sess.keys()),
-            "has_turn_detection": False,             # omitted — GA API rejects the key
+            "has_turn_detection": False,             # omitted — model rejects the key
             "turn_detection_value": "omitted",
-            "has_input_transcription": "input_audio_transcription" in _sess,
-            "transcription_model": (_sess.get("input_audio_transcription") or {}).get("model", ""),
+            "has_input_transcription": False,        # omitted — model rejects the key
+            "transcription_model": "model_default",  # model auto-enables transcription
         })
 
-        # Structural guard: turn_detection must never appear in the session dict.
-        # The GA Realtime API rejects it with unknown_parameter, breaking the entire session.
-        if "turn_detection" in _sess:
+        # Structural guards: fields rejected by gpt-realtime as unknown_parameter.
+        # These must never appear in the session dict — their presence causes the entire
+        # session.update to fail, leaving the session in an undefined state.
+        _rejected_keys = [k for k in ("turn_detection", "input_audio_transcription") if k in _sess]
+        if _rejected_keys:
             log_event("realtime_payload_blocked", {
-                "forbidden": ["turn_detection"],
-                "reason": "turn_detection_not_supported_by_live_endpoint",
+                "forbidden": _rejected_keys,
+                "reason": "not_supported_by_live_endpoint",
             })
-            notify("Realtime payload blocked: turn_detection not supported by live endpoint")
+            notify(f"Realtime payload blocked: unsupported keys {_rejected_keys}")
             self._should_reconnect = False
             return
 
@@ -843,7 +845,6 @@ class RealtimePrometheusClient:
             "input_audio_format",
             "output_audio_format",
             "additionalProperties",
-            "whisper-1",
             "input_audio_transcription_model",
             "server_vad",                            # PTT mode: server VAD must never be set
         ]
