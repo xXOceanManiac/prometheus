@@ -4,9 +4,13 @@
 # Python cache
 __pycache__/
 *.pyc
+.pytest_cache/
 
-# Env
+# Env / secrets
 .env
+runtime/secrets/
+**/calendar_credentials.json
+**/calendar_token.json
 
 # Models (too large)
 models/
@@ -14,8 +18,20 @@ models/
 # Logs / temp
 logs/
 screenshots/
+tmp/
+
+# Runtime state (calendar request records, workspace scratch)
+runtime/approved/
+runtime/completed/
+runtime/failed/
+runtime/pending/
+runtime/reviewed/
+runtime/logs/
+runtime/workspace/
+runtime/reports/
+
+# Local runtime config lives in ~/.jarvis — repo copy is not used
+.jarvis/
 
 # OS
-.DS_Storeruntime/secrets/
-**/calendar_credentials.json
-**/calendar_token.json
+.DS_Store

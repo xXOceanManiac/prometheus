@@ -31,7 +31,16 @@ class GitSafety:
     """
     Thin wrapper around git for safe checkpointing and rollback.
     All methods are synchronous and safe to call from any thread.
+
+    repo_root defaults to the Prometheus repo; tests must pass a
+    throwaway repo so checkpoints never land in real history.
     """
+
+    def __init__(self, repo_root: Path | None = None) -> None:
+        self._root = Path(repo_root) if repo_root else _REPO_ROOT
+
+    def _git(self, *args: str) -> subprocess.CompletedProcess:
+        return _git(*args, cwd=self._root)
 
     def checkpoint(self, label: str) -> str:
         """
@@ -46,12 +55,12 @@ class GitSafety:
 
         try:
             # Stage everything that is tracked or untracked
-            _git("add", "-A")
+            self._git("add", "-A")
 
             # Attempt a real commit; if nothing to stage, do an empty commit
-            result = _git("commit", "-m", message)
+            result = self._git("commit", "-m", message)
             if result.returncode != 0 and "nothing to commit" in result.stdout + result.stderr:
-                result = _git("commit", "--allow-empty", "-m", message)
+                result = self._git("commit", "--allow-empty", "-m", message)
 
             if result.returncode != 0:
                 log_event("git_checkpoint_error", {
@@ -80,7 +89,7 @@ class GitSafety:
             return False
 
         try:
-            result = _git("reset", "--hard", sha)
+            result = self._git("reset", "--hard", sha)
             ok = result.returncode == 0
             log_event("git_rollback", {
                 "sha": sha,
@@ -95,7 +104,7 @@ class GitSafety:
     def current_sha(self) -> str:
         """Return the short (8-char) SHA of the current HEAD. Returns '' on failure."""
         try:
-            result = _git("rev-parse", "--short=8", "HEAD")
+            result = self._git("rev-parse", "--short=8", "HEAD")
             if result.returncode == 0:
                 return result.stdout.strip()
             return ""
@@ -111,7 +120,7 @@ class GitSafety:
         if not sha:
             return ""
         try:
-            result = _git("diff", "--stat", sha, "HEAD")
+            result = self._git("diff", "--stat", sha, "HEAD")
             if result.returncode == 0:
                 return result.stdout.strip()
             return ""
@@ -124,7 +133,7 @@ class GitSafety:
         Returns None if no such commits exist.
         """
         try:
-            result = _git(
+            result = self._git(
                 "log",
                 "--oneline",
                 "--all",
