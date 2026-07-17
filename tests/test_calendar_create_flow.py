@@ -24,7 +24,7 @@ import pytest
 
 # ── Module under test ─────────────────────────────────────────────────────────
 
-from prometheus.agents.calendar_create_flow import (
+from prometheus.calendar.create_flow import (
     parse_calendar_create_request,
     parse_and_propose,
     confirm_pending_calendar_confirmation,
@@ -54,7 +54,7 @@ def _patch_confirm_dir(tmp_path):
     conf_dir = tmp_path / "calendar_confirmations"
     conf_dir.mkdir()
     with patch(
-        "prometheus.agents.calendar_create_flow.PENDING_CALENDAR_CONFIRMATIONS_DIR",
+        "prometheus.calendar.create_flow.PENDING_CALENDAR_CONFIRMATIONS_DIR",
         conf_dir,
     ):
         yield conf_dir
@@ -68,7 +68,7 @@ def _patch_executor_dirs(tmp_path):
     reviewed.mkdir()
     approved.mkdir()
     with patch.multiple(
-        "prometheus.agents.calendar_create_flow",
+        "prometheus.calendar.create_flow",
         REVIEWED_LUMEN_DIR=reviewed,
         APPROVED_LUMEN_DIR=approved,
     ):
@@ -539,11 +539,11 @@ class TestParseAndPropose:
             "operation_results": [{"success": True}],
         }
         with patch(
-            "prometheus.agents.calendar_create_flow.execute_approved_calendar_request",
+            "prometheus.calendar.create_flow.execute_approved_calendar_request",
             return_value=mock_exec_result,
         ):
             with patch(
-                "prometheus.agents.calendar_create_flow._calendar_get_date_fn",
+                "prometheus.calendar.create_flow._calendar_get_date_fn",
                 return_value={"ok": True, "events": []},
             ):
                 result = parse_and_propose("schedule a focus block tomorrow at 2")
@@ -572,7 +572,7 @@ class TestParseAndPropose:
     def test_window_based_calls_availability_search(self, _patch_confirm_dir):
         mock_slot = {"start_time_str": "13:00:00", "end_time_str": "14:00:00"}
         with patch(
-            "prometheus.agents.calendar_create_flow._find_availability_slot",
+            "prometheus.calendar.create_flow._find_availability_slot",
             return_value=mock_slot,
         ):
             result = parse_and_propose("add a workout this afternoon")
@@ -580,7 +580,7 @@ class TestParseAndPropose:
 
     def test_no_availability_returned_when_calendar_unavailable(self, _patch_confirm_dir):
         with patch(
-            "prometheus.agents.calendar_create_flow._find_availability_slot",
+            "prometheus.calendar.create_flow._find_availability_slot",
             return_value=None,
         ):
             result = parse_and_propose("add a workout this afternoon")
@@ -645,7 +645,7 @@ class TestConfirmPending:
             "operation_results": [],
         }
         with patch(
-            "prometheus.agents.calendar_create_flow.execute_approved_calendar_request",
+            "prometheus.calendar.create_flow.execute_approved_calendar_request",
             return_value=mock_exec_result,
         ):
             result = confirm_pending_calendar_confirmation()
@@ -661,7 +661,7 @@ class TestConfirmPending:
             "operation_results": [{"success": True}],
         }
         with patch(
-            "prometheus.agents.calendar_create_flow.execute_approved_calendar_request",
+            "prometheus.calendar.create_flow.execute_approved_calendar_request",
             return_value=mock_exec_result,
         ):
             result = confirm_pending_calendar_confirmation()
@@ -672,7 +672,7 @@ class TestConfirmPending:
     def test_writes_reviewed_file(self, _patch_confirm_dir, _patch_executor_dirs):
         self._write_pending(_patch_confirm_dir)
         with patch(
-            "prometheus.agents.calendar_create_flow.execute_approved_calendar_request",
+            "prometheus.calendar.create_flow.execute_approved_calendar_request",
             return_value={"success": True, "operation_count": 1, "operation_results": []},
         ):
             result = confirm_pending_calendar_confirmation()
@@ -683,7 +683,7 @@ class TestConfirmPending:
     def test_writes_approval_file(self, _patch_confirm_dir, _patch_executor_dirs):
         self._write_pending(_patch_confirm_dir)
         with patch(
-            "prometheus.agents.calendar_create_flow.execute_approved_calendar_request",
+            "prometheus.calendar.create_flow.execute_approved_calendar_request",
             return_value={"success": True, "operation_count": 1, "operation_results": []},
         ):
             result = confirm_pending_calendar_confirmation()
@@ -694,7 +694,7 @@ class TestConfirmPending:
     def test_reviewed_file_has_original_operations(self, _patch_confirm_dir, _patch_executor_dirs):
         self._write_pending(_patch_confirm_dir)
         with patch(
-            "prometheus.agents.calendar_create_flow.execute_approved_calendar_request",
+            "prometheus.calendar.create_flow.execute_approved_calendar_request",
             return_value={"success": True, "operation_count": 1, "operation_results": []},
         ):
             result = confirm_pending_calendar_confirmation()
@@ -707,7 +707,7 @@ class TestConfirmPending:
     def test_does_not_call_goog_calendar_directly(self, _patch_confirm_dir, _patch_executor_dirs):
         self._write_pending(_patch_confirm_dir)
         with patch(
-            "prometheus.agents.calendar_create_flow.execute_approved_calendar_request",
+            "prometheus.calendar.create_flow.execute_approved_calendar_request",
             return_value={"success": True, "operation_count": 1, "operation_results": []},
         ) as mock_exec:
             confirm_pending_calendar_confirmation()
@@ -717,7 +717,7 @@ class TestConfirmPending:
     def test_request_id_has_nlcal_prefix(self, _patch_confirm_dir, _patch_executor_dirs):
         self._write_pending(_patch_confirm_dir)
         with patch(
-            "prometheus.agents.calendar_create_flow.execute_approved_calendar_request",
+            "prometheus.calendar.create_flow.execute_approved_calendar_request",
             return_value={"success": True, "operation_count": 1, "operation_results": []},
         ):
             result = confirm_pending_calendar_confirmation()
@@ -782,7 +782,7 @@ class TestCancelPending:
 class TestSafetyConstraints:
     def test_no_home_assistant_calls_in_source(self):
         import inspect
-        import prometheus.agents.calendar_create_flow as mod
+        import prometheus.calendar.create_flow as mod
         src = inspect.getsource(mod)
         # Should not import or reference HA
         for forbidden in ("home_assistant", "ha_service", "HomeAssistant", "requests.post"):
@@ -790,7 +790,7 @@ class TestSafetyConstraints:
 
     def test_no_direct_gcal_api_calls_in_source(self):
         import inspect
-        import prometheus.agents.calendar_create_flow as mod
+        import prometheus.calendar.create_flow as mod
         src = inspect.getsource(mod)
         # Should not import or call raw GCal API helpers directly (bypassing executor)
         # Note: "_direct_create_calendar_event" is our own function name — allowed.
@@ -800,11 +800,11 @@ class TestSafetyConstraints:
     def test_propose_does_not_write_to_calendar_when_no_slot(self, _patch_confirm_dir):
         # Window-based request with no available slot → no executor call
         with patch(
-            "prometheus.agents.calendar_create_flow._find_availability_slot",
+            "prometheus.calendar.create_flow._find_availability_slot",
             return_value=None,
         ):
             with patch(
-                "prometheus.agents.calendar_create_flow.execute_approved_calendar_request",
+                "prometheus.calendar.create_flow.execute_approved_calendar_request",
                 side_effect=AssertionError("Should not call executor when no slot"),
             ):
                 result = parse_and_propose("add a workout this afternoon")
@@ -813,14 +813,14 @@ class TestSafetyConstraints:
     def test_no_passive_scheduling_for_incomplete_request(self, _patch_confirm_dir):
         # Missing-field requests must never call the executor
         with patch(
-            "prometheus.agents.calendar_create_flow.execute_approved_calendar_request",
+            "prometheus.calendar.create_flow.execute_approved_calendar_request",
         ) as mock_exec:
             result = parse_and_propose("schedule a standup")  # no date, no time
         assert result["status"] == "needs_input"
         mock_exec.assert_not_called()
 
     def test_operation_has_dry_run_true(self):
-        from prometheus.agents.calendar_create_flow import _build_operation
+        from prometheus.calendar.create_flow import _build_operation
         draft = {
             "title": "Standup",
             "date_str": "2026-05-15",
@@ -831,7 +831,7 @@ class TestSafetyConstraints:
         assert op["dry_run"] is True
 
     def test_operation_requires_prometheus_approval(self):
-        from prometheus.agents.calendar_create_flow import _build_operation
+        from prometheus.calendar.create_flow import _build_operation
         draft = {
             "title": "Standup",
             "date_str": "2026-05-15",
@@ -1102,7 +1102,7 @@ class TestCheckConflict:
 
     def test_no_conflict_when_calendar_empty(self):
         with patch(
-            "prometheus.agents.calendar_create_flow._calendar_get_date_fn",
+            "prometheus.calendar.create_flow._calendar_get_date_fn",
             return_value={"ok": True, "events": []},
         ):
             assert _check_conflict(self._draft()) is None
@@ -1116,7 +1116,7 @@ class TestCheckConflict:
             }
         ]
         with patch(
-            "prometheus.agents.calendar_create_flow._calendar_get_date_fn",
+            "prometheus.calendar.create_flow._calendar_get_date_fn",
             return_value={"ok": True, "events": events},
         ):
             result = _check_conflict(self._draft())
@@ -1132,7 +1132,7 @@ class TestCheckConflict:
             }
         ]
         with patch(
-            "prometheus.agents.calendar_create_flow._calendar_get_date_fn",
+            "prometheus.calendar.create_flow._calendar_get_date_fn",
             return_value={"ok": True, "events": events},
         ):
             assert _check_conflict(self._draft()) is None
@@ -1140,20 +1140,20 @@ class TestCheckConflict:
     def test_all_day_events_skipped(self):
         events = [{"summary": "Holiday", "start": "2026-05-15", "end": "2026-05-16"}]
         with patch(
-            "prometheus.agents.calendar_create_flow._calendar_get_date_fn",
+            "prometheus.calendar.create_flow._calendar_get_date_fn",
             return_value={"ok": True, "events": events},
         ):
             assert _check_conflict(self._draft()) is None
 
     def test_failure_returns_none(self):
         with patch(
-            "prometheus.agents.calendar_create_flow._calendar_get_date_fn",
+            "prometheus.calendar.create_flow._calendar_get_date_fn",
             side_effect=RuntimeError("API down"),
         ):
             assert _check_conflict(self._draft()) is None
 
     def test_none_fn_returns_none(self):
-        with patch("prometheus.agents.calendar_create_flow._calendar_get_date_fn", None):
+        with patch("prometheus.calendar.create_flow._calendar_get_date_fn", None):
             assert _check_conflict(self._draft()) is None
 
 
@@ -1174,7 +1174,7 @@ class TestDirectCreateCalendarEvent:
 
     def test_success_returns_executed(self, _patch_executor_dirs):
         with patch(
-            "prometheus.agents.calendar_create_flow.execute_approved_calendar_request",
+            "prometheus.calendar.create_flow.execute_approved_calendar_request",
             return_value={"success": True, "operation_count": 1},
         ):
             result = _direct_create_calendar_event("schedule a focus block tomorrow at 2", self._draft())
@@ -1185,7 +1185,7 @@ class TestDirectCreateCalendarEvent:
 
     def test_dry_run_blocked_returns_blocked(self, _patch_executor_dirs):
         with patch(
-            "prometheus.agents.calendar_create_flow.execute_approved_calendar_request",
+            "prometheus.calendar.create_flow.execute_approved_calendar_request",
             return_value={
                 "success": False,
                 "reason": "Calendar execution is blocked because GOOGLE_CALENDAR_DRY_RUN=true.",
@@ -1196,7 +1196,7 @@ class TestDirectCreateCalendarEvent:
 
     def test_executor_error_returns_failed(self, _patch_executor_dirs):
         with patch(
-            "prometheus.agents.calendar_create_flow.execute_approved_calendar_request",
+            "prometheus.calendar.create_flow.execute_approved_calendar_request",
             side_effect=RuntimeError("network error"),
         ):
             result = _direct_create_calendar_event("schedule a focus block tomorrow at 2", self._draft())
@@ -1204,7 +1204,7 @@ class TestDirectCreateCalendarEvent:
 
     def test_writes_reviewed_file(self, _patch_executor_dirs):
         with patch(
-            "prometheus.agents.calendar_create_flow.execute_approved_calendar_request",
+            "prometheus.calendar.create_flow.execute_approved_calendar_request",
             return_value={"success": True, "operation_count": 1},
         ):
             result = _direct_create_calendar_event("schedule a focus block tomorrow at 2", self._draft())
@@ -1216,7 +1216,7 @@ class TestDirectCreateCalendarEvent:
 
     def test_writes_approval_file(self, _patch_executor_dirs):
         with patch(
-            "prometheus.agents.calendar_create_flow.execute_approved_calendar_request",
+            "prometheus.calendar.create_flow.execute_approved_calendar_request",
             return_value={"success": True, "operation_count": 1},
         ):
             result = _direct_create_calendar_event("schedule a focus block tomorrow at 2", self._draft())
@@ -1229,7 +1229,7 @@ class TestDirectCreateCalendarEvent:
 
     def test_does_not_write_pending_file(self, _patch_confirm_dir, _patch_executor_dirs):
         with patch(
-            "prometheus.agents.calendar_create_flow.execute_approved_calendar_request",
+            "prometheus.calendar.create_flow.execute_approved_calendar_request",
             return_value={"success": True, "operation_count": 1},
         ):
             _direct_create_calendar_event("schedule a focus block tomorrow at 2", self._draft())
@@ -1244,11 +1244,11 @@ class TestDirectCreateCalendarEvent:
 class TestParseAndProposeAutoExecute:
     def test_explicit_request_auto_executes(self, _patch_confirm_dir, _patch_executor_dirs):
         with patch(
-            "prometheus.agents.calendar_create_flow.execute_approved_calendar_request",
+            "prometheus.calendar.create_flow.execute_approved_calendar_request",
             return_value={"success": True, "operation_count": 1},
         ):
             with patch(
-                "prometheus.agents.calendar_create_flow._calendar_get_date_fn",
+                "prometheus.calendar.create_flow._calendar_get_date_fn",
                 return_value={"ok": True, "events": []},
             ):
                 result = parse_and_propose("add a workout tomorrow at 4")
@@ -1256,14 +1256,14 @@ class TestParseAndProposeAutoExecute:
 
     def test_window_based_still_asks_confirmation(self, _patch_confirm_dir):
         mock_slot = {"start_time_str": "13:00:00", "end_time_str": "14:00:00"}
-        with patch("prometheus.agents.calendar_create_flow._find_availability_slot", return_value=mock_slot):
+        with patch("prometheus.calendar.create_flow._find_availability_slot", return_value=mock_slot):
             result = parse_and_propose("add a workout this afternoon")
         assert result["status"] == "pending"
         assert result["confirmation_id"] is not None
 
     def test_with_attendees_goes_to_pending(self, _patch_confirm_dir):
         with patch(
-            "prometheus.agents.calendar_create_flow._calendar_get_date_fn",
+            "prometheus.calendar.create_flow._calendar_get_date_fn",
             return_value={"ok": True, "events": []},
         ):
             result = parse_and_propose("schedule a meeting with jake tomorrow at 2pm")
@@ -1278,7 +1278,7 @@ class TestParseAndProposeAutoExecute:
             }
         ]
         with patch(
-            "prometheus.agents.calendar_create_flow._calendar_get_date_fn",
+            "prometheus.calendar.create_flow._calendar_get_date_fn",
             return_value={"ok": True, "events": events},
         ):
             result = parse_and_propose("schedule a focus block tomorrow at 2")
@@ -1295,7 +1295,7 @@ class TestParseAndProposeAutoExecute:
             }
         ]
         with patch(
-            "prometheus.agents.calendar_create_flow._calendar_get_date_fn",
+            "prometheus.calendar.create_flow._calendar_get_date_fn",
             return_value={"ok": True, "events": events},
         ):
             result = parse_and_propose("schedule a focus block tomorrow at 2")
@@ -1305,14 +1305,14 @@ class TestParseAndProposeAutoExecute:
 
     def test_dry_run_blocked_returns_blocked_status(self, _patch_confirm_dir, _patch_executor_dirs):
         with patch(
-            "prometheus.agents.calendar_create_flow.execute_approved_calendar_request",
+            "prometheus.calendar.create_flow.execute_approved_calendar_request",
             return_value={
                 "success": False,
                 "reason": "Calendar execution is blocked because GOOGLE_CALENDAR_DRY_RUN=true.",
             },
         ):
             with patch(
-                "prometheus.agents.calendar_create_flow._calendar_get_date_fn",
+                "prometheus.calendar.create_flow._calendar_get_date_fn",
                 return_value={"ok": True, "events": []},
             ):
                 result = parse_and_propose("schedule a focus block tomorrow at 2")
@@ -1325,11 +1325,11 @@ class TestParseAndProposeAutoExecute:
 
     def test_no_pending_file_for_direct_executed(self, _patch_confirm_dir, _patch_executor_dirs):
         with patch(
-            "prometheus.agents.calendar_create_flow.execute_approved_calendar_request",
+            "prometheus.calendar.create_flow.execute_approved_calendar_request",
             return_value={"success": True, "operation_count": 1},
         ):
             with patch(
-                "prometheus.agents.calendar_create_flow._calendar_get_date_fn",
+                "prometheus.calendar.create_flow._calendar_get_date_fn",
                 return_value={"ok": True, "events": []},
             ):
                 result = parse_and_propose("schedule a focus block tomorrow at 2")

@@ -395,7 +395,7 @@ class MorningCalendarReader:
 
     def get_today_events(self) -> list:
         try:
-            from prometheus.agents.calendar_read_tools import calendar_get_today
+            from prometheus.calendar.read_tools import calendar_get_today
             result = calendar_get_today()
             if not result.get("ok"):
                 log_event("morning_routine_calendar_error", {

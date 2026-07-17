@@ -767,7 +767,7 @@ def resolve_direct_intent(transcript: str) -> dict[str, Any] | None:
     # Only active when a pending calendar confirmation exists in the filesystem.
     if any(p == text or text.startswith(p) for p in _CALENDAR_CONFIRM_PHRASES):
         try:
-            from prometheus.agents.calendar_create_flow import has_pending_calendar_confirmation
+            from prometheus.calendar.create_flow import has_pending_calendar_confirmation
             if has_pending_calendar_confirmation():
                 return {
                     "type": "direct_tool",
@@ -778,7 +778,7 @@ def resolve_direct_intent(transcript: str) -> dict[str, Any] | None:
 
     if any(p == text or text.startswith(p) for p in _CALENDAR_CANCEL_PHRASES):
         try:
-            from prometheus.agents.calendar_create_flow import has_pending_calendar_confirmation
+            from prometheus.calendar.create_flow import has_pending_calendar_confirmation
             if has_pending_calendar_confirmation():
                 return {
                     "type": "direct_tool",

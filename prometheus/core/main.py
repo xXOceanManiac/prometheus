@@ -16,7 +16,7 @@ from prometheus.voice.ptt import PushToTalkController
 from prometheus.core.realtime_client import RealtimePrometheusClient
 from prometheus.execution.tools import ToolRegistry
 from prometheus.infra.utils import log_event, notify
-from prometheus.services.visuals import VisualStateController
+from prometheus.hud.visuals import VisualStateController
 from prometheus.voice.wakeword import WakeWordDetector
 from prometheus.execution.background_worker import BackgroundWorkerPool
 from prometheus.memory.memory_core import query_vault
@@ -40,7 +40,7 @@ from prometheus.routines.calendar_event_triggers import (
     CalendarRoutineRule,
     TriggerCalendarReader,
 )
-from prometheus.services.hud_state_writer import HudStateWriter
+from prometheus.hud.hud_state_writer import HudStateWriter
 
 
 _PID_FILE = Path.home() / ".jarvis" / "prometheus.pid"

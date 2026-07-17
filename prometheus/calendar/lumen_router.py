@@ -18,7 +18,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-from prometheus.agents.lumen_ingestion import (
+from prometheus.calendar.lumen_ingestion import (
     PendingCalendarProposal,
     list_pending_lumen_calendar_proposals,
 )
@@ -173,7 +173,7 @@ def _main(argv: list[str] | None = None) -> None:
     args = argv if argv is not None else sys.argv[1:]
     if not args:
         print(
-            "Usage: python -m prometheus.agents.lumen_calendar_router "
+            "Usage: python -m prometheus.calendar.lumen_router "
             "--dry-run-all | --dry-run-request REQUEST_ID | --list-reviewed"
         )
         sys.exit(1)

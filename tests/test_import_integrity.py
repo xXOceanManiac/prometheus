@@ -185,7 +185,7 @@ class TestPrometheusIntegrations:
 
 class TestPrometheusAgents:
     def test_lumen_ingestion_imports(self):
-        from prometheus.agents.lumen_ingestion import (
+        from prometheus.calendar.lumen_ingestion import (
             LumenIngestionResult,
             PendingCalendarProposal,
             validate_lumen_calendar_request,
@@ -211,7 +211,7 @@ class TestPrometheusAgents:
         assert REVIEWED_LUMEN_DIR.parent.name == "reviewed"
 
     def test_lumen_calendar_context_imports(self):
-        from prometheus.agents.lumen_calendar_context import (
+        from prometheus.calendar.lumen_context import (
             google_event_to_lumen_event_dict,
             google_events_to_lumen_event_dicts,
             build_calendar_context_summary,
@@ -221,7 +221,7 @@ class TestPrometheusAgents:
         assert callable(build_calendar_context_summary)
 
     def test_lumen_calendar_router_imports(self):
-        from prometheus.agents.lumen_calendar_router import (
+        from prometheus.calendar.lumen_router import (
             load_pending_lumen_proposal,
             write_lumen_review_result,
             list_reviewed_lumen_calendar_proposals,

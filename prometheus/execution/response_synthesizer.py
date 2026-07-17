@@ -452,3 +452,173 @@ def _calendar_create_flow(action: str, data: dict) -> str:
         return "Tell the user the cancel did not complete."
 
     return "Briefly report the calendar create result. No filler."
+
+
+def build_response_instructions(action: str, result: "ToolResult") -> str:
+    """Return response_instructions for any tool followup.
+
+    Single entry point used by both the direct-override path and the
+    LLM function-call path in realtime_client — the wording must never
+    depend on which path executed the tool.
+    """
+    data = result.data or {}
+
+    if action == "web_search":
+        search_summary = str(data.get("summary", "")).strip()
+        if search_summary:
+            return (
+                f"Web search result: {search_summary[:800]} "
+                "Speak this information naturally and concisely. "
+                "Do not say you searched the web. Do not add filler."
+            )
+        return (
+            "The web search returned no useful results. "
+            "Say exactly: 'I searched but couldn't find a clear answer for that.'"
+        )
+
+    if action == "screen_context":
+        return (
+            "Report the current workspace state from the tool result data. "
+            "Mention the active project, active window, and xbox state if relevant. "
+            "Be brief and factual."
+        )
+
+    if action == "search_codebase":
+        count = data.get("count", 0)
+        output = str(data.get("output", ""))[:600]
+        if count > 0:
+            return (
+                f"Found {count} matches in the codebase. "
+                f"Results: {output[:400]}. Report the key matches concisely."
+            )
+        return "Say: 'No matches found for that search.'"
+
+    if action == "git_status":
+        if data.get("clean"):
+            return "Say: 'No uncommitted changes.'"
+        status_text = str(data.get("status", ""))
+        return f"Git status: {status_text[:300]}. Report which files have changed."
+
+    if action == "git_diff":
+        diff = str(data.get("diff", ""))[:500]
+        if diff:
+            return f"Git diff: {diff}. Summarize what changed in one or two sentences."
+        return "Say: 'No staged or unstaged changes in the diff.'"
+
+    if action == "session_wrapup":
+        return f"The session wrap-up has been triggered. {result.message}"
+
+    if action == "system_status":
+        import json as _json
+        data_str = _json.dumps(data, indent=1)[:600]
+        return (
+            f"Describe what you currently have loaded — workspace context, vault context, "
+            f"active project, and current state. Data: {data_str}"
+        )
+
+    if action == "get_priorities":
+        priorities = data.get("priorities", [])
+        return (
+            f"State Tate's top priorities right now based on: {priorities}. Be specific and direct."
+        )
+
+    if action in ("run_python", "run_shell"):
+        output = str(data.get("output", ""))[:400]
+        if result.ok:
+            return f"Command executed. Output: {output}. Report the result concisely."
+        return f"Command failed. Error: {result.message}. Report the failure."
+
+    if action == "start_coding_task":
+        goal = data.get("goal", "")[:60]
+        criteria = data.get("criteria", "")
+        return (
+            f"Coding task started in background: '{goal}'. "
+            f"Success criteria: {criteria}. "
+            "Say: 'Coding task started. Ask me for status anytime.'"
+        )
+
+    if action == "get_coding_status":
+        if data.get("status") == "no task running":
+            return "Say: 'No coding task has been run yet.'"
+        if data.get("success"):
+            att = data.get("attempts", 1)
+            diff = data.get("diff", "")[:200]
+            return (
+                f"Coding task succeeded in {att} attempt(s). Changes: {diff}. "
+                "Report the success and key changes concisely."
+            )
+        rolled = data.get("rolled_back", False)
+        return (
+            f"Coding task failed after {data.get('attempts', 0)} attempt(s). "
+            + ("Changes were rolled back. " if rolled else "")
+            + "Report the failure briefly."
+        )
+
+    if action == "start_build":
+        goal = data.get("goal", "")[:60]
+        return (
+            f"Orchestrated build started for: '{goal}'. "
+            "Say: 'Build started. Architect, Coder, and Tester are running in the background. "
+            "Ask me for status anytime.'"
+        )
+
+    if action == "get_build_status":
+        status = data.get("status", "")
+        if status == "no build running":
+            return "Say: 'No orchestrated build has been run yet.'"
+        if status == "running":
+            return (
+                f"Build is still running for: '{data.get('goal', '')[:50]}'. "
+                "Say: 'The build is still in progress.'"
+            )
+        if data.get("success"):
+            tr = data.get("test_results", {})
+            phases = data.get("phases_completed", [])
+            return (
+                f"Build succeeded. Goal: '{data.get('goal', '')[:50]}'. "
+                f"{tr.get('passed', 0)} tests passing. Phases: {', '.join(phases[:5])}. "
+                "Report the success concisely."
+            )
+        if data.get("needs_human"):
+            tr = data.get("test_results", {})
+            return (
+                f"Build hit the debug limit and needs human review. "
+                f"Goal: '{data.get('goal', '')[:50]}'. "
+                f"{tr.get('failed', 0)} tests still failing. "
+                "Say: 'The build hit its debug limit. I need your help to resolve the remaining failures.'"
+            )
+        return (
+            f"Build failed. Goal: '{data.get('goal', '')[:50]}'. Report the failure briefly."
+        )
+
+    if action == "run_diagnostics":
+        summary = str(data.get("spoken_summary", "Diagnostics complete."))
+        return (
+            f"Read the diagnostic summary: {summary}. "
+            "Report it clearly. Do not add preamble."
+        )
+
+    if action == "read_file":
+        output = str(data.get("content", ""))[:600]
+        return (
+            f"File contents: {output}. Summarize what's relevant to the current mission concisely."
+        )
+
+    if action == "list_files":
+        items = data.get("items", [])
+        names = [f"{i['name']}{'/' if i.get('is_dir') else ''}" for i in items[:30]]
+        output = ", ".join(names)[:400]
+        return f"Directory contents: {output}. Report what's there concisely."
+
+    if action == "get_mission_status":
+        return f"Status: {result.message[:500]}. Report the key points concisely."
+
+    if action == "query_vault":
+        return (
+            f"Action 'query_vault' completed. {result.message[:500]}. Report the result concisely."
+        )
+
+    if is_synthesized_action(action):
+        return synthesize_tool_response(action, result)
+
+    return tool_response_instructions(result, action)

@@ -12,7 +12,7 @@ ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(ROOT))
 
 from prometheus.integrations.google_calendar import GoogleCalendarEvent
-from prometheus.agents.lumen_calendar_context import (
+from prometheus.calendar.lumen_context import (
     google_event_to_lumen_event_dict,
     google_events_to_lumen_event_dicts,
     build_calendar_context_summary,

@@ -331,7 +331,7 @@ class TestMorningCalendarReader:
         fake_result = {"ok": True, "events": fake_events, "count": 2, "date": "2026-06-03"}
 
         reader = MorningCalendarReader()
-        with patch("prometheus.agents.calendar_read_tools.calendar_get_today", return_value=fake_result):
+        with patch("prometheus.calendar.read_tools.calendar_get_today", return_value=fake_result):
             events = reader.get_today_events()
 
         assert len(events) == 2
@@ -345,7 +345,7 @@ class TestMorningCalendarReader:
 
         reader = MorningCalendarReader()
         with patch(
-            "prometheus.agents.calendar_read_tools.calendar_get_today",
+            "prometheus.calendar.read_tools.calendar_get_today",
             side_effect=Exception("network error"),
         ):
             events = reader.get_today_events()

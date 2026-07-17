@@ -6,7 +6,7 @@ breaking passing ones.
 """
 from __future__ import annotations
 
-from prometheus.agents.agent_base import BaseAgent, AgentTask, AgentResult
+from prometheus.coding.agent_base import BaseAgent, AgentTask, AgentResult
 
 
 class DebuggerAgent(BaseAgent):

@@ -211,7 +211,7 @@ def list_pending_lumen_calendar_proposals() -> list[PendingCalendarProposal]:
 def _main(argv: list[str] | None = None) -> None:
     args = argv if argv is not None else sys.argv[1:]
     if not args:
-        print("Usage: python -m prometheus.agents.lumen_ingestion --ingest-once | --list-pending")
+        print("Usage: python -m prometheus.calendar.lumen_ingestion --ingest-once | --list-pending")
         sys.exit(1)
 
     cmd = args[0]

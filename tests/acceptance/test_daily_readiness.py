@@ -480,10 +480,10 @@ class TestGateHUDState:
     """Visual state file is written atomically with correct schema."""
 
     def test_set_state_writes_valid_json(self, tmp_path):
-        import prometheus.services.visuals as visuals
+        import prometheus.hud.visuals as visuals
         state_file = tmp_path / "visual_state.json"
         with patch.object(visuals, "VISUAL_STATE_PATH", state_file):
-            from prometheus.services.visuals import VisualStateController
+            from prometheus.hud.visuals import VisualStateController
             ctrl = VisualStateController()
             ctrl.set_state("listening")
         assert state_file.exists()
@@ -491,10 +491,10 @@ class TestGateHUDState:
         assert data["state"] == "listening"
 
     def test_valid_states_accepted(self, tmp_path):
-        import prometheus.services.visuals as visuals
+        import prometheus.hud.visuals as visuals
         state_file = tmp_path / "visual_state.json"
         with patch.object(visuals, "VISUAL_STATE_PATH", state_file):
-            from prometheus.services.visuals import VisualStateController
+            from prometheus.hud.visuals import VisualStateController
             ctrl = VisualStateController()
             for state in ("idle", "armed", "listening", "processing", "speaking"):
                 ctrl.set_state(state)
@@ -502,10 +502,10 @@ class TestGateHUDState:
             assert data["state"] == "speaking"
 
     def test_state_file_is_valid_json(self, tmp_path):
-        import prometheus.services.visuals as visuals
+        import prometheus.hud.visuals as visuals
         state_file = tmp_path / "visual_state.json"
         with patch.object(visuals, "VISUAL_STATE_PATH", state_file):
-            from prometheus.services.visuals import VisualStateController
+            from prometheus.hud.visuals import VisualStateController
             ctrl = VisualStateController()
             ctrl.set_state("idle")
         # File must exist and parse as valid JSON with a "state" key

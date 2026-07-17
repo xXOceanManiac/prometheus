@@ -41,8 +41,7 @@ def _make_tool_registry() -> "ToolRegistry":
         patch("prometheus.execution.tools.SemanticMemory"),
         patch("prometheus.execution.tools.ProceduralMemory"),
         patch("prometheus.execution.tools.WorkingMemory"),
-        patch("prometheus.execution.tools.DreamManager"),
-        patch("prometheus.execution.tools.BehaviorLearningEngine"),
+        patch("prometheus.execution.tools.ProjectResolver"),
     ):
         return ToolRegistry()
 

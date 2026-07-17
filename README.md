@@ -102,9 +102,9 @@ The morning routine can be exercised without waiting for a calendar event:
 `../Lumen` is a subordinate calendar-intelligence project with its own tests. Prometheus reads calendars through `prometheus/integrations/google_calendar.py` and exchanges calendar *write* proposals with Lumen through file-based queues (`../Lumen/runtime/outbox` → `runtime/pending|reviewed|approved|completed/lumen_calendar`). Writes require explicit approval:
 
 ```bash
-python -m prometheus.agents.lumen_calendar_router --list-pending
-python -m prometheus.agents.lumen_calendar_executor --approve REQUEST_ID
-python -m prometheus.agents.lumen_calendar_executor --execute-approved REQUEST_ID
+python -m prometheus.calendar.lumen_router --list-pending
+python -m prometheus.calendar.lumen_executor --approve REQUEST_ID
+python -m prometheus.calendar.lumen_executor --execute-approved REQUEST_ID
 ```
 
 ## Known limitations

@@ -420,7 +420,7 @@ def execute_approved_calendar_request(request_id: str) -> dict:
         return _fail(
             "Reviewed request is missing original_operations. "
             "Rerun dry-run review before execution: "
-            f"python -m prometheus.agents.lumen_calendar_router --dry-run-request {request_id}"
+            f"python -m prometheus.calendar.lumen_router --dry-run-request {request_id}"
         )
     if not isinstance(operations, list) or len(operations) == 0:
         return _fail("Reviewed request has no operations in original_operations.")
@@ -556,10 +556,10 @@ def _main(argv: list[str] | None = None) -> None:
     if not args:
         print(
             "Usage:\n"
-            "  python -m prometheus.agents.lumen_calendar_executor --list-reviewed\n"
-            "  python -m prometheus.agents.lumen_calendar_executor --approve REQUEST_ID\n"
-            "  python -m prometheus.agents.lumen_calendar_executor --execute-approved REQUEST_ID\n"
-            "  python -m prometheus.agents.lumen_calendar_executor --status REQUEST_ID"
+            "  python -m prometheus.calendar.lumen_executor --list-reviewed\n"
+            "  python -m prometheus.calendar.lumen_executor --approve REQUEST_ID\n"
+            "  python -m prometheus.calendar.lumen_executor --execute-approved REQUEST_ID\n"
+            "  python -m prometheus.calendar.lumen_executor --status REQUEST_ID"
         )
         sys.exit(1)
 

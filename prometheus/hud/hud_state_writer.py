@@ -290,7 +290,7 @@ def _fetch_calendar_today() -> tuple[list[dict], str, str]:
     try:
         log_event("hud_state_calendar_fetch_start", {})
         print("[HUD_WRITER] hud_state_calendar_fetch_start", flush=True)
-        from prometheus.agents.calendar_read_tools import calendar_get_today
+        from prometheus.calendar.read_tools import calendar_get_today
         result = calendar_get_today()
         if not result.get("ok"):
             err = str(result.get("error", "unknown error"))
@@ -489,13 +489,13 @@ def write_dashboard_state(
 def _fetch_news() -> tuple[list[dict], str]:
     """Fetch Guardian news. Returns (articles, status). Never raises."""
     try:
-        from prometheus.services.guardian_news import get_news
+        from prometheus.news.guardian_news import get_news
         return get_news()
     except Exception as exc:
         log_event("guardian_news_error", {"error": str(exc)[:200]})
         print(f"[HUD_WRITER] guardian_fetch_error={exc!r:.80}", flush=True)
         try:
-            from prometheus.services.guardian_news import _fallback_articles
+            from prometheus.news.guardian_news import _fallback_articles
             return _fallback_articles(), "fallback"
         except Exception:
             return [], "error"

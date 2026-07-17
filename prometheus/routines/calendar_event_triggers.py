@@ -103,7 +103,7 @@ class TriggerCalendarReader:
 
     def get_upcoming_events(self) -> list:
         try:
-            from prometheus.agents.calendar_read_tools import calendar_list_upcoming
+            from prometheus.calendar.read_tools import calendar_list_upcoming
             result = calendar_list_upcoming(max_results=50, days=1)
             if not result.get("ok"):
                 log_event("calendar_trigger_reader_error", {
