@@ -32,9 +32,6 @@ from prometheus.infra.utils import log_event
 
 _DASHBOARD_STATE_PATH = Path.home() / "Desktop" / "PROMETHEUS" / "state" / "dashboard_state.json"
 
-# Keep the old path in sync too so the readonly dashboard can find one canonical source
-_LEGACY_PROMETHEUS_PATH = Path.home() / ".prometheus" / "hud_state.json"
-
 # ── Source paths ─────────────────────────────────────────────────────────────
 
 _VISUAL_STATE_PATH = Path.home() / ".jarvis" / "visual_state.json"
@@ -453,7 +450,6 @@ def write_dashboard_state(
 ) -> None:
     """
     Build and atomically write dashboard_state.json to the canonical path.
-    Also writes the legacy .prometheus path for backward compatibility.
     Logs on first write, state/news/calendar changes, and at most once per 60s.
     """
     try:
@@ -482,15 +478,6 @@ def write_dashboard_state(
                 "cal_status": cal_status,
                 "state": state["state"],
             })
-
-        # ── legacy path ───────────────────────────────────────────────────────
-        try:
-            _LEGACY_PROMETHEUS_PATH.parent.mkdir(parents=True, exist_ok=True)
-            tmp2 = _LEGACY_PROMETHEUS_PATH.with_suffix(".tmp")
-            tmp2.write_text(json.dumps(state, indent=2, ensure_ascii=False), encoding="utf-8")
-            os.replace(tmp2, _LEGACY_PROMETHEUS_PATH)
-        except Exception:
-            pass  # legacy write failure is non-fatal
 
     except Exception as exc:
         print(f"[HUD_WRITER] write_failed error={exc!r:.120}", flush=True)

@@ -1,10 +1,8 @@
 """
 tests/test_hud_state_writer.py
 
-Tests for:
-- hud_state_writer: canonical path, news in state, calendar in state, fallback, file write, schema
-- readonly_dashboard: /health, /state, /news, HTML page, POST rejected, no secrets,
-                      calendar rail, analog clock
+Tests for hud_state_writer: canonical path, news in state, calendar in state,
+fallback, file write, schema.
 """
 from __future__ import annotations
 
@@ -60,13 +58,6 @@ def _mock_cal_events(n: int = 3) -> list[dict]:
     ]
 
 
-def _find_free_port() -> int:
-    import socket
-    with socket.socket() as s:
-        s.bind(("127.0.0.1", 0))
-        return s.getsockname()[1]
-
-
 # ── Canonical path ────────────────────────────────────────────────────────────
 
 class TestCanonicalPath:
@@ -77,11 +68,6 @@ class TestCanonicalPath:
         assert "PROMETHEUS" in str(_DASHBOARD_STATE_PATH)
         assert "state" in str(_DASHBOARD_STATE_PATH)
         assert "dashboard_state.json" in str(_DASHBOARD_STATE_PATH)
-
-    def test_readonly_dashboard_uses_same_canonical_path(self):
-        from prometheus.services.hud_state_writer import _DASHBOARD_STATE_PATH
-        from prometheus.services.readonly_dashboard import _DASHBOARD_STATE_PATH as _ro_path
-        assert str(_DASHBOARD_STATE_PATH) == str(_ro_path)
 
     def test_write_dashboard_state_creates_correct_file(self, tmp_path):
         import prometheus.services.hud_state_writer as _mod
@@ -345,192 +331,6 @@ class TestFetchNewsInternal:
         assert len(articles) == 10
 
 
-# ── ReadonlyDashboard ─────────────────────────────────────────────────────────
-
-def _make_state_with_calendar(tmp_path: Path, cal_events: list | None = None, n_articles: int = 10) -> Path:
-    """Write a full dashboard_state.json to tmp_path and return the path."""
-    state_file = tmp_path / "dashboard_state.json"
-    state_file.write_text(json.dumps({
-        "state": "idle",
-        "active_project": "TestProject",
-        "updated_at": "2026-06-06T10:00:00Z",
-        "cards": {
-            "news": {
-                "title": "News",
-                "chip": "LIVE",
-                "status": "live",
-                "articles": _mock_articles(n_articles),
-                "items": [],
-            },
-            "activity": {"title": "Activity", "chip": "LIVE", "items": ["event_a"], "summary": ""},
-            "calendar": {
-                "title": "Today",
-                "chip": "LIVE" if cal_events else "PENDING",
-                "status": "live" if cal_events else "pending",
-                "date": "2026-06-06",
-                "summary": f"{len(cal_events or [])} events today",
-                "events": cal_events or [],
-                "items": [f"9:0{i} AM Meeting {i}" for i in range(len(cal_events or []))],
-            },
-        },
-    }), encoding="utf-8")
-    return state_file
-
-
-class TestReadonlyDashboard:
-
-    @pytest.fixture(autouse=True)
-    def _server(self, tmp_path):
-        from prometheus.services.readonly_dashboard import ReadonlyDashboard
-        import prometheus.services.readonly_dashboard as _mod
-
-        port = _find_free_port()
-        original = _mod._DASHBOARD_STATE_PATH
-        state_file = _make_state_with_calendar(tmp_path, _mock_cal_events(2))
-        _mod._DASHBOARD_STATE_PATH = state_file
-
-        self._dashboard = ReadonlyDashboard(host="127.0.0.1", port=port)
-        self._dashboard.start()
-        time.sleep(0.15)
-        self._base = f"http://127.0.0.1:{port}"
-        yield
-        self._dashboard.stop()
-        _mod._DASHBOARD_STATE_PATH = original
-
-    def _get(self, path: str) -> tuple[int, bytes]:
-        try:
-            with urllib.request.urlopen(self._base + path, timeout=3) as r:
-                return r.status, r.read()
-        except urllib.error.HTTPError as e:
-            return e.code, b""
-
-    def test_health_returns_ok(self):
-        code, body = self._get("/health")
-        assert code == 200
-        assert json.loads(body)["status"] == "ok"
-
-    def test_state_has_cards_and_project(self):
-        code, body = self._get("/state")
-        assert code == 200
-        d = json.loads(body)
-        assert "cards" in d
-        assert d.get("active_project") == "TestProject"
-
-    def test_state_exposes_calendar_card(self):
-        code, body = self._get("/state")
-        assert code == 200
-        d = json.loads(body)
-        assert "calendar" in d["cards"], "cards.calendar must be present in /state"
-        assert d["cards"]["calendar"]["status"] == "live"
-
-    def test_news_has_10_articles(self):
-        code, body = self._get("/news")
-        assert code == 200
-        assert len(json.loads(body)["articles"]) == 10
-
-    def test_root_html_is_html(self):
-        code, body = self._get("/")
-        assert code == 200
-        assert b"<html" in body.lower()
-
-    def test_root_html_includes_news_title(self):
-        code, body = self._get("/")
-        assert code == 200
-        assert b"Article 0" in body
-
-    def test_root_html_shows_project(self):
-        _, body = self._get("/")
-        assert b"TestProject" in body
-
-    def test_root_html_has_calendar_rail(self):
-        _, body = self._get("/")
-        html = body.decode()
-        assert "cal-rail" in html, "Right-side calendar rail must be present"
-
-    def test_root_html_calendar_events_rendered(self):
-        _, body = self._get("/")
-        html = body.decode()
-        # Events from _mock_cal_events(2) should appear
-        assert "Meeting 0" in html, "Calendar event title must appear in HTML"
-        assert "Meeting 1" in html
-
-    def test_root_html_analog_clock_present(self):
-        _, body = self._get("/")
-        html = body.decode()
-        assert "clock-face" in html, "Analog clock SVG must be present"
-        assert "hand-h" in html, "Hour hand must be present"
-        assert "hand-m" in html, "Minute hand must be present"
-        assert "hand-s" in html, "Second hand must be present"
-
-    def test_root_html_calendar_pending_state(self):
-        """When calendar has no events (pending), show a clear pending state."""
-        import prometheus.services.readonly_dashboard as _mod
-        original = _mod._DASHBOARD_STATE_PATH
-        import tempfile
-        tmp = Path(tempfile.mktemp(suffix=".json"))
-        tmp.write_text(json.dumps({
-            "state": "idle", "active_project": "P",
-            "updated_at": "2026-06-06T00:00:00Z",
-            "cards": {
-                "news": {"title": "N", "chip": "LIVE", "status": "live", "articles": [], "items": []},
-                "calendar": {"title": "Today", "chip": "PENDING", "status": "pending",
-                             "date": "2026-06-06", "summary": "pending", "events": [], "items": []},
-            },
-        }), encoding="utf-8")
-        _mod._DASHBOARD_STATE_PATH = tmp
-        try:
-            code, body = self._get("/")
-            assert code == 200
-            html = body.decode()
-            assert "cal-pending" in html or "pending" in html.lower()
-        finally:
-            _mod._DASHBOARD_STATE_PATH = original
-            tmp.unlink(missing_ok=True)
-
-    def test_unknown_path_404(self):
-        code, _ = self._get("/admin")
-        assert code == 404
-
-    def test_post_rejected_405(self):
-        req = urllib.request.Request(
-            self._base + "/state", data=b"{}", method="POST"
-        )
-        try:
-            with urllib.request.urlopen(req, timeout=3) as r:
-                code = r.status
-        except urllib.error.HTTPError as e:
-            code = e.code
-        assert code == 405
-
-    def test_no_secrets_in_state_response(self):
-        _, body = self._get("/state")
-        text = body.decode().lower()
-        assert "sk-" not in text
-
-    def test_no_secrets_in_html(self):
-        _, body = self._get("/")
-        text = body.decode().lower()
-        assert "sk-" not in text
-
-    def test_api_key_values_redacted(self):
-        import prometheus.services.readonly_dashboard as _mod
-        original = _mod._DASHBOARD_STATE_PATH
-
-        import tempfile
-        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
-            json.dump({"state": "idle", "vite_guardian_api_key": "secret-key-123"}, f)
-            tmp_path = f.name
-
-        _mod._DASHBOARD_STATE_PATH = Path(tmp_path)
-        try:
-            _, body = self._get("/state")
-            assert b"secret-key-123" not in body
-            assert b"REDACTED" in body
-        finally:
-            _mod._DASHBOARD_STATE_PATH = original
-            os.unlink(tmp_path)
-
-
 # ── Godot-facing schema stability ─────────────────────────────────────────────
 
 class TestGodotStateSchema:
@@ -572,96 +372,6 @@ class TestGodotStateSchema:
         from prometheus.services.hud_state_writer import build_hud_state
         state = build_hud_state(_mock_articles(10), "live", _mock_cal_events(3), "live", "2026-06-06")
         assert len(state["cards"]["news"]["articles"]) == 10
-
-
-# ── Thumbnail end-to-end ──────────────────────────────────────────────────────
-
-def _mock_articles_with_thumb(n: int = 10) -> list[dict]:
-    articles = _mock_articles(n)
-    articles[0]["thumb"] = "https://media.guim.co.uk/sample/500.jpg"
-    articles[0]["thumbnail"] = "https://media.guim.co.uk/sample/500.jpg"
-    return articles
-
-
-class TestThumbnailEndToEnd:
-
-    @pytest.fixture(autouse=True)
-    def _server_with_thumb(self, tmp_path):
-        from prometheus.services.readonly_dashboard import ReadonlyDashboard
-        import prometheus.services.readonly_dashboard as _mod
-
-        port = _find_free_port()
-        original = _mod._DASHBOARD_STATE_PATH
-        state_file = tmp_path / "dashboard_state.json"
-        state_file.write_text(json.dumps({
-            "state": "idle",
-            "active_project": "ThumbTest",
-            "updated_at": "2026-06-06T00:00:00Z",
-            "cards": {
-                "news": {
-                    "title": "News",
-                    "chip": "LIVE",
-                    "status": "live",
-                    "articles": _mock_articles_with_thumb(10),
-                    "items": [],
-                },
-                "calendar": {
-                    "title": "Today", "chip": "LIVE", "status": "live",
-                    "date": "2026-06-06", "summary": "1 event today",
-                    "events": [{"title": "Thumb Test Event", "start_time": "2026-06-06T09:00:00-04:00",
-                                 "end_time": "2026-06-06T10:00:00-04:00", "time_label": "9:00 AM",
-                                 "location": "", "source": "Google Calendar",
-                                 "is_now": False, "is_next": True}],
-                    "items": ["9:00 AM Thumb Test Event"],
-                },
-            },
-        }), encoding="utf-8")
-        _mod._DASHBOARD_STATE_PATH = state_file
-
-        self._dashboard = ReadonlyDashboard(host="127.0.0.1", port=port)
-        self._dashboard.start()
-        time.sleep(0.15)
-        self._base = f"http://127.0.0.1:{port}"
-        yield
-        self._dashboard.stop()
-        _mod._DASHBOARD_STATE_PATH = original
-
-    def _get(self, path: str) -> tuple[int, bytes]:
-        try:
-            with urllib.request.urlopen(self._base + path, timeout=3) as r:
-                return r.status, r.read()
-        except urllib.error.HTTPError as e:
-            return e.code, b""
-
-    def test_news_endpoint_exposes_thumb_field(self):
-        code, body = self._get("/news")
-        assert code == 200
-        data = json.loads(body)
-        articles = data.get("articles", [])
-        assert len(articles) == 10
-        assert articles[0].get("thumb") == "https://media.guim.co.uk/sample/500.jpg"
-
-    def test_html_includes_img_tag_when_thumb_present(self):
-        _, body = self._get("/")
-        assert b'<img' in body
-        assert b'media.guim.co.uk/sample/500.jpg' in body
-
-    def test_html_no_broken_img_when_thumb_missing(self):
-        _, body = self._get("/")
-        html = body.decode()
-        import re
-        empty_src_imgs = re.findall(r'<img[^>]+src=""', html)
-        assert empty_src_imgs == [], f"Found empty-src img tags: {empty_src_imgs}"
-
-    def test_html_calendar_event_in_rail(self):
-        _, body = self._get("/")
-        assert b"Thumb Test Event" in body, "Calendar event must appear in rail"
-
-    def test_no_secrets_in_html(self):
-        _, body = self._get("/")
-        text = body.decode().lower()
-        assert "sk-" not in text
-        assert "api_key" not in text or "[redacted]" in text or "read-only" in text
 
 
 # ── GOAL E: Calendar refresh default 60s ─────────────────────────────────────
