@@ -14,7 +14,7 @@ import pytest
 ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(ROOT))
 
-from prometheus.agents.lumen_ingestion import (
+from prometheus.calendar.lumen_ingestion import (
     LumenIngestionResult,
     PendingCalendarProposal,
     validate_lumen_calendar_request,
@@ -57,7 +57,7 @@ class TestLumenPaths:
         monkeypatch.setattr(pmod, "LUMEN_ARCHIVE_DIR", tmp_path / "archive")
         monkeypatch.setattr(pmod, "PENDING_LUMEN_DIR", tmp_path / "pending")
         # Re-import to pick up monkeypatched values
-        import prometheus.agents.lumen_ingestion as lmod
+        import prometheus.calendar.lumen_ingestion as lmod
         monkeypatch.setattr(lmod, "LUMEN_ACCEPTED_DIR", tmp_path / "accepted")
         monkeypatch.setattr(lmod, "LUMEN_REJECTED_DIR", tmp_path / "rejected")
         monkeypatch.setattr(lmod, "PENDING_LUMEN_DIR", tmp_path / "pending")
@@ -180,7 +180,7 @@ def _write_request(outbox_dir: Path, name: str, payload: dict) -> Path:
 
 def _patch_ingestion_dirs(monkeypatch, tmp_path):
     """Monkeypatch all ingestion dir constants and stub ensure_lumen_ingestion_dirs."""
-    import prometheus.agents.lumen_ingestion as lmod
+    import prometheus.calendar.lumen_ingestion as lmod
     outbox = tmp_path / "outbox"
     accepted = tmp_path / "accepted"
     rejected = tmp_path / "rejected"
@@ -271,7 +271,7 @@ class TestIngestLumenOutboxOnce:
 
 class TestListPendingProposals:
     def test_list_pending_returns_proposals(self, tmp_path, monkeypatch):
-        import prometheus.agents.lumen_ingestion as lmod
+        import prometheus.calendar.lumen_ingestion as lmod
         pending = tmp_path / "pending"
         pending.mkdir()
         monkeypatch.setattr(lmod, "PENDING_LUMEN_DIR", pending)
@@ -294,7 +294,7 @@ class TestListPendingProposals:
         assert results[0].request_id == "req-test001"
 
     def test_empty_pending_dir_returns_empty(self, tmp_path, monkeypatch):
-        import prometheus.agents.lumen_ingestion as lmod
+        import prometheus.calendar.lumen_ingestion as lmod
         pending = tmp_path / "pending"
         pending.mkdir()
         monkeypatch.setattr(lmod, "PENDING_LUMEN_DIR", pending)
@@ -302,7 +302,7 @@ class TestListPendingProposals:
         assert results == []
 
     def test_missing_pending_dir_returns_empty(self, tmp_path, monkeypatch):
-        import prometheus.agents.lumen_ingestion as lmod
+        import prometheus.calendar.lumen_ingestion as lmod
         monkeypatch.setattr(lmod, "PENDING_LUMEN_DIR", tmp_path / "nonexistent")
         results = list_pending_lumen_calendar_proposals()
         assert results == []
@@ -316,7 +316,7 @@ class TestNoForbiddenDependencies:
         return p.read_text(encoding="utf-8")
 
     def test_no_subprocess_in_lumen_ingestion(self):
-        src = self._source("prometheus/agents/lumen_ingestion.py")
+        src = self._source("prometheus/calendar/lumen_ingestion.py")
         # "subprocess" may appear as a string in the suspicious-keys list — that's expected.
         # What must not appear is an actual import or call.
         assert "import subprocess" not in src
@@ -326,20 +326,20 @@ class TestNoForbiddenDependencies:
         assert "os.system" not in src
 
     def test_no_google_calendar_api_in_lumen_ingestion(self):
-        src = self._source("prometheus/agents/lumen_ingestion.py")
+        src = self._source("prometheus/calendar/lumen_ingestion.py")
         assert "googleapiclient" not in src
         assert "google.oauth2" not in src
         assert "oauth2client" not in src
 
     def test_no_home_assistant_calls_in_lumen_ingestion(self):
-        src = self._source("prometheus/agents/lumen_ingestion.py")
+        src = self._source("prometheus/calendar/lumen_ingestion.py")
         assert "home_assistant" not in src.lower() or "ha_service" in src  # ha_service only in reject list
         # More specific: no HA HTTP calls
         assert "requests.post" not in src
         assert "HOME_ASSISTANT_API_KEY" not in src
 
     def test_no_calendar_execution_in_lumen_ingestion(self):
-        src = self._source("prometheus/agents/lumen_ingestion.py")
+        src = self._source("prometheus/calendar/lumen_ingestion.py")
         # No actual calendar write/execute calls
         assert "insert(" not in src
         assert "events().insert" not in src

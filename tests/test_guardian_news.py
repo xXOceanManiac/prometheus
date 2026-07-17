@@ -1,7 +1,7 @@
 """
 tests/test_guardian_news.py
 
-Unit tests for prometheus.services.guardian_news.
+Unit tests for prometheus.news.guardian_news.
 
 All network calls are mocked — no real HTTP requests are made.
 """
@@ -21,7 +21,7 @@ _ROOT = Path(__file__).resolve().parent.parent
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
-from prometheus.services.guardian_news import (
+from prometheus.news.guardian_news import (
     normalize_article,
     prometheus_relevance_score,
     pad_to_ten,
@@ -353,8 +353,8 @@ class TestHardExclusion:
             for i in range(15)
         ]
         mock_raw = obit_raw + calm_raw
-        with patch("prometheus.services.guardian_news.fetch_guardian_articles", return_value=mock_raw), \
-             patch("prometheus.services.guardian_news._load_env_key", return_value=("key", "url")):
+        with patch("prometheus.news.guardian_news.fetch_guardian_articles", return_value=mock_raw), \
+             patch("prometheus.news.guardian_news._load_env_key", return_value=("key", "url")):
             articles, status = get_news(api_key="key")
         titles = [a["title"].lower() for a in articles]
         for title in titles:
@@ -385,8 +385,8 @@ class TestHardExclusion:
             for i in range(15)
         ]
         mock_raw = bad_raw + calm_raw
-        with patch("prometheus.services.guardian_news.fetch_guardian_articles", return_value=mock_raw), \
-             patch("prometheus.services.guardian_news._load_env_key", return_value=("key", "url")):
+        with patch("prometheus.news.guardian_news.fetch_guardian_articles", return_value=mock_raw), \
+             patch("prometheus.news.guardian_news._load_env_key", return_value=("key", "url")):
             articles, status = get_news(api_key="key")
         titles = [a["title"].lower() for a in articles]
         for title in titles:
@@ -481,7 +481,7 @@ class TestGetNews:
     def test_returns_demo_when_no_api_key(self):
         with patch.dict(os.environ, {}, clear=False):
             os.environ.pop("VITE_GUARDIAN_API_KEY", None)
-            with patch("prometheus.services.guardian_news._load_env_key", return_value=("", "")):
+            with patch("prometheus.news.guardian_news._load_env_key", return_value=("", "")):
                 articles, status = get_news()
         assert status == "demo"
         assert len(articles) == 10
@@ -499,17 +499,17 @@ class TestGetNews:
             for i in range(12)
         ]
 
-        with patch("prometheus.services.guardian_news.fetch_guardian_articles", return_value=mock_raw), \
-             patch("prometheus.services.guardian_news._load_env_key", return_value=("test-key", "https://api")):
+        with patch("prometheus.news.guardian_news.fetch_guardian_articles", return_value=mock_raw), \
+             patch("prometheus.news.guardian_news._load_env_key", return_value=("test-key", "https://api")):
             articles, status = get_news(api_key="test-key")
 
         assert status == "live"
         assert 1 <= len(articles) <= 10
 
     def test_returns_fallback_on_network_error(self):
-        with patch("prometheus.services.guardian_news.fetch_guardian_articles",
+        with patch("prometheus.news.guardian_news.fetch_guardian_articles",
                    side_effect=RuntimeError("network error")), \
-             patch("prometheus.services.guardian_news._load_env_key", return_value=("key", "url")):
+             patch("prometheus.news.guardian_news._load_env_key", return_value=("key", "url")):
             articles, status = get_news(api_key="key")
         assert status == "fallback"
         assert len(articles) == 10
@@ -526,8 +526,8 @@ class TestGetNews:
             }
             for i in range(3)  # only 3 raw results — should pad to 10
         ]
-        with patch("prometheus.services.guardian_news.fetch_guardian_articles", return_value=mock_raw), \
-             patch("prometheus.services.guardian_news._load_env_key", return_value=("key", "url")):
+        with patch("prometheus.news.guardian_news.fetch_guardian_articles", return_value=mock_raw), \
+             patch("prometheus.news.guardian_news._load_env_key", return_value=("key", "url")):
             articles, status = get_news(api_key="key")
         assert len(articles) == 10
 
@@ -556,8 +556,8 @@ class TestGetNews:
             for i in range(12)
         ]
         mock_raw = violent_raw + calm_raw
-        with patch("prometheus.services.guardian_news.fetch_guardian_articles", return_value=mock_raw), \
-             patch("prometheus.services.guardian_news._load_env_key", return_value=("key", "url")):
+        with patch("prometheus.news.guardian_news.fetch_guardian_articles", return_value=mock_raw), \
+             patch("prometheus.news.guardian_news._load_env_key", return_value=("key", "url")):
             articles, status = get_news(api_key="key")
         titles = [a["title"].lower() for a in articles]
         # No violent headline should be in the result set
@@ -571,14 +571,14 @@ class TestGetNews:
 class TestFetchGuardianArticles:
 
     def test_raises_when_no_api_key(self):
-        from prometheus.services.guardian_news import fetch_guardian_articles
+        from prometheus.news.guardian_news import fetch_guardian_articles
         # Patch _load_env_key so it doesn't read the real .env file
-        with patch("prometheus.services.guardian_news._load_env_key", return_value=("", "")):
+        with patch("prometheus.news.guardian_news._load_env_key", return_value=("", "")):
             with pytest.raises(RuntimeError, match="VITE_GUARDIAN_API_KEY"):
                 fetch_guardian_articles(api_key="", base_url="https://api")
 
     def test_builds_correct_query_params(self):
-        from prometheus.services.guardian_news import fetch_guardian_articles
+        from prometheus.news.guardian_news import fetch_guardian_articles
         import urllib.request
 
         captured_urls: list[str] = []
@@ -606,7 +606,7 @@ class TestFetchGuardianArticles:
         assert "page-size=50" in url
 
     def test_raises_on_http_error(self):
-        from prometheus.services.guardian_news import fetch_guardian_articles
+        from prometheus.news.guardian_news import fetch_guardian_articles
         import urllib.request, urllib.error
 
         def fake_urlopen(req, timeout=None):
@@ -617,7 +617,7 @@ class TestFetchGuardianArticles:
                 fetch_guardian_articles(api_key="key", base_url="https://api")
 
     def test_returns_empty_list_for_no_results(self):
-        from prometheus.services.guardian_news import fetch_guardian_articles
+        from prometheus.news.guardian_news import fetch_guardian_articles
         import urllib.request
 
         class FakeResponse:

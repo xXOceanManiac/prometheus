@@ -248,8 +248,7 @@ class PrometheusMorningSpeaker:
     """
     Async speaker adapter for MorningRoutineService.
 
-    Replicates the proactive_loop._surface() pattern:
-    sends conversation.item.create then response.create so the Realtime
+    Sends conversation.item.create then response.create so the Realtime
     client reads the text aloud exactly as provided.
     """
 
@@ -396,7 +395,7 @@ class MorningCalendarReader:
 
     def get_today_events(self) -> list:
         try:
-            from prometheus.agents.calendar_read_tools import calendar_get_today
+            from prometheus.calendar.read_tools import calendar_get_today
             result = calendar_get_today()
             if not result.get("ok"):
                 log_event("morning_routine_calendar_error", {

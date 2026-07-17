@@ -128,13 +128,60 @@ class Test3ToolActionFormattedText(unittest.TestCase):
         print("Test 3 ✅ — Tool action formatted as readable text for chat")
 
 
-# ── Test 4: Conversational message routes to chat_completion, not Realtime ────
+# ── Helpers for driving the real chat polling loop ────────────────────────────
+
+def _make_client():
+    from prometheus.core.realtime_client import RealtimePrometheusClient
+    mock_speaker = MagicMock()
+    mock_tools = MagicMock()
+    mock_tools.schemas.return_value = []
+    with patch("prometheus.core.realtime_client.CONFIG", {
+        "openai_api_key": "sk-test",
+        "realtime_model": "gpt-realtime",
+        "voice": "alloy",
+    }):
+        return RealtimePrometheusClient(speaker=mock_speaker, tools=mock_tools)
+
+
+async def _run_chat_cycle(client, wm, text: str, ts: str, timeout: float = 5.0) -> dict:
+    """Write chat_input, run the REAL _chat_polling_loop until it responds.
+
+    Completion is detected via chat_history: the loop appends the user message
+    and the assistant response as its final step.
+    """
+    wm.write({"chat_input": {"text": text, "ts": ts}})
+    client.connected = True
+    task = asyncio.ensure_future(client._chat_polling_loop())
+    try:
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            await asyncio.sleep(0.1)
+            data = wm.read()
+            history = data.get("chat_history") or []
+            if any(h.get("role") == "user" and h.get("content") == text for h in history):
+                return data.get("chat_response") or {}
+        raise AssertionError("chat polling loop produced no response in time")
+    finally:
+        client.connected = False
+        task.cancel()
+        try:
+            await task
+        except (asyncio.CancelledError, Exception):
+            pass
+
+
+# ── Test 4: Conversational message routes through the real polling loop ───────
 
 class Test4ConversationalRoutesToLLM(unittest.TestCase):
     def test_conversational_uses_text_model(self):
-        import importlib
-        import prometheus.infra.llm_router as llm_router
-        importlib.reload(llm_router)
+        from prometheus.memory.working_memory import WorkingMemory
+        wm = WorkingMemory()
+        wm.write({"chat_history": [], "chat_input": None, "chat_response": None})
+
+        client = _make_client()
+
+        # Conversational phrase must not match a deterministic tool override
+        self.assertIsNone(client._direct_intent_override("what are you?"))
 
         chat_completion_calls = []
 
@@ -142,82 +189,55 @@ class Test4ConversationalRoutesToLLM(unittest.TestCase):
             chat_completion_calls.append(msg)
             return "I am Prometheus, your desktop assistant."
 
-        # Simulate one polling cycle directly (without full async client setup)
-        from prometheus.memory.working_memory import WorkingMemory
-        wm = WorkingMemory()
-
-        ts = _now()
-        wm.write({"chat_input": {"text": "what are you?", "ts": ts}})
-
-        # Manually invoke the routing logic that _chat_polling_loop uses
-        from prometheus.core.realtime_client import RealtimePrometheusClient
-
-        mock_speaker = MagicMock()
-        mock_tools = MagicMock()
-        mock_tools.schemas.return_value = []
-
-        with patch("prometheus.core.realtime_client.CONFIG", {
-            "openai_api_key": "sk-test",
-            "realtime_model": "gpt-realtime",
-            "voice": "alloy",
-        }):
-            client = RealtimePrometheusClient(speaker=mock_speaker, tools=mock_tools)
-
-        # Verify the message does NOT match a direct intent override
-        override = client._direct_intent_override("what are you?")
-        self.assertIsNone(override, "Conversational phrase must not match tool override")
-
-        # Simulate the LLM branch writing the response
         with patch("prometheus.infra.llm_router.chat_completion", side_effect=fake_completion):
-            resp = fake_completion("what are you?", {}, [])
-            resp_ts = _now()
-            wm.write({
-                "chat_response": {"text": resp, "ts": resp_ts},
-            })
+            resp = asyncio.run(_run_chat_cycle(client, wm, "what are you?", _now()))
 
-        self.assertEqual(len(chat_completion_calls), 1)
-        result = wm.read().get("chat_response", {})
-        self.assertEqual(result.get("text"), "I am Prometheus, your desktop assistant.")
-        print("Test 4 ✅ — Conversational chat routed to text model, not voice")
+        self.assertEqual(chat_completion_calls, ["what are you?"])
+        self.assertEqual(resp.get("text"), "I am Prometheus, your desktop assistant.")
+        print("Test 4 ✅ — real polling loop routed conversational chat to text model")
 
 
-# ── Test 5: Chat history accumulates correctly ────────────────────────────────
+# ── Test 5: Chat history accumulates through the real polling loop ────────────
 
 class Test5ChatHistoryAccumulates(unittest.TestCase):
     def test_history_grows_correctly(self):
         from prometheus.memory.working_memory import WorkingMemory
         wm = WorkingMemory()
+        wm.write({"chat_history": [], "chat_input": None, "chat_response": None})
 
-        # Clear any existing chat history
-        wm.write({"chat_history": [], "chat_input": None})
+        client = _make_client()
+        # "what project am I on?" matches a direct tool override, so the real
+        # loop routes it to the tool registry — give that boundary a real result.
+        from prometheus.execution.tools import ToolResult
+        client.tools.execute.return_value = ToolResult(
+            ok=True, message="Active project: PROMETHEUS", data={}
+        )
+
+        def fake_completion(msg, context=None, history=None):
+            return f"Response to: {msg}"
 
         messages = ["hello", "how are you?", "what project am I on?"]
-        history: list[dict] = []
 
-        for msg in messages:
-            ts = _now()
-            resp_ts = _now()
-            resp = f"Response to: {msg}"
+        async def _drive():
+            for i, msg in enumerate(messages):
+                # Distinct ascending ts per message so the loop treats each as new
+                ts = _now() + f".{i}"
+                with patch("prometheus.infra.llm_router.chat_completion", side_effect=fake_completion):
+                    await _run_chat_cycle(client, wm, msg, ts)
 
-            history.append({"role": "user", "content": msg, "ts": ts})
-            history.append({"role": "assistant", "content": resp, "ts": resp_ts})
-            history = history[-20:]
-
-            wm.write({
-                "chat_response": {"text": resp, "ts": resp_ts},
-                "chat_history": history,
-            })
+        asyncio.run(_drive())
 
         final_history = wm.read().get("chat_history", [])
         self.assertEqual(len(final_history), 6)
         self.assertEqual(final_history[0]["role"], "user")
         self.assertEqual(final_history[0]["content"], "hello")
         self.assertEqual(final_history[1]["role"], "assistant")
-        self.assertEqual(final_history[2]["role"], "user")
+        self.assertEqual(final_history[1]["content"], "Response to: hello")
         self.assertEqual(final_history[2]["content"], "how are you?")
-        self.assertEqual(final_history[4]["role"], "user")
         self.assertEqual(final_history[4]["content"], "what project am I on?")
-        print("Test 5 ✅ — Chat history: 6 entries in correct order")
+        # The override phrase was answered by the tool path, not the LLM
+        self.assertEqual(final_history[5]["content"], "Active project: PROMETHEUS")
+        print("Test 5 ✅ — real polling loop accumulated 6 history entries in order")
 
 
 if __name__ == "__main__":

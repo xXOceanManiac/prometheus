@@ -14,7 +14,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
-REPORT_DIR="$PROJECT_ROOT/../reports"
+REPORT_DIR="$PROJECT_ROOT/runtime/reports"
 
 PYTHON="/usr/bin/python3.12"
 SITE_PACKAGES="$PROJECT_ROOT/.venv/lib/python3.12/site-packages"
@@ -117,7 +117,7 @@ run_gate "ha_verification" \
 
 # ── Gate 6: Time Correctness ──────────────────────────────────────────────────
 run_gate "time_correctness" \
-    "tests/acceptance/test_daily_readiness.py::TestGateTimeCorrectness tests/test_pass7_time_browser.py" \
+    "tests/acceptance/test_daily_readiness.py::TestGateTimeCorrectness tests/test_time_and_app_actions.py" \
     "6. Time Correctness (time phrases route deterministically, date in response)"
 
 # ── Gate 7: Calendar Routines ─────────────────────────────────────────────────
@@ -135,10 +135,10 @@ run_gate "hud_state" \
     "tests/acceptance/test_daily_readiness.py::TestGateHUDState tests/test_hud_state_writer.py" \
     "9. HUD State Writer (visual state file written atomically)"
 
-# ── Gate 10: Proactive Policy ─────────────────────────────────────────────────
-run_gate "proactive_policy" \
-    "tests/acceptance/test_daily_readiness.py::TestGateProactivePolicy tests/test_proactive_speech_policy.py" \
-    "10. Proactive Policy (nudges disabled by default, no unwanted interruptions)"
+# ── Gate 10: Reactive By Default ──────────────────────────────────────────────
+run_gate "reactive_by_default" \
+    "tests/acceptance/test_daily_readiness.py::TestGateReactiveByDefault" \
+    "10. Reactive By Default (no proactive speech or model-call machinery)"
 
 # ── Gate 11: False Success Prevention ────────────────────────────────────────
 run_gate "false_success_prevention" \

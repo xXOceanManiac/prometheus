@@ -16,20 +16,21 @@ from prometheus.voice.ptt import PushToTalkController
 from prometheus.core.realtime_client import RealtimePrometheusClient
 from prometheus.execution.tools import ToolRegistry
 from prometheus.infra.utils import log_event, notify
-from prometheus.services.visuals import VisualStateController
+from prometheus.hud.visuals import VisualStateController
 from prometheus.voice.wakeword import WakeWordDetector
 from prometheus.execution.background_worker import BackgroundWorkerPool
 from prometheus.memory.memory_core import query_vault
-from prometheus.memory.session_summarizer import SessionSummarizer
 from prometheus.memory.working_memory import WorkingMemory
 from prometheus.workspace.workspace_manager import WorkspaceManager
 from prometheus.core.prometheus_identity import build_system_prompt
 from prometheus.core.prometheus_profile import PrometheusProfile
-from prometheus.core.session_briefing import SessionBriefing
-from prometheus.core.proactive_loop import ProactiveLoop
+from prometheus.memory.session_summarizer import load_recent_sessions
 from prometheus.sensors.event_bus import get_bus, EventType
 from prometheus.sensors.sensor_manager import SensorManager
-from prometheus.routines.morning_routine import MorningRoutineService
+from prometheus.routines.morning_routine import (
+    MorningRoutineService,
+    morning_routine_enabled,
+)
 from prometheus.routines.morning_adapters import (
     JSONMorningRoutineStateStore,
     HomeAssistantMorningClient,
@@ -42,9 +43,7 @@ from prometheus.routines.calendar_event_triggers import (
     CalendarRoutineRule,
     TriggerCalendarReader,
 )
-from prometheus.policies.proactive_speech_policy import should_allow_proactive_speech
-from prometheus.services.hud_state_writer import HudStateWriter
-from prometheus.services.readonly_dashboard import ReadonlyDashboard
+from prometheus.hud.hud_state_writer import HudStateWriter
 
 
 _PID_FILE = Path.home() / ".jarvis" / "prometheus.pid"
@@ -70,7 +69,6 @@ class PrometheusCore:
 
         self.visuals = VisualStateController()
         self.worker_pool = BackgroundWorkerPool(max_workers=4)
-        self.session_summarizer = SessionSummarizer()
         self.workspace = WorkspaceManager(
             poll_interval=float(CONFIG.get("workspace_poll_interval", 5.0)),
             on_project_change=self._on_workspace_project_change,
@@ -97,13 +95,10 @@ class PrometheusCore:
             on_activated=self._on_ptt_activated, on_released=self._on_ptt_released
         )
         self.profile: Any = None
-        self.briefing: SessionBriefing | None = None
-        self.proactive_loop: ProactiveLoop | None = None
         self._sensor_manager: SensorManager | None = None
         self._morning_routine_svc: MorningRoutineService | None = None
         self._cal_trigger_engine: CalendarEventTriggerEngine | None = None
         self._hud_writer: HudStateWriter | None = None
-        self._readonly_dashboard: ReadonlyDashboard | None = None
 
     def _acquire_pid_lock(self) -> None:
         try:
@@ -169,7 +164,7 @@ class PrometheusCore:
         recent_sessions: list = []
         try:
             recent_sessions = await self.loop.run_in_executor(
-                None, lambda: SessionBriefing.load_recent_sessions(n=3)
+                None, lambda: load_recent_sessions(n=3)
             )
         except Exception as exc:
             log_event("recent_sessions_load_error", {"error": str(exc)})
@@ -198,54 +193,7 @@ class PrometheusCore:
 
         self.client.inject_workspace_context(project)
 
-        # Calendar Event Trigger Engine — owns precise event timing for morning routine
-        # and future calendar-driven routines. Gated on PROMETHEUS_MORNING_ROUTINE_ENABLED.
-        # PrometheusMorningSpeaker guards on client.connected before sending.
-        _mrn_raw = os.getenv("PROMETHEUS_MORNING_ROUTINE_ENABLED", "")
-        _mrn_enabled = _mrn_raw.strip().lower()
-        print(f"[MORNING] env={_mrn_raw!r} enabled={_mrn_enabled!r}", flush=True)
-        log_event("morning_routine_env_check", {"raw": _mrn_raw, "enabled": _mrn_enabled})
-        if _mrn_enabled in ("1", "true", "yes"):
-            print("[MORNING] init starting", flush=True)
-            log_event("morning_routine_init_starting", {})
-            try:
-                morning_speaker = PrometheusMorningSpeaker(self.client)
-                self._morning_routine_svc = MorningRoutineService(
-                    calendar_reader=MorningCalendarReader(),
-                    ha_client=HomeAssistantMorningClient(),
-                    speaker=morning_speaker,
-                    weather_provider=MorningWeatherProvider(),
-                    state_store=JSONMorningRoutineStateStore(),
-                    logger=log_event,
-                )
-                # Register the Wake Up rule; grace window matches the routine config
-                _grace_seconds = int(
-                    self._morning_routine_svc._config.missed_trigger_grace_minutes * 60
-                )
-                morning_rule = CalendarRoutineRule(
-                    name="morning_routine",
-                    match_title_contains=["wake up"],
-                    handler=self._morning_routine_handler,
-                    allow_late_seconds=_grace_seconds,
-                )
-                # TODO: register movie routine when implemented
-                # TODO: register gym routine when implemented
-                # TODO: register meeting routine when implemented
-                self._cal_trigger_engine = CalendarEventTriggerEngine(
-                    calendar_reader=TriggerCalendarReader(),
-                    speaker_fn=morning_speaker.speak,
-                    rules=[morning_rule],
-                    logger=log_event,
-                )
-                asyncio.create_task(self._calendar_trigger_loop())
-                print("[MORNING] init complete (trigger engine)", flush=True)
-                log_event("morning_routine_enabled", {})
-            except Exception as exc:
-                print(f"[MORNING] init error={exc!r}", flush=True)
-                log_event("morning_routine_init_error", {"error": str(exc)[:200]})
-        else:
-            print("[MORNING] disabled (env not matched)", flush=True)
-            log_event("morning_routine_disabled", {"raw": _mrn_raw})
+        self._init_morning_routine()
 
         # Connect now — session.update uses the pre-loaded context.
         # PROMETHEUS_REALTIME_REQUIRED=true preserves the old fatal behavior.
@@ -275,12 +223,6 @@ class PrometheusCore:
         except Exception as exc:
             log_event("sensor_manager_start_error", {"error": str(exc)})
 
-        # Start proactive loop and session briefing
-        self.proactive_loop = ProactiveLoop(self.client, self.workspace)
-        asyncio.create_task(self.proactive_loop.run())
-        self.briefing = SessionBriefing(self.client)
-        asyncio.create_task(self.briefing.fire_delayed(delay=3.0))
-
         self.mic.start()
         self.ptt.start()
         self.worker_pool.start(
@@ -293,15 +235,6 @@ class PrometheusCore:
         # Godot HUD state writer — bridges Prometheus state → hud_state.json
         self._hud_writer = HudStateWriter()
         asyncio.create_task(self._hud_writer.run())
-
-        # Read-only remote dashboard (second laptop, LAN view)
-        _ro_enabled = (
-            os.getenv("PROMETHEUS_READONLY_DASHBOARD_ENABLED", "false").strip().lower()
-            in ("1", "true", "yes")
-        )
-        if _ro_enabled:
-            self._readonly_dashboard = ReadonlyDashboard()
-            self._readonly_dashboard.start()
 
         self._set_idle_visual_state()
         status = "wake word armed" if self.wakeword.is_ready else "PTT ready"
@@ -316,12 +249,8 @@ class PrometheusCore:
 
     async def shutdown(self) -> None:
         self.running = False
-        if self.proactive_loop:
-            self.proactive_loop.stop()
         if self._hud_writer:
             self._hud_writer.stop()
-        if self._readonly_dashboard:
-            self._readonly_dashboard.stop()
         self.ptt.stop()
         self.mic.stop()
         self.speaker.stop()
@@ -338,17 +267,6 @@ class PrometheusCore:
             pass
         await self.client.close()
         self.visuals.set_state("idle")
-
-        # Write session summary to vault before exiting — never block shutdown
-        loop = asyncio.get_running_loop()
-        try:
-            await asyncio.wait_for(
-                loop.run_in_executor(None, self.session_summarizer.summarize_and_write),
-                timeout=15.0,
-            )
-        except Exception as exc:
-            log_event("session_summarizer_shutdown_error", {"error": str(exc)})
-
         self.worker_pool.shutdown(wait=False, cancel_futures=True)
         self._release_pid_lock()
         log_event("prometheus_stopped", {})
@@ -369,6 +287,50 @@ class PrometheusCore:
             except Exception as exc:
                 log_event("heartbeat_error", {"error": str(exc)})
             await asyncio.sleep(5.0)
+
+    def _init_morning_routine(self) -> None:
+        """Wire the morning routine workflow behind its single enable switch.
+
+        When morning_routine_enabled() is False, nothing is constructed: no
+        calendar polling, no Realtime sessions, no speech, no device control.
+        """
+        if not morning_routine_enabled():
+            print("[MORNING] disabled (PROMETHEUS_MORNING_ROUTINE_ENABLED off)", flush=True)
+            log_event("morning_routine_disabled", {})
+            return
+        print("[MORNING] init starting", flush=True)
+        log_event("morning_routine_init_starting", {})
+        try:
+            morning_speaker = PrometheusMorningSpeaker(self.client)
+            self._morning_routine_svc = MorningRoutineService(
+                calendar_reader=MorningCalendarReader(),
+                ha_client=HomeAssistantMorningClient(),
+                speaker=morning_speaker,
+                weather_provider=MorningWeatherProvider(),
+                state_store=JSONMorningRoutineStateStore(),
+                logger=log_event,
+            )
+            # Register the Wake Up rule; grace window matches the routine config
+            _grace_seconds = int(
+                self._morning_routine_svc._config.missed_trigger_grace_minutes * 60
+            )
+            morning_rule = CalendarRoutineRule(
+                name="morning_routine",
+                match_title_contains=["wake up"],
+                handler=self._morning_routine_handler,
+                allow_late_seconds=_grace_seconds,
+            )
+            self._cal_trigger_engine = CalendarEventTriggerEngine(
+                calendar_reader=TriggerCalendarReader(),
+                rules=[morning_rule],
+                logger=log_event,
+            )
+            asyncio.create_task(self._calendar_trigger_loop())
+            print("[MORNING] init complete (trigger engine)", flush=True)
+            log_event("morning_routine_enabled", {})
+        except Exception as exc:
+            print(f"[MORNING] init error={exc!r}", flush=True)
+            log_event("morning_routine_init_error", {"error": str(exc)[:200]})
 
     async def _calendar_trigger_loop(self) -> None:
         """Drive the CalendarEventTriggerEngine. Never crashes the main loop."""
@@ -397,6 +359,9 @@ class PrometheusCore:
         await svc.run_morning_routine(event)
 
     def _on_background_task_complete(self, result: dict) -> None:
+        # Desktop notification only — Prometheus never initiates speech for
+        # background results. Status stays queryable via get_coding_status /
+        # get_build_status.
         description = str(result.get("description", "task"))[:50]
         ok = result.get("ok", False)
         status = "complete" if ok else "failed"
@@ -406,60 +371,6 @@ class PrometheusCore:
             "description": description,
             "cycles": result.get("cycles", 0),
         })
-        if self.loop and self.loop.is_running():
-            result_copy = dict(result)
-            self.loop.call_soon_threadsafe(
-                lambda: asyncio.create_task(
-                    self._announce_background_task_complete(result_copy)
-                )
-            )
-
-    async def _announce_background_task_complete(self, result: dict) -> None:
-        """Speak a verbal announcement of the completed background task."""
-        if not self.client.connected:
-            return
-        if self.client.busy or self.user_turn_active:
-            log_event("background_task_announce_skipped", {
-                "busy": self.client.busy,
-                "user_turn": self.user_turn_active,
-            })
-            return
-        # Presence gate — suppress if user is locked/idle
-        allowed = await asyncio.get_event_loop().run_in_executor(
-            None, lambda: should_allow_proactive_speech("background_completion")
-        )
-        if not allowed:
-            return
-        description = str(result.get("description", "task"))[:60]
-        ok = result.get("ok", False)
-        result_summary = str(result.get("result_summary") or result.get("message") or "")[:200]
-        output_path = str(result.get("output_path") or "")
-        if ok:
-            msg = f"Background task complete: {description}."
-            if output_path:
-                msg += f" Output written to {output_path}."
-            elif result_summary:
-                msg += f" {result_summary}"
-        else:
-            msg = f"Background task failed: {description}. {result_summary[:100]}"
-        try:
-            await self.client.send({
-                "type": "conversation.item.create",
-                "item": {
-                    "type": "message",
-                    "role": "system",
-                    "content": [{"type": "input_text", "text": f"[BACKGROUND_COMPLETE] {msg}"}],
-                },
-            })
-            await self.client.send({
-                "type": "response.create",
-                "response": {
-                    "instructions": f"Announce this background task result in one sentence: {msg}",
-                },
-            })
-            log_event("background_task_announced", {"ok": ok, "description": description})
-        except Exception as exc:
-            log_event("background_task_announce_error", {"error": str(exc)})
 
     def _on_workspace_project_change(self, project_name: str, project_path: str) -> None:
         """Called from the workspace thread when the active project changes."""
@@ -591,12 +502,6 @@ class PrometheusCore:
     async def _begin_turn(self, source: str) -> None:
         if self.user_turn_active:
             return
-
-        # Note voice activity for proactive loop and cancel startup briefing
-        if self.proactive_loop:
-            self.proactive_loop.note_voice_activity()
-        if self.briefing:
-            self.briefing.cancel()
 
         if self.speaker.is_speaking or self.client.busy:
             await self._interrupt_assistant()

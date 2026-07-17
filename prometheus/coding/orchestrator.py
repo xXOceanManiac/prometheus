@@ -11,13 +11,13 @@ import time
 from dataclasses import dataclass, field
 from typing import Any
 
-from prometheus.agents.agent_base import AgentTask
-from prometheus.agents.architect import ArchitectAgent
-from prometheus.agents.coder import CoderAgent
-from prometheus.agents.tester import TesterAgent
-from prometheus.agents.debugger import DebuggerAgent
-from prometheus.execution.git_safety import GitSafety
-from prometheus.execution.success_criteria import SuccessCriteria
+from prometheus.coding.agent_base import AgentTask
+from prometheus.coding.architect import ArchitectAgent
+from prometheus.coding.coder import CoderAgent
+from prometheus.coding.tester import TesterAgent
+from prometheus.coding.debugger import DebuggerAgent
+from prometheus.coding.git_safety import GitSafety
+from prometheus.coding.success_criteria import SuccessCriteria
 from prometheus.infra.utils import log_event
 from prometheus.memory.working_memory import WorkingMemory
 

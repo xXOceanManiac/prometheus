@@ -16,9 +16,22 @@ Dependencies injected at construction:
 from __future__ import annotations
 
 import asyncio
+import os
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
+
+
+def morning_routine_enabled() -> bool:
+    """Single on/off switch for the morning routine workflow.
+
+    When False the runtime must not construct the routine, poll the calendar
+    for it, create Realtime sessions, speak, or control devices on its behalf.
+    """
+    return (
+        os.getenv("PROMETHEUS_MORNING_ROUTINE_ENABLED", "").strip().lower()
+        in ("1", "true", "yes")
+    )
 
 # ── Home Assistant script entity ID constants ─────────────────────────────────
 

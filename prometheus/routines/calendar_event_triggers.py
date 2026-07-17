@@ -1,17 +1,16 @@
 """
-prometheus/routines/calendar_event_triggers.py — Calendar Event Trigger Engine v1.
+prometheus/routines/calendar_event_triggers.py — Calendar Event Trigger Engine.
 
 Polls Google Calendar every POLL_SECONDS for upcoming events.
 Schedules asyncio tasks to fire at exact event start times.
 Deduplicates via a persistent state file and in-memory set.
 Routes known event titles to registered CalendarRoutineRule handlers.
-Falls back to a spoken notification for unrecognized events.
+Events with no matching rule are ignored — Prometheus never initiates
+speech for arbitrary calendar events.
 
 Config (env vars):
   PROMETHEUS_CALENDAR_TRIGGER_POLL_SECONDS      — poll interval (default: 30)
   PROMETHEUS_CALENDAR_TRIGGER_LOOKAHEAD_MINUTES — how far ahead to schedule (default: 10)
-  PROMETHEUS_CALENDAR_EVENT_GRACE_SECONDS       — late-start grace for default events (default: 120)
-  PROMETHEUS_CALENDAR_EVENT_NOTIFICATIONS_ENABLED — default event spoken notifications (default: true)
 """
 from __future__ import annotations
 
@@ -33,15 +32,6 @@ _DEFAULT_STATE_PATH = (
 
 
 # ── Config helpers ────────────────────────────────────────────────────────────
-
-def _cfg_bool(name: str, default: bool) -> bool:
-    raw = os.getenv(name, "").strip().lower()
-    if raw in ("1", "true", "yes"):
-        return True
-    if raw in ("0", "false", "no"):
-        return False
-    return default
-
 
 def _cfg_int(name: str, default: int) -> int:
     try:
@@ -113,7 +103,7 @@ class TriggerCalendarReader:
 
     def get_upcoming_events(self) -> list:
         try:
-            from prometheus.agents.calendar_read_tools import calendar_list_upcoming
+            from prometheus.calendar.read_tools import calendar_list_upcoming
             result = calendar_list_upcoming(max_results=50, days=1)
             if not result.get("ok"):
                 log_event("calendar_trigger_reader_error", {
@@ -139,7 +129,6 @@ class CalendarEventTriggerEngine:
     Polls Google Calendar and fires handlers at exact event start times.
 
     calendar_reader:  synchronous object with get_upcoming_events() -> list
-    speaker_fn:       async (text: str) -> None — used for default notifications
     rules:            CalendarRoutineRule list; matched in registration order
     state_path:       path for the fired-events dedup state file
     logger:           callable(event: str, payload: dict) — defaults to log_event
@@ -148,13 +137,11 @@ class CalendarEventTriggerEngine:
     def __init__(
         self,
         calendar_reader: Any,
-        speaker_fn: Any,
         rules: Optional[list] = None,
         state_path: Optional[Path] = None,
         logger: Any = None,
     ) -> None:
         self._calendar = calendar_reader
-        self._speaker_fn = speaker_fn
         self._rules: list[CalendarRoutineRule] = list(rules or [])
         self._state_path = state_path or _DEFAULT_STATE_PATH
         self._log = logger or log_event
@@ -238,10 +225,12 @@ class CalendarEventTriggerEngine:
         start_cmp, now_cmp = _normalize_cmp(start_dt, now)
         seconds_until = (start_cmp - now_cmp).total_seconds()
 
-        key = _event_key(getattr(event, "event_id", None), start_str)
         rule = self._match_rule(event)
-        default_grace = _cfg_int("PROMETHEUS_CALENDAR_EVENT_GRACE_SECONDS", 120)
-        grace = rule.allow_late_seconds if rule else default_grace
+        if rule is None:
+            return  # no registered routine for this event — ignore it
+
+        key = _event_key(getattr(event, "event_id", None), start_str)
+        grace = rule.allow_late_seconds
 
         # Too far in the future — don't schedule yet
         if seconds_until > lookahead_seconds:
@@ -266,7 +255,7 @@ class CalendarEventTriggerEngine:
         # Schedule it
         wait = max(0.0, seconds_until)
         self._scheduled.add(key)
-        routine_name = rule.name if rule else "default_notification"
+        routine_name = rule.name
 
         self._log("calendar_trigger_event_scheduled", {
             "title": getattr(event, "title", ""),
@@ -314,8 +303,7 @@ class CalendarEventTriggerEngine:
                     now = datetime.now()
                     start_cmp, now_cmp = _normalize_cmp(start_dt, now)
                     seconds_late = (now_cmp - start_cmp).total_seconds()
-                    default_grace = _cfg_int("PROMETHEUS_CALENDAR_EVENT_GRACE_SECONDS", 120)
-                    grace = rule.allow_late_seconds if rule else default_grace
+                    grace = rule.allow_late_seconds
                     if seconds_late > grace:
                         self._log("calendar_trigger_event_skipped", {
                             "title": getattr(event, "title", ""),
@@ -328,7 +316,7 @@ class CalendarEventTriggerEngine:
                     pass
 
             title = getattr(event, "title", "") or ""
-            routine_name = rule.name if rule else "default_notification"
+            routine_name = rule.name
             self._log("calendar_trigger_event_fired", {
                 "title": title,
                 "start": start_str,
@@ -337,10 +325,7 @@ class CalendarEventTriggerEngine:
             print(f"[CALTRIG] fired {title!r} → {routine_name}", flush=True)
 
             try:
-                if rule is not None:
-                    await rule.handler(event)
-                else:
-                    await self._default_notify(event)
+                await rule.handler(event)
             except Exception as exc:
                 self._log("calendar_trigger_handler_error", {
                     "title": title,
@@ -359,30 +344,6 @@ class CalendarEventTriggerEngine:
             })
         finally:
             self._scheduled.discard(key)
-
-    # ── Default spoken notification ───────────────────────────────────────────
-
-    async def _default_notify(self, event: Any) -> None:
-        """Speak a calendar event notification if notifications are enabled."""
-        if not _cfg_bool("PROMETHEUS_CALENDAR_EVENT_NOTIFICATIONS_ENABLED", True):
-            self._log("calendar_trigger_event_skipped", {
-                "title": getattr(event, "title", ""),
-                "reason": "disabled",
-            })
-            return
-        title = (getattr(event, "title", "") or "").strip()
-        message = f"Tate, {title} is starting now."
-        try:
-            await self._speaker_fn(message)
-            self._log("calendar_event_notification_spoken", {
-                "title": title,
-                "message": message,
-            })
-        except Exception as exc:
-            self._log("calendar_event_notification_failed", {
-                "title": title,
-                "error": str(exc)[:200],
-            })
 
     # ── Rule matching ─────────────────────────────────────────────────────────
 

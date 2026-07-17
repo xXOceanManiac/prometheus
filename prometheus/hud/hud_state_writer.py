@@ -32,9 +32,6 @@ from prometheus.infra.utils import log_event
 
 _DASHBOARD_STATE_PATH = Path.home() / "Desktop" / "PROMETHEUS" / "state" / "dashboard_state.json"
 
-# Keep the old path in sync too so the readonly dashboard can find one canonical source
-_LEGACY_PROMETHEUS_PATH = Path.home() / ".prometheus" / "hud_state.json"
-
 # ── Source paths ─────────────────────────────────────────────────────────────
 
 _VISUAL_STATE_PATH = Path.home() / ".jarvis" / "visual_state.json"
@@ -121,7 +118,7 @@ def _read_activity_lines(n: int = 6) -> list[str]:
                 try:
                     rec = json.loads(line)
                     event = str(rec.get("event", "") or rec.get("type", "")).strip()
-                    if event and not event.startswith("proactive") and not event.startswith("realtime_event"):
+                    if event and not event.startswith("realtime_event"):
                         ts = str(rec.get("ts", ""))[:16].replace("T", " ").replace("-", "/")
                         lines.append(f"{ts}  {event}")
                         if len(lines) >= n:
@@ -293,7 +290,7 @@ def _fetch_calendar_today() -> tuple[list[dict], str, str]:
     try:
         log_event("hud_state_calendar_fetch_start", {})
         print("[HUD_WRITER] hud_state_calendar_fetch_start", flush=True)
-        from prometheus.agents.calendar_read_tools import calendar_get_today
+        from prometheus.calendar.read_tools import calendar_get_today
         result = calendar_get_today()
         if not result.get("ok"):
             err = str(result.get("error", "unknown error"))
@@ -453,7 +450,6 @@ def write_dashboard_state(
 ) -> None:
     """
     Build and atomically write dashboard_state.json to the canonical path.
-    Also writes the legacy .prometheus path for backward compatibility.
     Logs on first write, state/news/calendar changes, and at most once per 60s.
     """
     try:
@@ -483,15 +479,6 @@ def write_dashboard_state(
                 "state": state["state"],
             })
 
-        # ── legacy path ───────────────────────────────────────────────────────
-        try:
-            _LEGACY_PROMETHEUS_PATH.parent.mkdir(parents=True, exist_ok=True)
-            tmp2 = _LEGACY_PROMETHEUS_PATH.with_suffix(".tmp")
-            tmp2.write_text(json.dumps(state, indent=2, ensure_ascii=False), encoding="utf-8")
-            os.replace(tmp2, _LEGACY_PROMETHEUS_PATH)
-        except Exception:
-            pass  # legacy write failure is non-fatal
-
     except Exception as exc:
         print(f"[HUD_WRITER] write_failed error={exc!r:.120}", flush=True)
         log_event("hud_state_write_failed", {"error": str(exc)[:200]})
@@ -502,13 +489,13 @@ def write_dashboard_state(
 def _fetch_news() -> tuple[list[dict], str]:
     """Fetch Guardian news. Returns (articles, status). Never raises."""
     try:
-        from prometheus.services.guardian_news import get_news
+        from prometheus.news.guardian_news import get_news
         return get_news()
     except Exception as exc:
         log_event("guardian_news_error", {"error": str(exc)[:200]})
         print(f"[HUD_WRITER] guardian_fetch_error={exc!r:.80}", flush=True)
         try:
-            from prometheus.services.guardian_news import _fallback_articles
+            from prometheus.news.guardian_news import _fallback_articles
             return _fallback_articles(), "fallback"
         except Exception:
             return [], "error"

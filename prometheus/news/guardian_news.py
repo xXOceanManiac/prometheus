@@ -9,7 +9,7 @@ Config (read from environment at call time — no module-level side effects):
   VITE_GUARDIAN_API_URL    — base URL (default: https://content.guardianapis.com/search)
 
 Usage:
-  from prometheus.services.guardian_news import get_news
+  from prometheus.news.guardian_news import get_news
   articles = get_news()          # returns list of up to 10 normalized article dicts
 """
 from __future__ import annotations

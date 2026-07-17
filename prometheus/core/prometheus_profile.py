@@ -192,10 +192,7 @@ class PrometheusProfile:
             return []
 
     def _load_daily_patterns(self) -> dict:
-        """
-        Read patterns from working_memory.json without instantiating
-        BehaviorLearningEngine (which has many dependencies).
-        """
+        """Read patterns straight from working_memory.json."""
         try:
             from prometheus.memory.memory_core import MEMORY_DIR, read_json
             wm = read_json(MEMORY_DIR / "working_memory.json", {})

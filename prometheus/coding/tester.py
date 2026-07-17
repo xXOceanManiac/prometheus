@@ -10,7 +10,7 @@ import re
 import subprocess
 from typing import Any
 
-from prometheus.agents.agent_base import BaseAgent, AgentTask, AgentResult
+from prometheus.coding.agent_base import BaseAgent, AgentTask, AgentResult
 
 
 class TesterAgent(BaseAgent):

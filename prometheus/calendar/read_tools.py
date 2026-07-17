@@ -504,7 +504,7 @@ def _main(argv: list[str] | None = None) -> None:
 
     if not args:
         print(
-            "Usage: python -m prometheus.agents.calendar_read_tools "
+            "Usage: python -m prometheus.calendar.read_tools "
             "--today | --tomorrow | --next | --free-blocks YYYY-MM-DD "
             "| --date YYYY-MM-DD | --upcoming [DAYS]"
         )

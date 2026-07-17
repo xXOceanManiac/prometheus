@@ -12,6 +12,64 @@ from prometheus.infra.utils import log_event
 from prometheus.memory.working_memory import WorkingMemory
 
 
+def load_recent_sessions(n: int = 3) -> list[dict]:
+    """
+    Load the last n session markdown files from the vault Sessions directory.
+
+    Returns list of dicts: {title, date, active_project, text (first 400 chars of body)}.
+    Returns [] if vault_path not configured or directory missing. Never raises.
+    """
+    try:
+        vault_path_str = str(CONFIG.get("vault_path", "")).strip()
+        if not vault_path_str:
+            return []
+
+        vault_path = Path(vault_path_str).expanduser()
+        sessions_root = vault_path / "vault" / "Sessions"
+        if not sessions_root.is_dir():
+            return []
+
+        year_dirs = sorted(
+            [d for d in sessions_root.iterdir() if d.is_dir() and d.name.isdigit()],
+            reverse=True,
+        )
+        if not year_dirs:
+            return []
+
+        session_files = sorted(year_dirs[0].glob("*.md"), reverse=True)[:n]
+        results: list[dict] = []
+
+        for f in session_files:
+            try:
+                text = f.read_text(encoding="utf-8", errors="ignore")
+                frontmatter: dict[str, str] = {}
+                body = text
+
+                if text.startswith("---"):
+                    end = text.find("---", 3)
+                    if end > 0:
+                        fm_text = text[3:end]
+                        body = text[end + 3:].strip()
+                        for line in fm_text.splitlines():
+                            if ":" in line:
+                                key, _, val = line.partition(":")
+                                frontmatter[key.strip().lower()] = val.strip().strip('"').strip("'")
+
+                results.append({
+                    "title": frontmatter.get("title") or f.stem,
+                    "date": frontmatter.get("date") or "",
+                    "active_project": frontmatter.get("active_project") or "",
+                    "text": body[:400].strip(),
+                })
+            except Exception:
+                continue
+
+        return results
+
+    except Exception:
+        return []
+
+
 class SessionSummarizer:
     """
     Writes a structured markdown session summary to the Obsidian vault at shutdown.

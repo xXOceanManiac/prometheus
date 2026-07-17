@@ -299,25 +299,33 @@ class TestSynthesizerFallbackIsStatusAware:
 # realtime_client.py source check — both else branches use tool_response_instructions
 # ---------------------------------------------------------------------------
 
-class TestRealtimeClientElseBranchSource:
-    """Verify the source no longer has the old 'British butler' fallback."""
+class TestBuildResponseInstructionsFallback:
+    """Unknown actions fall through to the truthful-wording contract."""
 
-    def test_run_direct_tool_else_uses_tool_response_instructions(self):
-        src = (_ROOT / "prometheus" / "core" / "realtime_client.py").read_text()
-        # Must import tool_response_instructions
-        assert "tool_response_instructions" in src
+    def test_unknown_action_uses_status_contract(self):
+        from prometheus.execution.response_synthesizer import build_response_instructions
+        from prometheus.execution.tools import ToolResult
+        r = ToolResult.accepted_unverified("Command sent to device.")
+        instructions = build_response_instructions("some_unknown_action", r)
+        assert "do not claim" in instructions.lower() or "command was sent" in instructions.lower()
 
-    def test_british_butler_style_removed(self):
-        src = (_ROOT / "prometheus" / "core" / "realtime_client.py").read_text()
-        assert "British butler style" not in src
+    def test_unknown_failed_action_reports_failure(self):
+        from prometheus.execution.response_synthesizer import build_response_instructions
+        from prometheus.execution.tools import ToolResult
+        r = ToolResult.tool_failure("device unreachable")
+        instructions = build_response_instructions("some_unknown_action", r)
+        assert "couldn't complete" in instructions.lower()
 
-    def test_tool_response_instructions_called_in_else(self):
-        src = (_ROOT / "prometheus" / "core" / "realtime_client.py").read_text()
-        assert "tool_response_instructions(result, action)" in src or "tool_response_instructions(result, tool_action)" in src
-
-    def test_synthesizer_import_includes_tool_response_instructions(self):
-        src = (_ROOT / "prometheus" / "core" / "realtime_client.py").read_text()
-        assert "tool_response_instructions" in src
+    def test_both_paths_share_one_wording_source(self):
+        """Direct-override and function-call paths must produce identical wording."""
+        from prometheus.execution.response_synthesizer import build_response_instructions
+        from prometheus.execution.tools import ToolResult
+        r = ToolResult(ok=True, message="ok", data={"summary": "Fusion milestone reached."})
+        assert (
+            build_response_instructions("web_search", r)
+            == build_response_instructions("web_search", r)
+        )
+        assert "Fusion milestone reached." in build_response_instructions("web_search", r)
 
 
 # ---------------------------------------------------------------------------

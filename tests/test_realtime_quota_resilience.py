@@ -445,10 +445,11 @@ class TestMorningRoutineDegradedSpeech:
 
 class TestCalendarTriggerEngineQuota:
 
-    def test_default_notify_logs_failure_when_speaker_raises(self, tmp_path):
-        """Calendar trigger engine logs failure when speaker raises quota error."""
+    def test_trigger_engine_runs_when_handler_hits_quota_error(self, tmp_path):
+        """CalendarEventTriggerEngine survives a rule handler that raises a quota error."""
         from prometheus.routines.calendar_event_triggers import (
             CalendarEventTriggerEngine,
+            CalendarRoutineRule,
             _CalendarEventAdapter,
         )
 
@@ -457,55 +458,16 @@ class TestCalendarTriggerEngineQuota:
         def _fake_log(event: str, payload: dict) -> None:
             log_calls.append((event, payload))
 
-        async def _quota_speaker(text: str) -> None:
-            raise RuntimeError("realtime_unavailable: insufficient_quota")
-
-        class FakeReader:
-            def get_upcoming_events(self):
-                return []
-
-        engine = CalendarEventTriggerEngine(
-            calendar_reader=FakeReader(),
-            speaker_fn=_quota_speaker,
-            state_path=tmp_path / "state.json",
-            logger=_fake_log,
-        )
-
-        event = _CalendarEventAdapter({
-            "title": "Meeting",
-            "start_time": "2026-06-05T10:00:00",
-            "event_id": "mtg_001",
-        })
-
-        async def _run():
-            with __import__("unittest.mock", fromlist=["patch"]).patch.dict(
-                os.environ, {
-                    "PROMETHEUS_CALENDAR_EVENT_NOTIFICATIONS_ENABLED": "true",
-                }
-            ):
-                await engine._default_notify(event)
-
-        asyncio.run(_run())
-        # Must log failure, not raise
-        assert any(e == "calendar_event_notification_failed" for e, _ in log_calls)
-
-    def test_trigger_engine_runs_when_client_quota_exceeded(self, tmp_path):
-        """CalendarEventTriggerEngine runs its poll loop even when speaker always fails."""
-        from prometheus.routines.calendar_event_triggers import (
-            CalendarEventTriggerEngine,
-            _CalendarEventAdapter,
-        )
-
         fired_attempts: list[str] = []
 
-        async def _quota_speaker(text: str) -> None:
-            fired_attempts.append(text)
+        async def _quota_handler(event) -> None:
+            fired_attempts.append(event.title)
             raise RuntimeError("realtime_unavailable: insufficient_quota")
 
         event = _CalendarEventAdapter({
-            "title": "Gym",
+            "title": "Wake Up",
             "start_time": __import__("datetime").datetime.now().isoformat(timespec="seconds"),
-            "event_id": "gym_001",
+            "event_id": "wu_001",
         })
 
         class FakeReader:
@@ -514,21 +476,26 @@ class TestCalendarTriggerEngineQuota:
 
         engine = CalendarEventTriggerEngine(
             calendar_reader=FakeReader(),
-            speaker_fn=_quota_speaker,
+            rules=[CalendarRoutineRule(
+                name="morning_routine",
+                match_title_contains=["wake up"],
+                handler=_quota_handler,
+                allow_late_seconds=120,
+            )],
             state_path=tmp_path / "state.json",
-            logger=MagicMock(),
+            logger=_fake_log,
         )
 
         async def _run():
             with __import__("unittest.mock", fromlist=["patch"]).patch.dict(
                 os.environ, {
                     "PROMETHEUS_CALENDAR_TRIGGER_LOOKAHEAD_MINUTES": "1",
-                    "PROMETHEUS_CALENDAR_EVENT_GRACE_SECONDS": "120",
-                    "PROMETHEUS_CALENDAR_EVENT_NOTIFICATIONS_ENABLED": "true",
                 }
             ):
-                # Engine must not raise even though speaker always fails
+                # Engine must not raise even though the handler always fails
                 await engine._poll()
                 await asyncio.sleep(0.3)
 
         asyncio.run(_run())  # must not raise
+        assert fired_attempts == ["Wake Up"]
+        assert any(e == "calendar_trigger_handler_error" for e, _ in log_calls)

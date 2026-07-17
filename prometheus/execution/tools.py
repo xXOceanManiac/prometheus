@@ -20,8 +20,7 @@ from prometheus.memory.episodic_memory import EpisodicMemory
 from prometheus.memory.semantic_memory import SemanticMemory
 from prometheus.memory.procedural_memory import ProceduralMemory
 from prometheus.memory.working_memory import WorkingMemory
-from prometheus.memory.dream_manager import DreamManager
-from prometheus.memory.behavior_learning import BehaviorLearningEngine
+from prometheus.workspace.project_resolver import ProjectResolver
 from prometheus.infra.utils import command_exists, ensure_dir, kill_existing, log_event, run_cmd
 from prometheus.execution.workspace_policy import resolve_workspace_path, ensure_workspace_root
 
@@ -284,7 +283,6 @@ ACTION_ENUM = [
     "run_routine",
     "save_routine",
     "backfill_memory",
-    "run_dream_pass",
     "run_ha_script",
     "list_windows",
     "get_active_window",
@@ -577,7 +575,7 @@ def run_diagnostics() -> dict:
 
     # git
     try:
-        from prometheus.execution.git_safety import GitSafety
+        from prometheus.coding.git_safety import GitSafety
         gs = GitSafety()
         sha = gs.last_checkpoint_sha()
         git_r = subprocess.run(
@@ -604,31 +602,6 @@ def run_diagnostics() -> dict:
         }
     except Exception:
         result["system"] = {"cpu_pct": 0.0, "ram_pct": 0.0, "disk_pct": 0.0}
-
-    # proactive_loop
-    try:
-        log_dir = Path.home() / ".jarvis" / "logs"
-        cycles = 0
-        last_fired = ""
-        if log_dir.exists():
-            import json as _json
-            files = sorted(log_dir.glob("*.jsonl"))
-            if files:
-                lines = files[-1].read_text(encoding="utf-8", errors="ignore").splitlines()
-                for raw in lines:
-                    try:
-                        rec = _json.loads(raw)
-                        if rec.get("kind") == "proactive_loop_cycle":
-                            cycles += 1
-                            last_fired = str(rec.get("ts", ""))
-                    except Exception:
-                        pass
-        result["proactive_loop"] = {
-            "last_fired_ts": last_fired,
-            "cycles_this_session": cycles,
-        }
-    except Exception as e:
-        result["proactive_loop"] = {"last_fired_ts": "", "cycles_this_session": 0, "error": str(e)[:80]}
 
     # Build spoken summary
     healthy = 0
@@ -677,8 +650,6 @@ def run_diagnostics() -> dict:
 
     healthy += 1  # git always counts
 
-    healthy += 1  # proactive loop
-
     healthy += 1  # system
 
     if critical > 0:
@@ -719,14 +690,7 @@ class ToolRegistry:
         self.semantic = SemanticMemory()
         self.procedural = ProceduralMemory()
         self.working = WorkingMemory()
-        self.dream = DreamManager()
-        self.behavior = BehaviorLearningEngine(
-            memory=self.memory,
-            semantic=self.semantic,
-            procedural=self.procedural,
-            working=self.working,
-            episodes=self.episodes,
-        )
+        self.projects = ProjectResolver(memory=self.memory, working=self.working)
         self.worker_pool: Any | None = None  # set by main.py after pool starts
         self._current_trace_id: str = ""   # updated by execute() for sub-call access
 
@@ -1502,7 +1466,7 @@ class ToolRegistry:
             for key, label in [
                 ("voice", "Voice"), ("ollama", "Ollama"), ("claude_code", "Claude Code"),
                 ("vault", "Vault"), ("background_workers", "Workers"), ("git", "Git"),
-                ("system", "System"), ("proactive_loop", "Proactive"),
+                ("system", "System"),
             ]:
                 d = data.get(key)
                 if not isinstance(d, dict):
@@ -1517,8 +1481,6 @@ class ToolRegistry:
                     val = f"active: {d.get('active_tasks', 0)}  stuck: {d.get('stuck_tasks', 0)}"
                 elif key == "git":
                     val = f"checkpoint: {d.get('last_checkpoint', '?')}  uncommitted: {d.get('uncommitted_changes', 0)}"
-                elif key == "proactive_loop":
-                    val = f"{d.get('cycles_this_session', 0)} cycles this session"
                 elif key == "voice":
                     val = "connected" if d.get("connected", True) else "disconnected"
                 elif key == "claude_code":
@@ -1628,7 +1590,7 @@ class ToolRegistry:
     def _execute_calendar_read(self, action: str, payload: dict[str, Any]) -> ToolResult:
         """Dispatch read-only calendar actions. No mutation, no writes."""
         try:
-            from prometheus.agents.calendar_read_tools import (
+            from prometheus.calendar.read_tools import (
                 calendar_list_upcoming,
                 calendar_get_today,
                 calendar_get_tomorrow,
@@ -1698,7 +1660,7 @@ class ToolRegistry:
 
     def _execute_calendar_write(self, action: str, payload: dict[str, Any]) -> ToolResult:
         try:
-            from prometheus.agents.lumen_calendar_executor import (
+            from prometheus.calendar.lumen_executor import (
                 list_reviewed_calendar_requests,
                 approve_calendar_request,
                 execute_approved_calendar_request,
@@ -1753,7 +1715,7 @@ class ToolRegistry:
 
     def _execute_calendar_create_flow(self, action: str, payload: dict[str, Any]) -> ToolResult:
         try:
-            from prometheus.agents.calendar_create_flow import (
+            from prometheus.calendar.create_flow import (
                 parse_and_propose,
                 confirm_pending_calendar_confirmation,
                 cancel_pending_calendar_confirmation,
@@ -1931,7 +1893,7 @@ class ToolRegistry:
                 or "Summarize what is visible on this screen."
             ).strip()
             project_path = self._resolve_project_path(
-                self.behavior.resolve_active_project(
+                self.projects.resolve_active_project(
                     desktop, request_text=request_text
                 ).get("project_path", "")
             )
@@ -1971,15 +1933,6 @@ class ToolRegistry:
                 f"Imported {count} historical contexts from logs.",
                 {"count": count},
             )
-        if action == "run_dream_pass":
-            result = self.dream.run_once()
-            self._episode(
-                "tool_action",
-                "Ran dream pass.",
-                tags=["memory", "dream"],
-                data={"action": action, **result},
-            )
-            return ToolResult(True, "Dream pass completed.", result)
         if action == "list_windows":
             windows = self._list_windows()
             self._episode(
@@ -3210,7 +3163,7 @@ class ToolRegistry:
 
         if action == "start_coding_task":
             try:
-                from prometheus.execution.coding_agent import start_coding_task as _start
+                from prometheus.coding.coding_agent import start_coding_task as _start
                 goal = str(payload.get("goal") or payload.get("description") or "").strip()
                 context = str(payload.get("context") or "").strip()
                 if not goal:
@@ -3228,7 +3181,7 @@ class ToolRegistry:
 
         if action == "get_coding_status":
             try:
-                from prometheus.execution.coding_agent import get_coding_status as _status
+                from prometheus.coding.coding_agent import get_coding_status as _status
                 result = _status()
                 has_result = result.get("status") != "no task running"
                 msg = (
@@ -3243,7 +3196,7 @@ class ToolRegistry:
 
         if action == "start_build":
             try:
-                from prometheus.planning.orchestrator import start_build as _start_build
+                from prometheus.coding.orchestrator import start_build as _start_build
                 goal = str(params.get("goal") or "").strip()
                 context = str(params.get("context") or "").strip()
                 if not goal:
@@ -3260,7 +3213,7 @@ class ToolRegistry:
 
         if action == "get_build_status":
             try:
-                from prometheus.planning.orchestrator import get_build_status as _build_status
+                from prometheus.coding.orchestrator import get_build_status as _build_status
                 result = _build_status()
                 has_result = result.get("status") not in ("no build running", None)
                 if not has_result:

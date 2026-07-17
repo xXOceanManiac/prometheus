@@ -13,8 +13,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from prometheus.execution.git_safety import GitSafety
-from prometheus.execution.success_criteria import SuccessCriteria, SuccessCriteriaEngine
+from prometheus.coding.git_safety import GitSafety
+from prometheus.coding.success_criteria import SuccessCriteria, SuccessCriteriaEngine
 from prometheus.infra.utils import log_event
 from prometheus.memory.working_memory import WorkingMemory
 

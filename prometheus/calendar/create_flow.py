@@ -46,13 +46,13 @@ from prometheus.infra.paths import (
 
 # Module-level reference so tests can patch it without requiring the lazy import path.
 try:
-    from prometheus.agents.lumen_calendar_executor import execute_approved_calendar_request
+    from prometheus.calendar.lumen_executor import execute_approved_calendar_request
 except Exception:
     execute_approved_calendar_request = None  # type: ignore[assignment]
 
 # Module-level reference for conflict checking; tests can patch it directly.
 try:
-    from prometheus.agents.calendar_read_tools import calendar_get_date as _calendar_get_date_fn
+    from prometheus.calendar.read_tools import calendar_get_date as _calendar_get_date_fn
 except Exception:
     _calendar_get_date_fn = None  # type: ignore[assignment]
 
@@ -395,7 +395,7 @@ def _find_availability_slot(draft: dict) -> Optional[dict]:
     day_start_hour, day_end_hour = window_hours
 
     try:
-        from prometheus.agents.calendar_read_tools import calendar_find_free_blocks
+        from prometheus.calendar.read_tools import calendar_find_free_blocks
         result = calendar_find_free_blocks(
             date_str,
             minimum_minutes=duration_minutes,
@@ -584,7 +584,7 @@ def _direct_create_calendar_event(user_request: str, draft: dict) -> dict:
     try:
         exec_fn = execute_approved_calendar_request
         if exec_fn is None:
-            from prometheus.agents.lumen_calendar_executor import execute_approved_calendar_request as _exec  # noqa: F821
+            from prometheus.calendar.lumen_executor import execute_approved_calendar_request as _exec  # noqa: F821
             exec_fn = _exec
         exec_result = exec_fn(request_id)
     except Exception as exc:
@@ -970,7 +970,7 @@ def confirm_pending_calendar_confirmation(
     try:
         exec_fn = execute_approved_calendar_request
         if exec_fn is None:
-            from prometheus.agents.lumen_calendar_executor import execute_approved_calendar_request as exec_fn  # noqa: F821
+            from prometheus.calendar.lumen_executor import execute_approved_calendar_request as exec_fn  # noqa: F821
         exec_result = exec_fn(request_id)
     except Exception as exc:
         _mark_confirmation_status(conf_id, "failed")

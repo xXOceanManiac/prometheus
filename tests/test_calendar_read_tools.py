@@ -18,7 +18,7 @@ import pytest
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from prometheus.agents.calendar_read_tools import (
+from prometheus.calendar.read_tools import (
     calendar_find_free_blocks,
     calendar_get_date,
     calendar_get_today,
@@ -91,8 +91,8 @@ _ENV_DISABLED = {"GOOGLE_CALENDAR_ENABLED": "false"}
 def _patch_service_and_events(events: list[GoogleCalendarEvent]):
     """Context manager stack for patching service build + list_calendar_events."""
     return (
-        patch("prometheus.agents.calendar_read_tools.build_google_calendar_service"),
-        patch("prometheus.agents.calendar_read_tools.list_calendar_events", return_value=events),
+        patch("prometheus.calendar.read_tools.build_google_calendar_service"),
+        patch("prometheus.calendar.read_tools.list_calendar_events", return_value=events),
         patch.dict(os.environ, _ENV_ENABLED, clear=False),
     )
 
@@ -178,7 +178,7 @@ class TestDisabledCalendar:
 
 class TestAuthFailure:
     def test_get_today_auth_failure(self):
-        with patch("prometheus.agents.calendar_read_tools.build_google_calendar_service",
+        with patch("prometheus.calendar.read_tools.build_google_calendar_service",
                    side_effect=ValueError("Token invalid")), \
              patch.dict(os.environ, _ENV_ENABLED, clear=False):
             r = calendar_get_today()
@@ -190,8 +190,8 @@ class TestAuthFailure:
 
 class TestCalendarGetToday:
     def test_correct_date_returned(self):
-        with patch("prometheus.agents.calendar_read_tools.build_google_calendar_service"), \
-             patch("prometheus.agents.calendar_read_tools.list_calendar_events", return_value=[]), \
+        with patch("prometheus.calendar.read_tools.build_google_calendar_service"), \
+             patch("prometheus.calendar.read_tools.list_calendar_events", return_value=[]), \
              patch.dict(os.environ, _ENV_ENABLED, clear=False):
             r = calendar_get_today()
             assert r["ok"] is True
@@ -199,8 +199,8 @@ class TestCalendarGetToday:
 
     def test_returns_events_list(self):
         events = [_timed_event("Standup", 9, 10), _timed_event("Lunch", 12, 13)]
-        with patch("prometheus.agents.calendar_read_tools.build_google_calendar_service"), \
-             patch("prometheus.agents.calendar_read_tools.list_calendar_events", return_value=events), \
+        with patch("prometheus.calendar.read_tools.build_google_calendar_service"), \
+             patch("prometheus.calendar.read_tools.list_calendar_events", return_value=events), \
              patch.dict(os.environ, _ENV_ENABLED, clear=False):
             r = calendar_get_today()
             assert r["count"] == 2
@@ -208,15 +208,15 @@ class TestCalendarGetToday:
 
     def test_output_is_json_serializable(self):
         events = [_timed_event("Meeting", 10, 11)]
-        with patch("prometheus.agents.calendar_read_tools.build_google_calendar_service"), \
-             patch("prometheus.agents.calendar_read_tools.list_calendar_events", return_value=events), \
+        with patch("prometheus.calendar.read_tools.build_google_calendar_service"), \
+             patch("prometheus.calendar.read_tools.list_calendar_events", return_value=events), \
              patch.dict(os.environ, _ENV_ENABLED, clear=False):
             r = calendar_get_today()
             json.dumps(r)  # must not raise
 
     def test_list_calendar_events_called_with_today_window(self):
-        with patch("prometheus.agents.calendar_read_tools.build_google_calendar_service"), \
-             patch("prometheus.agents.calendar_read_tools.list_calendar_events", return_value=[]) as mock_list, \
+        with patch("prometheus.calendar.read_tools.build_google_calendar_service"), \
+             patch("prometheus.calendar.read_tools.list_calendar_events", return_value=[]) as mock_list, \
              patch.dict(os.environ, _ENV_ENABLED, clear=False):
             calendar_get_today()
             assert mock_list.called
@@ -230,8 +230,8 @@ class TestCalendarGetToday:
 
 class TestCalendarGetTomorrow:
     def test_correct_date_returned(self):
-        with patch("prometheus.agents.calendar_read_tools.build_google_calendar_service"), \
-             patch("prometheus.agents.calendar_read_tools.list_calendar_events", return_value=[]), \
+        with patch("prometheus.calendar.read_tools.build_google_calendar_service"), \
+             patch("prometheus.calendar.read_tools.list_calendar_events", return_value=[]), \
              patch.dict(os.environ, _ENV_ENABLED, clear=False):
             r = calendar_get_tomorrow()
             expected = (date.today() + timedelta(days=1)).isoformat()
@@ -239,15 +239,15 @@ class TestCalendarGetTomorrow:
             assert r["date"] == expected
 
     def test_output_is_json_serializable(self):
-        with patch("prometheus.agents.calendar_read_tools.build_google_calendar_service"), \
-             patch("prometheus.agents.calendar_read_tools.list_calendar_events", return_value=[]), \
+        with patch("prometheus.calendar.read_tools.build_google_calendar_service"), \
+             patch("prometheus.calendar.read_tools.list_calendar_events", return_value=[]), \
              patch.dict(os.environ, _ENV_ENABLED, clear=False):
             r = calendar_get_tomorrow()
             json.dumps(r)
 
     def test_returns_empty_events_when_none(self):
-        with patch("prometheus.agents.calendar_read_tools.build_google_calendar_service"), \
-             patch("prometheus.agents.calendar_read_tools.list_calendar_events", return_value=[]), \
+        with patch("prometheus.calendar.read_tools.build_google_calendar_service"), \
+             patch("prometheus.calendar.read_tools.list_calendar_events", return_value=[]), \
              patch.dict(os.environ, _ENV_ENABLED, clear=False):
             r = calendar_get_tomorrow()
             assert r["count"] == 0
@@ -258,8 +258,8 @@ class TestCalendarGetTomorrow:
 
 class TestCalendarGetDate:
     def test_valid_date_returns_ok(self):
-        with patch("prometheus.agents.calendar_read_tools.build_google_calendar_service"), \
-             patch("prometheus.agents.calendar_read_tools.list_calendar_events", return_value=[]), \
+        with patch("prometheus.calendar.read_tools.build_google_calendar_service"), \
+             patch("prometheus.calendar.read_tools.list_calendar_events", return_value=[]), \
              patch.dict(os.environ, _ENV_ENABLED, clear=False):
             r = calendar_get_date("2026-06-15")
             assert r["ok"] is True
@@ -283,8 +283,8 @@ class TestCalendarGetDate:
         assert r["ok"] is False
 
     def test_output_is_json_serializable(self):
-        with patch("prometheus.agents.calendar_read_tools.build_google_calendar_service"), \
-             patch("prometheus.agents.calendar_read_tools.list_calendar_events", return_value=[]), \
+        with patch("prometheus.calendar.read_tools.build_google_calendar_service"), \
+             patch("prometheus.calendar.read_tools.list_calendar_events", return_value=[]), \
              patch.dict(os.environ, _ENV_ENABLED, clear=False):
             r = calendar_get_date("2026-06-15")
             json.dumps(r)
@@ -295,8 +295,8 @@ class TestCalendarGetDate:
 class TestCalendarNextEvent:
     def test_returns_first_timed_event(self):
         events = [_timed_event("Morning Meeting", 9, 10), _timed_event("Lunch", 12, 13)]
-        with patch("prometheus.agents.calendar_read_tools.build_google_calendar_service"), \
-             patch("prometheus.agents.calendar_read_tools.list_calendar_events", return_value=events), \
+        with patch("prometheus.calendar.read_tools.build_google_calendar_service"), \
+             patch("prometheus.calendar.read_tools.list_calendar_events", return_value=events), \
              patch.dict(os.environ, _ENV_ENABLED, clear=False):
             r = calendar_next_event()
             assert r["ok"] is True
@@ -308,8 +308,8 @@ class TestCalendarNextEvent:
             _all_day_event("Holiday"),
             _timed_event("Dentist", 14, 15),
         ]
-        with patch("prometheus.agents.calendar_read_tools.build_google_calendar_service"), \
-             patch("prometheus.agents.calendar_read_tools.list_calendar_events", return_value=events), \
+        with patch("prometheus.calendar.read_tools.build_google_calendar_service"), \
+             patch("prometheus.calendar.read_tools.list_calendar_events", return_value=events), \
              patch.dict(os.environ, _ENV_ENABLED, clear=False):
             r = calendar_next_event()
             assert r["has_next_timed"] is True
@@ -317,16 +317,16 @@ class TestCalendarNextEvent:
 
     def test_all_day_only_returns_no_timed(self):
         events = [_all_day_event("Holiday")]
-        with patch("prometheus.agents.calendar_read_tools.build_google_calendar_service"), \
-             patch("prometheus.agents.calendar_read_tools.list_calendar_events", return_value=events), \
+        with patch("prometheus.calendar.read_tools.build_google_calendar_service"), \
+             patch("prometheus.calendar.read_tools.list_calendar_events", return_value=events), \
              patch.dict(os.environ, _ENV_ENABLED, clear=False):
             r = calendar_next_event()
             assert r["has_next_timed"] is False
             assert r["next_timed_event"] is None
 
     def test_no_events_returns_gracefully(self):
-        with patch("prometheus.agents.calendar_read_tools.build_google_calendar_service"), \
-             patch("prometheus.agents.calendar_read_tools.list_calendar_events", return_value=[]), \
+        with patch("prometheus.calendar.read_tools.build_google_calendar_service"), \
+             patch("prometheus.calendar.read_tools.list_calendar_events", return_value=[]), \
              patch.dict(os.environ, _ENV_ENABLED, clear=False):
             r = calendar_next_event()
             assert r["ok"] is True
@@ -339,16 +339,16 @@ class TestCalendarNextEvent:
             _all_day_event("Holiday", today),
             _timed_event("Meeting", 14, 15, today),
         ]
-        with patch("prometheus.agents.calendar_read_tools.build_google_calendar_service"), \
-             patch("prometheus.agents.calendar_read_tools.list_calendar_events", return_value=events), \
+        with patch("prometheus.calendar.read_tools.build_google_calendar_service"), \
+             patch("prometheus.calendar.read_tools.list_calendar_events", return_value=events), \
              patch.dict(os.environ, _ENV_ENABLED, clear=False):
             r = calendar_next_event()
             assert any(e["title"] == "Holiday" for e in r["todays_all_day_events"])
 
     def test_output_is_json_serializable(self):
         events = [_timed_event("Meeting", 10, 11)]
-        with patch("prometheus.agents.calendar_read_tools.build_google_calendar_service"), \
-             patch("prometheus.agents.calendar_read_tools.list_calendar_events", return_value=events), \
+        with patch("prometheus.calendar.read_tools.build_google_calendar_service"), \
+             patch("prometheus.calendar.read_tools.list_calendar_events", return_value=events), \
              patch.dict(os.environ, _ENV_ENABLED, clear=False):
             r = calendar_next_event()
             json.dumps(r)
@@ -358,8 +358,8 @@ class TestCalendarNextEvent:
 
 class TestCalendarSummarizeDay:
     def _run_with_events(self, events: list, d: str | None = None) -> dict:
-        with patch("prometheus.agents.calendar_read_tools.build_google_calendar_service"), \
-             patch("prometheus.agents.calendar_read_tools.list_calendar_events", return_value=events), \
+        with patch("prometheus.calendar.read_tools.build_google_calendar_service"), \
+             patch("prometheus.calendar.read_tools.list_calendar_events", return_value=events), \
              patch.dict(os.environ, _ENV_ENABLED, clear=False):
             return calendar_summarize_day(d)
 
@@ -428,8 +428,8 @@ class TestCalendarSummarizeDay:
 class TestCalendarFindFreeBlocks:
     def _run(self, events: list, min_min: int = 60) -> dict:
         today = date.today().isoformat()
-        with patch("prometheus.agents.calendar_read_tools.build_google_calendar_service"), \
-             patch("prometheus.agents.calendar_read_tools.list_calendar_events", return_value=events), \
+        with patch("prometheus.calendar.read_tools.build_google_calendar_service"), \
+             patch("prometheus.calendar.read_tools.list_calendar_events", return_value=events), \
              patch.dict(os.environ, _ENV_ENABLED, clear=False):
             return calendar_find_free_blocks(today, minimum_minutes=min_min)
 
@@ -512,21 +512,21 @@ class TestNoWriteCalls:
     """Verify that no create/update/delete calendar API calls are made."""
 
     def test_no_create_calls(self):
-        import prometheus.agents.calendar_read_tools as _m
+        import prometheus.calendar.read_tools as _m
         import inspect
         src = inspect.getsource(_m)
         assert "create_calendar_event" not in src
         assert "service.events().insert" not in src
 
     def test_no_update_calls(self):
-        import prometheus.agents.calendar_read_tools as _m
+        import prometheus.calendar.read_tools as _m
         import inspect
         src = inspect.getsource(_m)
         assert "update_calendar_event" not in src
         assert "service.events().patch" not in src
 
     def test_no_delete_calls(self):
-        import prometheus.agents.calendar_read_tools as _m
+        import prometheus.calendar.read_tools as _m
         import inspect
         src = inspect.getsource(_m)
         assert "delete_calendar_event" not in src
@@ -537,7 +537,7 @@ class TestNoWriteCalls:
 
 class TestNoHomeAssistantCalls:
     def test_no_ha_references_in_module(self):
-        import prometheus.agents.calendar_read_tools as _m
+        import prometheus.calendar.read_tools as _m
         import inspect
         src = inspect.getsource(_m)
         assert "HOME_ASSISTANT" not in src
@@ -549,7 +549,7 @@ class TestNoHomeAssistantCalls:
 
 class TestNoSubprocess:
     def test_no_subprocess_in_module(self):
-        import prometheus.agents.calendar_read_tools as _m
+        import prometheus.calendar.read_tools as _m
         import inspect
         src = inspect.getsource(_m)
         assert "import subprocess" not in src
@@ -635,40 +635,40 @@ class TestToolRegistryDispatch:
 
     def test_calendar_get_today_dispatched(self):
         reg = self._make_registry()
-        with patch("prometheus.agents.calendar_read_tools.build_google_calendar_service"), \
-             patch("prometheus.agents.calendar_read_tools.list_calendar_events", return_value=[]), \
+        with patch("prometheus.calendar.read_tools.build_google_calendar_service"), \
+             patch("prometheus.calendar.read_tools.list_calendar_events", return_value=[]), \
              patch.dict(os.environ, _ENV_ENABLED, clear=False):
             r = reg._execute_one_inner({"action": "calendar_get_today"})
             assert r.ok is True
 
     def test_calendar_get_tomorrow_dispatched(self):
         reg = self._make_registry()
-        with patch("prometheus.agents.calendar_read_tools.build_google_calendar_service"), \
-             patch("prometheus.agents.calendar_read_tools.list_calendar_events", return_value=[]), \
+        with patch("prometheus.calendar.read_tools.build_google_calendar_service"), \
+             patch("prometheus.calendar.read_tools.list_calendar_events", return_value=[]), \
              patch.dict(os.environ, _ENV_ENABLED, clear=False):
             r = reg._execute_one_inner({"action": "calendar_get_tomorrow"})
             assert r.ok is True
 
     def test_calendar_next_event_dispatched(self):
         reg = self._make_registry()
-        with patch("prometheus.agents.calendar_read_tools.build_google_calendar_service"), \
-             patch("prometheus.agents.calendar_read_tools.list_calendar_events", return_value=[]), \
+        with patch("prometheus.calendar.read_tools.build_google_calendar_service"), \
+             patch("prometheus.calendar.read_tools.list_calendar_events", return_value=[]), \
              patch.dict(os.environ, _ENV_ENABLED, clear=False):
             r = reg._execute_one_inner({"action": "calendar_next_event"})
             assert r.ok is True
 
     def test_calendar_summarize_day_dispatched(self):
         reg = self._make_registry()
-        with patch("prometheus.agents.calendar_read_tools.build_google_calendar_service"), \
-             patch("prometheus.agents.calendar_read_tools.list_calendar_events", return_value=[]), \
+        with patch("prometheus.calendar.read_tools.build_google_calendar_service"), \
+             patch("prometheus.calendar.read_tools.list_calendar_events", return_value=[]), \
              patch.dict(os.environ, _ENV_ENABLED, clear=False):
             r = reg._execute_one_inner({"action": "calendar_summarize_day"})
             assert r.ok is True
 
     def test_calendar_find_free_blocks_dispatched(self):
         reg = self._make_registry()
-        with patch("prometheus.agents.calendar_read_tools.build_google_calendar_service"), \
-             patch("prometheus.agents.calendar_read_tools.list_calendar_events", return_value=[]), \
+        with patch("prometheus.calendar.read_tools.build_google_calendar_service"), \
+             patch("prometheus.calendar.read_tools.list_calendar_events", return_value=[]), \
              patch.dict(os.environ, _ENV_ENABLED, clear=False):
             r = reg._execute_one_inner({
                 "action": "calendar_find_free_blocks",
