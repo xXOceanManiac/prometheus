@@ -62,7 +62,8 @@ _ACTIVITY_KINDS = {
 
 
 def log_event(kind: str, payload: dict[str, Any]) -> None:
-    rec = {"ts": ts(), "kind": kind, **_json_safe(payload)}
+    # ts/kind always win — a payload key must never clobber the record identity
+    rec = {**_json_safe(payload), "ts": ts(), "kind": kind}
     line = json.dumps(rec) + "\n"
     path = LOG_DIR / f"{time.strftime('%Y-%m-%d')}.jsonl"
     with path.open("a", encoding="utf-8") as f:

@@ -66,7 +66,7 @@ class TestGateBootConfig:
 
     def test_log_event_does_not_raise(self, tmp_path):
         from prometheus.infra.utils import log_event
-        log_event("readiness_gate_test", {"gate": "boot_config", "ts": "now"})
+        log_event("readiness_gate_test", {"gate": "boot_config"})
 
 
 # ── Gate 2: Vault / Memory ────────────────────────────────────────────────────

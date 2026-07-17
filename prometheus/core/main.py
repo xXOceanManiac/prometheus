@@ -295,7 +295,7 @@ class PrometheusCore:
         calendar polling, no Realtime sessions, no speech, no device control.
         """
         if not morning_routine_enabled():
-            print("[MORNING] disabled (PROMETHEUS_MORNING_ROUTINE_ENABLED not set)", flush=True)
+            print("[MORNING] disabled (PROMETHEUS_MORNING_ROUTINE_ENABLED off)", flush=True)
             log_event("morning_routine_disabled", {})
             return
         print("[MORNING] init starting", flush=True)
