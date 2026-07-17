@@ -33,7 +33,7 @@ def build_operational_snapshot() -> dict[str, Any]:
     }
 
     try:
-        from mission_state import MissionState
+        from prometheus.context.mission_state import MissionState
         data = MissionState().get_mission()
         snapshot["mission"] = data.get("current_mission", "")
         snapshot["objective"] = data.get("active_goal", "")

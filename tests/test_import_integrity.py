@@ -22,52 +22,52 @@ sys.path.insert(0, str(ROOT))
 
 class TestRootModuleImports:
     def test_config_imports(self):
-        from config import CONFIG
+        from prometheus.infra.config import CONFIG
         assert isinstance(CONFIG, dict)
 
     def test_utils_imports(self):
-        from utils import log_event, command_exists, run_cmd
+        from prometheus.infra.utils import log_event, command_exists, run_cmd
         assert callable(log_event)
 
     def test_memory_core_imports(self):
-        from memory_core import read_json, write_json, norm_text
+        from prometheus.memory.memory_core import read_json, write_json, norm_text
         assert callable(read_json)
 
     def test_working_memory_imports(self):
-        from working_memory import WorkingMemory
+        from prometheus.memory.working_memory import WorkingMemory
         assert WorkingMemory is not None
 
     def test_mission_state_imports(self):
-        from mission_state import MissionState
+        from prometheus.context.mission_state import MissionState
         ms = MissionState()
         assert ms is not None
 
     def test_tools_imports(self):
-        from tools import ToolRegistry, ACTION_ENUM
+        from prometheus.execution.tools import ToolRegistry, ACTION_ENUM
         assert len(ACTION_ENUM) > 0
 
     def test_world_model_imports(self):
-        from world_model import build_world_snapshot
+        from prometheus.context.world_model import build_world_snapshot
         assert callable(build_world_snapshot)
 
     def test_contextual_intent_imports(self):
-        from contextual_intent import ContextualIntentResolver
+        from prometheus.context.contextual_intent import ContextualIntentResolver
         assert ContextualIntentResolver is not None
 
     def test_event_bus_imports(self):
-        from event_bus import get_bus, EventType, Event
+        from prometheus.sensors.event_bus import get_bus, EventType, Event
         assert callable(get_bus)
 
     def test_llm_router_imports(self):
-        from llm_router import chat_completion
+        from prometheus.infra.llm_router import chat_completion
         assert callable(chat_completion)
 
     def test_realtime_client_imports(self):
-        from realtime_client import RealtimePrometheusClient
+        from prometheus.core.realtime_client import RealtimePrometheusClient
         assert RealtimePrometheusClient is not None
 
     def test_workspace_policy_imports(self):
-        from workspace_policy import WORKSPACE_ROOT, resolve_workspace_path
+        from prometheus.execution.workspace_policy import WORKSPACE_ROOT, resolve_workspace_path
         assert WORKSPACE_ROOT is not None
         assert callable(resolve_workspace_path)
 
@@ -249,18 +249,18 @@ class TestPrometheusPlanning:
 
 class TestClassInitialization:
     def test_tool_registry_initializes(self):
-        from tools import ToolRegistry
+        from prometheus.execution.tools import ToolRegistry
         reg = ToolRegistry()
         assert reg is not None
 
     def test_mission_state_initializes(self):
-        from mission_state import MissionState
+        from prometheus.context.mission_state import MissionState
         ms = MissionState()
         summary = ms.summary_text()
         assert isinstance(summary, str)
 
     def test_build_world_snapshot_runs(self):
-        from world_model import build_world_snapshot
+        from prometheus.context.world_model import build_world_snapshot
         snap = build_world_snapshot()
         assert isinstance(snap, dict)
         assert "timestamp" in snap

@@ -13,8 +13,8 @@ import time
 from pathlib import Path
 from typing import Any
 
-from utils import log_event
-from working_memory import WorkingMemory
+from prometheus.infra.utils import log_event
+from prometheus.memory.working_memory import WorkingMemory
 from prometheus.policies.proactive_speech_policy import should_allow_proactive_speech
 
 
@@ -234,7 +234,7 @@ class ProactiveLoop:
         Returns parsed JSON dict or None on any failure.
         """
         try:
-            from llm_router import get_planning_llm
+            from prometheus.infra.llm_router import get_planning_llm
             import json as _json
 
             llm = get_planning_llm()

@@ -23,7 +23,7 @@ import subprocess
 from dataclasses import dataclass, field
 from typing import Any
 
-from utils import log_event
+from prometheus.infra.utils import log_event
 
 # ── Reason taxonomy ───────────────────────────────────────────────────────────
 

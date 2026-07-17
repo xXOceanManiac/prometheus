@@ -31,7 +31,7 @@ if str(_ROOT) not in sys.path:
 
 class Test1ResponseGuardBlocksDuplicate(unittest.TestCase):
     def _mk_client(self):
-        from realtime_client import RealtimePrometheusClient
+        from prometheus.core.realtime_client import RealtimePrometheusClient
         c = object.__new__(RealtimePrometheusClient)
         c._response_active = False
         c._current_trace_id = ""
@@ -67,7 +67,7 @@ class Test1ResponseGuardBlocksDuplicate(unittest.TestCase):
         self.assertEqual(len(sent), 0, "No send should occur when blocked")
 
     def test_guard_blocked_event_logged(self):
-        from config import LOG_DIR
+        from prometheus.infra.config import LOG_DIR
         c = self._mk_client()
         c._response_active = True
 
@@ -90,7 +90,7 @@ class Test1ResponseGuardBlocksDuplicate(unittest.TestCase):
 
 class Test2GuardResets(unittest.TestCase):
     def setUp(self):
-        from realtime_client import RealtimePrometheusClient
+        from prometheus.core.realtime_client import RealtimePrometheusClient
         self.client = object.__new__(RealtimePrometheusClient)
         self.client._response_active = True
 
@@ -121,13 +121,13 @@ class Test2GuardResets(unittest.TestCase):
         self.assertFalse(self.client._response_active)
 
     def test_guard_attribute_exists(self):
-        from realtime_client import RealtimePrometheusClient
+        from prometheus.core.realtime_client import RealtimePrometheusClient
         c = object.__new__(RealtimePrometheusClient)
         c._response_active = False
         self.assertFalse(c._response_active)
 
     def test_source_has_response_cancelled_handler(self):
-        src = (_ROOT / "realtime_client.py").read_text()
+        src = (_ROOT / "prometheus" / "core" / "realtime_client.py").read_text()
         self.assertIn("response.cancelled", src)
         self.assertIn("response.failed", src)
         self.assertIn("_response_active = False", src)
@@ -137,7 +137,7 @@ class Test2GuardResets(unittest.TestCase):
 
 class Test3ActivityLog(unittest.TestCase):
     def test_activity_kinds_written(self):
-        from utils import log_event, _ACTIVITY_FILE
+        from prometheus.infra.utils import log_event, _ACTIVITY_FILE
         log_event("transcript", {"transcript": "reliability patch test", "_audit": True})
         self.assertTrue(_ACTIVITY_FILE.exists(), "activity.jsonl must exist after log_event('transcript')")
         lines = _ACTIVITY_FILE.read_text(encoding="utf-8").splitlines()
@@ -146,14 +146,14 @@ class Test3ActivityLog(unittest.TestCase):
         self.assertTrue(found, "transcript event must appear in activity.jsonl")
 
     def test_non_activity_kinds_not_written(self):
-        from utils import log_event, _ACTIVITY_FILE
+        from prometheus.infra.utils import log_event, _ACTIVITY_FILE
         size_before = _ACTIVITY_FILE.stat().st_size if _ACTIVITY_FILE.exists() else 0
         log_event("some_internal_debug_event_zz99", {"data": "x"})
         size_after = _ACTIVITY_FILE.stat().st_size if _ACTIVITY_FILE.exists() else 0
         self.assertEqual(size_before, size_after, "Non-activity event must not append to activity.jsonl")
 
     def test_activity_jsonl_is_valid_jsonl(self):
-        from utils import _ACTIVITY_FILE
+        from prometheus.infra.utils import _ACTIVITY_FILE
         if not _ACTIVITY_FILE.exists():
             self.skipTest("activity.jsonl not yet written")
         for line in _ACTIVITY_FILE.read_text(encoding="utf-8").splitlines():
@@ -173,11 +173,11 @@ class Test3ActivityLog(unittest.TestCase):
 class Test4MissionStatePersists(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
-        from memory_core import MEMORY_DIR
+        from prometheus.memory.memory_core import MEMORY_DIR
         self._orig_path = None
 
     def test_set_and_reload(self):
-        from mission_state import MissionState, MISSION_FILE
+        from prometheus.context.mission_state import MissionState, MISSION_FILE
         ms1 = MissionState()
         ms1.set_mission("Build reliability patch for Prometheus", goal="Pass all audit tests")
         ms1.add_subtask("Add response guard to realtime_client.py")
@@ -190,7 +190,7 @@ class Test4MissionStatePersists(unittest.TestCase):
         self.assertEqual(len(data["subtasks"]), 2)
 
     def test_complete_subtask(self):
-        from mission_state import MissionState
+        from prometheus.context.mission_state import MissionState
         ms = MissionState()
         ms.set_mission("Test complete_subtask")
         ms.add_subtask("Unique subtask for completion test XYZ")
@@ -203,13 +203,13 @@ class Test4MissionStatePersists(unittest.TestCase):
         self.assertIn("Unique subtask for completion test XYZ", completed_descs)
 
     def test_summary_text_no_crash(self):
-        from mission_state import MissionState
+        from prometheus.context.mission_state import MissionState
         ms = MissionState()
         summary = ms.summary_text()
         self.assertIsInstance(summary, str)
 
     def test_survives_restart(self):
-        from mission_state import MissionState
+        from prometheus.context.mission_state import MissionState
         ms1 = MissionState()
         ms1.set_mission("Persist across restart test", goal="Verify reload")
         # Simulate restart by creating a new instance (reads from disk)
@@ -222,7 +222,7 @@ class Test4MissionStatePersists(unittest.TestCase):
 
 class Test5MissionDirectOverride(unittest.TestCase):
     def _client(self):
-        from realtime_client import RealtimePrometheusClient
+        from prometheus.core.realtime_client import RealtimePrometheusClient
         return object.__new__(RealtimePrometheusClient)
 
     def test_what_are_we_working_on_overridden(self):
@@ -267,7 +267,7 @@ class Test5MissionDirectOverride(unittest.TestCase):
 
 class Test7DirectOverrides(unittest.TestCase):
     def _client(self):
-        from realtime_client import RealtimePrometheusClient
+        from prometheus.core.realtime_client import RealtimePrometheusClient
         return object.__new__(RealtimePrometheusClient)
 
     def test_tell_time_overridden(self):
@@ -326,7 +326,7 @@ class Test7DirectOverrides(unittest.TestCase):
 
 class Test8GetMissionStatusTool(unittest.TestCase):
     def test_returns_structured_result(self):
-        from tools import ToolRegistry
+        from prometheus.execution.tools import ToolRegistry
         reg = ToolRegistry()
         result = reg._execute_one_inner({"action": "get_mission_status"})
         self.assertTrue(result.ok, f"get_mission_status failed: {result.message}")
@@ -335,7 +335,7 @@ class Test8GetMissionStatusTool(unittest.TestCase):
             self.assertIn(key, result.data, f"Key '{key}' missing from get_mission_status data")
 
     def test_set_mission_tool(self):
-        from tools import ToolRegistry
+        from prometheus.execution.tools import ToolRegistry
         reg = ToolRegistry()
         result = reg._execute_one_inner({"action": "set_mission", "mission": "Reliability patch audit test"})
         self.assertTrue(result.ok, result.message)
@@ -343,14 +343,14 @@ class Test8GetMissionStatusTool(unittest.TestCase):
         self.assertIn("Reliability patch audit test", status.message)
 
     def test_add_subtask_tool(self):
-        from tools import ToolRegistry
+        from prometheus.execution.tools import ToolRegistry
         reg = ToolRegistry()
         result = reg._execute_one_inner({"action": "add_subtask", "description": "Test subtask for reliability audit"})
         self.assertTrue(result.ok, result.message)
         self.assertIn("id", result.data or {})
 
     def test_get_mission_status_in_action_enum(self):
-        from tools import ACTION_ENUM
+        from prometheus.execution.tools import ACTION_ENUM
         self.assertIn("get_mission_status", ACTION_ENUM)
         self.assertIn("set_mission", ACTION_ENUM)
         self.assertIn("add_subtask", ACTION_ENUM)

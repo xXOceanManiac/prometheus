@@ -13,7 +13,7 @@ class TestDirectIntentOverride(unittest.TestCase):
     """Known phrases must short-circuit to local tools without an LLM call."""
 
     def _get_override(self, transcript: str):
-        from realtime_client import RealtimePrometheusClient
+        from prometheus.core.realtime_client import RealtimePrometheusClient
         # Minimal instance without __init__ to avoid audio/WebSocket side effects
         client = object.__new__(RealtimePrometheusClient)
         return client._direct_intent_override(transcript)
@@ -54,7 +54,7 @@ class TestDirectIntentOverride(unittest.TestCase):
         self.assertEqual(result["payload"]["action"], "start_coding_task")
 
     def test_run_diagnostics_in_action_enum(self):
-        from tools import ACTION_ENUM
+        from prometheus.execution.tools import ACTION_ENUM
         self.assertIn("run_diagnostics", ACTION_ENUM)
 
 
@@ -62,7 +62,7 @@ class TestVoiceErrorCallback(unittest.TestCase):
     """set_voice_error_callback / notify_voice_error contract."""
 
     def test_set_and_notify(self):
-        import tools
+        import prometheus.execution.tools as tools
 
         received: list = []
         tools.set_voice_error_callback(lambda a, e: received.append((a, e)))
@@ -76,7 +76,7 @@ class TestVoiceErrorCallback(unittest.TestCase):
         self.assertIn("something went wrong", received[0][1])
 
     def test_notify_with_no_callback_is_silent(self):
-        import tools
+        import prometheus.execution.tools as tools
         tools.set_voice_error_callback(None)
         tools.notify_voice_error("action", "error")  # must not raise
 

@@ -44,19 +44,19 @@ class Test1ChatCompletionClaude(unittest.TestCase):
         def fake_log(kind, payload=None):
             logged_events.append({"kind": kind, **(payload or {})})
 
-        with patch("llm_router.os.getenv", return_value="sk-test-key"), \
-             patch("llm_router.log_event", side_effect=fake_log), \
-             patch("llm_router.CONFIG", {"ollama_model": "mistral", "ollama_url": "http://localhost:11434"}):
+        with patch("prometheus.infra.llm_router.os.getenv", return_value="sk-test-key"), \
+             patch("prometheus.infra.llm_router.log_event", side_effect=fake_log), \
+             patch("prometheus.infra.llm_router.CONFIG", {"ollama_model": "mistral", "ollama_url": "http://localhost:11434"}):
             import importlib
-            import llm_router
+            import prometheus.infra.llm_router as llm_router
             importlib.reload(llm_router)
 
             mock_client = MagicMock()
             mock_client.messages.create.return_value = mock_response
 
             with patch("anthropic.Anthropic", return_value=mock_client):
-                with patch("llm_router.os.getenv", return_value="sk-test-key"), \
-                     patch("llm_router.log_event", side_effect=fake_log):
+                with patch("prometheus.infra.llm_router.os.getenv", return_value="sk-test-key"), \
+                     patch("prometheus.infra.llm_router.log_event", side_effect=fake_log):
                     result = llm_router.chat_completion(
                         "what is the Prometheus project?", {}
                     )
@@ -79,12 +79,12 @@ class Test2ChatCompletionOllamaFallback(unittest.TestCase):
         mock_ollama_resp = {"message": {"content": "Hello from Ollama."}}
 
         import importlib
-        import llm_router
+        import prometheus.infra.llm_router as llm_router
         importlib.reload(llm_router)
 
-        with patch("llm_router.os.getenv", return_value=""):
-            with patch("llm_router.log_event", side_effect=fake_log):
-                with patch("llm_router.CONFIG", {
+        with patch("prometheus.infra.llm_router.os.getenv", return_value=""):
+            with patch("prometheus.infra.llm_router.log_event", side_effect=fake_log):
+                with patch("prometheus.infra.llm_router.CONFIG", {
                     "ollama_url": "http://localhost:11434",
                     "ollama_model": "mistral",
                 }):
@@ -109,7 +109,7 @@ class Test2ChatCompletionOllamaFallback(unittest.TestCase):
 
 class Test3ToolActionFormattedText(unittest.TestCase):
     def test_git_status_chat_format(self):
-        from tools import ToolRegistry, ToolResult
+        from prometheus.execution.tools import ToolRegistry, ToolResult
 
         registry = ToolRegistry()
 
@@ -133,7 +133,7 @@ class Test3ToolActionFormattedText(unittest.TestCase):
 class Test4ConversationalRoutesToLLM(unittest.TestCase):
     def test_conversational_uses_text_model(self):
         import importlib
-        import llm_router
+        import prometheus.infra.llm_router as llm_router
         importlib.reload(llm_router)
 
         chat_completion_calls = []
@@ -143,20 +143,20 @@ class Test4ConversationalRoutesToLLM(unittest.TestCase):
             return "I am Prometheus, your desktop assistant."
 
         # Simulate one polling cycle directly (without full async client setup)
-        from working_memory import WorkingMemory
+        from prometheus.memory.working_memory import WorkingMemory
         wm = WorkingMemory()
 
         ts = _now()
         wm.write({"chat_input": {"text": "what are you?", "ts": ts}})
 
         # Manually invoke the routing logic that _chat_polling_loop uses
-        from realtime_client import RealtimePrometheusClient
+        from prometheus.core.realtime_client import RealtimePrometheusClient
 
         mock_speaker = MagicMock()
         mock_tools = MagicMock()
         mock_tools.schemas.return_value = []
 
-        with patch("realtime_client.CONFIG", {
+        with patch("prometheus.core.realtime_client.CONFIG", {
             "openai_api_key": "sk-test",
             "realtime_model": "gpt-realtime",
             "voice": "alloy",
@@ -168,7 +168,7 @@ class Test4ConversationalRoutesToLLM(unittest.TestCase):
         self.assertIsNone(override, "Conversational phrase must not match tool override")
 
         # Simulate the LLM branch writing the response
-        with patch("llm_router.chat_completion", side_effect=fake_completion):
+        with patch("prometheus.infra.llm_router.chat_completion", side_effect=fake_completion):
             resp = fake_completion("what are you?", {}, [])
             resp_ts = _now()
             wm.write({
@@ -185,7 +185,7 @@ class Test4ConversationalRoutesToLLM(unittest.TestCase):
 
 class Test5ChatHistoryAccumulates(unittest.TestCase):
     def test_history_grows_correctly(self):
-        from working_memory import WorkingMemory
+        from prometheus.memory.working_memory import WorkingMemory
         wm = WorkingMemory()
 
         # Clear any existing chat history

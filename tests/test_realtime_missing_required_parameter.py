@@ -27,19 +27,19 @@ if str(_ROOT) not in sys.path:
 
 def _make_client():
     """Build a RealtimePrometheusClient with all external deps stubbed."""
-    from realtime_client import RealtimePrometheusClient
+    from prometheus.core.realtime_client import RealtimePrometheusClient
 
     speaker = MagicMock()
     speaker.finish_realtime = MagicMock()
     tools = MagicMock()
 
     with (
-        patch("realtime_client.CONFIG", {
+        patch("prometheus.core.realtime_client.CONFIG", {
             "openai_api_key": "sk-test",
             "realtime_model": "gpt-4o-realtime-preview",
             "voice": "alloy",
         }),
-        patch("tools.set_voice_error_callback"),
+        patch("prometheus.execution.tools.set_voice_error_callback"),
     ):
         client = RealtimePrometheusClient(speaker=speaker, tools=tools)
 
@@ -75,7 +75,7 @@ class TestConnectSessionUpdateIncludesType:
 
                 # Call only the part that builds and sends the session.update,
                 # exercising the exact payload construction path inside connect().
-                from realtime_client import RealtimePrometheusClient
+                from prometheus.core.realtime_client import RealtimePrometheusClient
                 import json as _json
 
                 instructions = client._build_instructions()

@@ -15,8 +15,8 @@ from collections import deque
 from pathlib import Path
 from typing import Any
 
-from event_bus import Event, EventType, Priority, get_bus
-from utils import log_event
+from prometheus.sensors.event_bus import Event, EventType, Priority, get_bus
+from prometheus.infra.utils import log_event
 
 _DEBOUNCE_SECS = 3.0
 _MAX_CACHE = 20

@@ -26,7 +26,7 @@ _ROOT = Path(__file__).resolve().parent.parent
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
-import realtime_client as rc
+import prometheus.core.realtime_client as rc
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -122,7 +122,7 @@ class TestEndAudioInsufficientAudio:
 
         async def run():
             with (
-                patch("realtime_client.log_event", side_effect=lambda k, d=None: logged.append((k, d or {}))),
+                patch("prometheus.core.realtime_client.log_event", side_effect=lambda k, d=None: logged.append((k, d or {}))),
                 patch.object(client, "_transcribe_ptt", new_callable=AsyncMock) as mock_stt,
             ):
                 await client.end_audio()
@@ -141,7 +141,7 @@ class TestEndAudioInsufficientAudio:
 
         async def run():
             with (
-                patch("realtime_client.log_event"),
+                patch("prometheus.core.realtime_client.log_event"),
                 patch.object(client, "_transcribe_ptt", new_callable=AsyncMock),
             ):
                 await client.end_audio()
@@ -169,7 +169,7 @@ class TestEndAudioSufficientAudio:
             stt_calls.append((pcm, trace_id))
 
         async def run():
-            with patch("realtime_client.log_event"):
+            with patch("prometheus.core.realtime_client.log_event"):
                 client._transcribe_ptt = fake_transcribe
                 await client.end_audio()
                 await asyncio.sleep(0)
@@ -192,7 +192,7 @@ class TestEndAudioSufficientAudio:
 
         async def run():
             with (
-                patch("realtime_client.log_event"),
+                patch("prometheus.core.realtime_client.log_event"),
                 patch.object(client, "send", side_effect=lambda d: sent_payloads.append(d)),
                 patch.object(client, "_transcribe_ptt", new_callable=AsyncMock),
             ):
@@ -215,7 +215,7 @@ class TestTranscribePTTLogs:
 
         async def run():
             with (
-                patch("realtime_client.log_event", side_effect=lambda k, d=None: logged.append((k, d or {}))),
+                patch("prometheus.core.realtime_client.log_event", side_effect=lambda k, d=None: logged.append((k, d or {}))),
                 patch("httpx.AsyncClient", return_value=ctx),
                 patch.object(client, "_handle_ptt_transcript", new_callable=AsyncMock),
             ):
@@ -234,7 +234,7 @@ class TestTranscribePTTLogs:
 
         async def run():
             with (
-                patch("realtime_client.log_event", side_effect=lambda k, d=None: logged.append((k, d or {}))),
+                patch("prometheus.core.realtime_client.log_event", side_effect=lambda k, d=None: logged.append((k, d or {}))),
                 patch("httpx.AsyncClient", return_value=ctx),
                 patch.object(client, "_handle_ptt_transcript", new_callable=AsyncMock),
             ):
@@ -254,7 +254,7 @@ class TestTranscribePTTLogs:
 
         async def run():
             with (
-                patch("realtime_client.log_event", side_effect=lambda k, d=None: logged.append((k, d or {}))),
+                patch("prometheus.core.realtime_client.log_event", side_effect=lambda k, d=None: logged.append((k, d or {}))),
                 patch("httpx.AsyncClient", side_effect=[ctx1, ctx2]),
             ):
                 await client._transcribe_ptt(b"\x00" * 4000, "trace-003")
@@ -276,7 +276,7 @@ class TestTranscribePTTLogs:
 
         async def run():
             with (
-                patch("realtime_client.log_event"),
+                patch("prometheus.core.realtime_client.log_event"),
                 patch("httpx.AsyncClient", return_value=ctx),
             ):
                 client._handle_ptt_transcript = fake_handle
@@ -299,7 +299,7 @@ class TestTranscribePTTLogs:
 
         async def run():
             with (
-                patch("realtime_client.log_event", side_effect=lambda k, d=None: logged.append((k, d or {}))),
+                patch("prometheus.core.realtime_client.log_event", side_effect=lambda k, d=None: logged.append((k, d or {}))),
                 patch("httpx.AsyncClient", return_value=ctx),
             ):
                 client._handle_ptt_transcript = crashing_handle
@@ -323,8 +323,8 @@ class TestHandlePTTTranscriptRouting:
 
         async def run():
             with (
-                patch("realtime_client.log_event", side_effect=lambda k, d=None: logged.append((k, d or {}))),
-                patch("realtime_client.notify"),
+                patch("prometheus.core.realtime_client.log_event", side_effect=lambda k, d=None: logged.append((k, d or {}))),
+                patch("prometheus.core.realtime_client.notify"),
                 patch.object(client, "_contextual_override", new_callable=AsyncMock, return_value=False),
             ):
                 client.connected = False
@@ -341,8 +341,8 @@ class TestHandlePTTTranscriptRouting:
 
         async def run():
             with (
-                patch("realtime_client.log_event", side_effect=lambda k, d=None: logged.append((k, d or {}))),
-                patch("realtime_client.notify"),
+                patch("prometheus.core.realtime_client.log_event", side_effect=lambda k, d=None: logged.append((k, d or {}))),
+                patch("prometheus.core.realtime_client.notify"),
                 patch.object(client, "_contextual_override", new_callable=AsyncMock, return_value=False),
             ):
                 client.connected = False
@@ -369,8 +369,8 @@ class TestHandlePTTTranscriptRouting:
 
         async def run():
             with (
-                patch("realtime_client.log_event", side_effect=lambda k, d=None: logged.append((k, d or {}))),
-                patch("realtime_client.notify"),
+                patch("prometheus.core.realtime_client.log_event", side_effect=lambda k, d=None: logged.append((k, d or {}))),
+                patch("prometheus.core.realtime_client.notify"),
                 patch.object(client, "_run_direct_tool", side_effect=fake_run_direct),
                 patch.object(client, "_contextual_override", new_callable=AsyncMock, return_value=False),
             ):
@@ -404,8 +404,8 @@ class TestHandlePTTTranscriptRouting:
 
         async def run():
             with (
-                patch("realtime_client.log_event"),
-                patch("realtime_client.notify"),
+                patch("prometheus.core.realtime_client.log_event"),
+                patch("prometheus.core.realtime_client.notify"),
                 patch.object(client, "_run_direct_tool", side_effect=fake_run_direct),
                 patch.object(client, "_contextual_override", new_callable=AsyncMock, return_value=False),
             ):
@@ -425,8 +425,8 @@ class TestHandlePTTTranscriptRouting:
 
         async def run():
             with (
-                patch("realtime_client.log_event", side_effect=lambda k, d=None: logged.append((k, d or {}))),
-                patch("realtime_client.notify"),
+                patch("prometheus.core.realtime_client.log_event", side_effect=lambda k, d=None: logged.append((k, d or {}))),
+                patch("prometheus.core.realtime_client.notify"),
                 patch.object(client, "_run_direct_tool", side_effect=fake_run_direct),
                 patch.object(client, "_contextual_override", new_callable=AsyncMock, return_value=False),
             ):
@@ -445,8 +445,8 @@ class TestHandlePTTTranscriptRouting:
 
         async def run():
             with (
-                patch("realtime_client.log_event", side_effect=lambda k, d=None: logged.append((k, d or {}))),
-                patch("realtime_client.notify"),
+                patch("prometheus.core.realtime_client.log_event", side_effect=lambda k, d=None: logged.append((k, d or {}))),
+                patch("prometheus.core.realtime_client.notify"),
                 patch.object(client, "_contextual_override", new_callable=AsyncMock, return_value=False),
             ):
                 client.connected = False
@@ -468,8 +468,8 @@ class TestHandlePTTTranscriptRouting:
 
         async def run():
             with (
-                patch("realtime_client.log_event"),
-                patch("realtime_client.notify"),
+                patch("prometheus.core.realtime_client.log_event"),
+                patch("prometheus.core.realtime_client.notify"),
                 patch.object(client, "send", side_effect=fake_send),
                 patch.object(client, "_run_direct_tool", side_effect=fake_run_direct),
                 patch.object(client, "_contextual_override", new_callable=AsyncMock, return_value=False),
@@ -494,7 +494,7 @@ class TestNoRealtimeCommitInPTTMode:
         async def run():
             client.awaiting_user_audio = True
             with (
-                patch("realtime_client.log_event"),
+                patch("prometheus.core.realtime_client.log_event"),
                 patch.object(client, "send", side_effect=lambda d: sent_payloads.append(d)),
                 patch.object(client, "_transcribe_ptt", new_callable=AsyncMock),
             ):
@@ -515,7 +515,7 @@ class TestNoRealtimeCommitInPTTMode:
 
 
 class TestTraceDebugCLI:
-    _TOOL_PATH = _ROOT / "tools" / "prometheus_trace_debug.py"
+    _TOOL_PATH = _ROOT / "scripts" / "prometheus_trace_debug.py"
 
     def _load_module(self):
         import importlib.util

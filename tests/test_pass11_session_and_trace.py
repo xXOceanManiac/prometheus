@@ -36,7 +36,7 @@ if str(_ROOT) not in sys.path:
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _make_client():
-    import realtime_client as rc
+    import prometheus.core.realtime_client as rc
     speaker = MagicMock()
     speaker.finish_realtime = MagicMock()
     client = rc.RealtimePrometheusClient(speaker=speaker, tools=MagicMock())
@@ -61,8 +61,8 @@ def _run_connect_capture(client, logged: list | None = None) -> list[dict]:
         with (
             patch("websockets.connect", new_callable=AsyncMock) as mock_conn,
             patch("asyncio.create_task"),
-            patch("realtime_client.log_event", side_effect=log_fn),
-            patch("realtime_client.notify"),
+            patch("prometheus.core.realtime_client.log_event", side_effect=log_fn),
+            patch("prometheus.core.realtime_client.notify"),
         ):
             mock_conn.return_value = fake_ws
             client._receiver_task = None
@@ -140,7 +140,7 @@ class TestPayloadAuditBlocksTurnDetection:
     def test_connect_source_has_structural_guard(self):
         """connect() must contain a check that blocks turn_detection and
         input_audio_transcription before sending the session.update."""
-        import realtime_client as rc
+        import prometheus.core.realtime_client as rc
         src = inspect.getsource(rc.RealtimePrometheusClient.connect)
         assert "not_supported_by_live_endpoint" in src, (
             "connect() must block unsupported keys with reason 'not_supported_by_live_endpoint'"
@@ -166,8 +166,8 @@ class TestPayloadAuditBlocksTurnDetection:
             with (
                 patch("websockets.connect", new_callable=AsyncMock) as mock_conn,
                 patch("asyncio.create_task"),
-                patch("realtime_client.log_event") as mock_log,
-                patch("realtime_client.notify"),
+                patch("prometheus.core.realtime_client.log_event") as mock_log,
+                patch("prometheus.core.realtime_client.notify"),
             ):
                 mock_conn.return_value = fake_ws
                 client._receiver_task = None
@@ -281,7 +281,7 @@ class TestStaleTraceClearedOnConnect:
 
         # connect() should exit early because api_key is set but we still check
         # the _current_trace_id is NOT cleared when awaiting_user_audio is True
-        import realtime_client as rc
+        import prometheus.core.realtime_client as rc
         src = inspect.getsource(rc.RealtimePrometheusClient.connect)
         # The guard must check awaiting_user_audio before clearing
         assert "awaiting_user_audio" in src, (
@@ -338,7 +338,7 @@ class TestTraceDebugFiltering:
 
     def _get_filter_fn(self):
         """Import _is_real_trace from the tool."""
-        spec_path = str(_ROOT / "tools" / "prometheus_trace_debug.py")
+        spec_path = str(_ROOT / "scripts" / "prometheus_trace_debug.py")
         import importlib.util
         spec = importlib.util.spec_from_file_location("prometheus_trace_debug", spec_path)
         mod = importlib.util.module_from_spec(spec)
@@ -363,21 +363,21 @@ class TestTraceDebugFiltering:
         assert fn("20260608-142631-9sjb") is True, "real trace must pass filter"
 
     def test_trace_debug_script_exists(self):
-        script = _ROOT / "tools" / "prometheus_trace_debug.py"
+        script = _ROOT / "scripts" / "prometheus_trace_debug.py"
         assert script.exists(), "tools/prometheus_trace_debug.py must exist"
 
     def test_trace_debug_supports_last_flag(self):
-        script = _ROOT / "tools" / "prometheus_trace_debug.py"
+        script = _ROOT / "scripts" / "prometheus_trace_debug.py"
         src = script.read_text()
         assert "--last" in src, "prometheus_trace_debug.py must support --last flag"
 
     def test_trace_debug_supports_trace_id_flag(self):
-        script = _ROOT / "tools" / "prometheus_trace_debug.py"
+        script = _ROOT / "scripts" / "prometheus_trace_debug.py"
         src = script.read_text()
         assert "--trace-id" in src, "prometheus_trace_debug.py must support --trace-id flag"
 
     def test_trace_debug_reads_daily_log(self):
-        script = _ROOT / "tools" / "prometheus_trace_debug.py"
+        script = _ROOT / "scripts" / "prometheus_trace_debug.py"
         src = script.read_text()
         assert ".jarvis/logs" in src, "trace_debug must read from ~/.jarvis/logs/"
         assert "kind" in src, "trace_debug must use 'kind' field (not 'event')"
@@ -391,7 +391,7 @@ class TestSimulatedPTTTellTime:
     def test_what_time_is_it_routes_to_tell_time(self, monkeypatch):
         """Pass 12: end_audio triggers standalone STT; _handle_ptt_transcript routes to tell_time.
         Realtime buffer commit is never called."""
-        import realtime_client as rc
+        import prometheus.core.realtime_client as rc
 
         client = _make_client()
         client.awaiting_user_audio = True
@@ -404,8 +404,8 @@ class TestSimulatedPTTTellTime:
         client._override_handled = False
 
         logged = []
-        monkeypatch.setattr("realtime_client.log_event", lambda k, p: logged.append((k, p)))
-        monkeypatch.setattr("realtime_client.notify", lambda *a: None)
+        monkeypatch.setattr("prometheus.core.realtime_client.log_event", lambda k, p: logged.append((k, p)))
+        monkeypatch.setattr("prometheus.core.realtime_client.notify", lambda *a: None)
 
         # Phase 1: end_audio — must trigger STT task, not Realtime commit
         sent = []

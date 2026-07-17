@@ -24,7 +24,7 @@ from prometheus.infra.paths import (
     WORKSPACE_ROOT,
     LOGS_DIR,
 )
-from workspace_policy import resolve_workspace_path, ensure_workspace_root
+from prometheus.execution.workspace_policy import resolve_workspace_path, ensure_workspace_root
 
 
 # ── Path constant structure tests ─────────────────────────────────────────────
@@ -107,7 +107,7 @@ class TestResolveWorkspacePath:
 
 class TestEnsureWorkspaceRoot:
     def test_creates_workspace_if_missing(self, tmp_path, monkeypatch):
-        import workspace_policy as wp
+        import prometheus.execution.workspace_policy as wp
         fake_root = tmp_path / "workspace"
         monkeypatch.setattr(wp, "WORKSPACE_ROOT", fake_root)
         result = ensure_workspace_root()
@@ -115,7 +115,7 @@ class TestEnsureWorkspaceRoot:
         assert fake_root.is_dir()
 
     def test_idempotent_when_already_exists(self, tmp_path, monkeypatch):
-        import workspace_policy as wp
+        import prometheus.execution.workspace_policy as wp
         fake_root = tmp_path / "workspace"
         fake_root.mkdir()
         monkeypatch.setattr(wp, "WORKSPACE_ROOT", fake_root)
@@ -130,11 +130,11 @@ class TestWriteFileTool:
 
     @pytest.fixture
     def registry(self):
-        from tools import ToolRegistry
+        from prometheus.execution.tools import ToolRegistry
         return ToolRegistry()
 
     def test_relative_write_lands_in_workspace(self, registry, tmp_path, monkeypatch):
-        import workspace_policy as wp
+        import prometheus.execution.workspace_policy as wp
         fake_root = tmp_path / "workspace"
         monkeypatch.setattr(wp, "WORKSPACE_ROOT", fake_root)
 
@@ -149,7 +149,7 @@ class TestWriteFileTool:
         assert written.read_text() == "hello world"
 
     def test_absolute_inside_workspace_succeeds(self, registry, tmp_path, monkeypatch):
-        import workspace_policy as wp
+        import prometheus.execution.workspace_policy as wp
         fake_root = tmp_path / "workspace"
         fake_root.mkdir(parents=True)
         monkeypatch.setattr(wp, "WORKSPACE_ROOT", fake_root)
@@ -163,7 +163,7 @@ class TestWriteFileTool:
         assert result.ok, result.message
 
     def test_absolute_outside_workspace_blocked(self, registry, tmp_path, monkeypatch):
-        import workspace_policy as wp
+        import prometheus.execution.workspace_policy as wp
         fake_root = tmp_path / "workspace"
         monkeypatch.setattr(wp, "WORKSPACE_ROOT", fake_root)
 
@@ -176,7 +176,7 @@ class TestWriteFileTool:
         assert "blocked" in result.message.lower() or "outside" in result.message.lower()
 
     def test_cannot_write_to_jarvis_dir(self, registry, tmp_path, monkeypatch):
-        import workspace_policy as wp
+        import prometheus.execution.workspace_policy as wp
         fake_root = tmp_path / "workspace"
         monkeypatch.setattr(wp, "WORKSPACE_ROOT", fake_root)
 
@@ -189,7 +189,7 @@ class TestWriteFileTool:
         assert not result.ok
 
     def test_path_traversal_blocked(self, registry, tmp_path, monkeypatch):
-        import workspace_policy as wp
+        import prometheus.execution.workspace_policy as wp
         fake_root = tmp_path / "workspace"
         monkeypatch.setattr(wp, "WORKSPACE_ROOT", fake_root)
 
@@ -209,7 +209,7 @@ class TestWriteFileTool:
         assert not result.ok
 
     def test_workspace_root_created_if_missing(self, registry, tmp_path, monkeypatch):
-        import workspace_policy as wp
+        import prometheus.execution.workspace_policy as wp
         fake_root = tmp_path / "new_workspace"
         assert not fake_root.exists()
         monkeypatch.setattr(wp, "WORKSPACE_ROOT", fake_root)

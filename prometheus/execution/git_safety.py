@@ -11,10 +11,10 @@ import subprocess
 import time
 from pathlib import Path
 
-from utils import log_event
+from prometheus.infra.utils import log_event
 
-# Root of the repo — git_safety.py lives at the project root
-_REPO_ROOT = Path(__file__).resolve().parent
+# Root of the Prometheus repo (parent of the prometheus package)
+_REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 def _git(*args: str, cwd: Path = _REPO_ROOT) -> subprocess.CompletedProcess:

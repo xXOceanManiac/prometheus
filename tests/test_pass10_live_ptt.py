@@ -28,7 +28,7 @@ if str(_ROOT) not in sys.path:
 # ── helpers ───────────────────────────────────────────────────────────────────
 
 def _make_client():
-    import realtime_client as rc
+    import prometheus.core.realtime_client as rc
     speaker = MagicMock()
     speaker.finish_realtime = MagicMock()
     client = rc.RealtimePrometheusClient(speaker=speaker, tools=MagicMock())
@@ -65,7 +65,7 @@ class TestInterruptClearsResponseActive:
         client._response_active = True
 
         logged = []
-        monkeypatch.setattr("realtime_client.log_event", lambda k, p: logged.append((k, p)))
+        monkeypatch.setattr("prometheus.core.realtime_client.log_event", lambda k, p: logged.append((k, p)))
         sent = []
         client.send = _fake_send_factory(sent)
 
@@ -125,7 +125,7 @@ class TestDrainWindowOnZeroBytes:
         client._response_active = False
 
         logged = []
-        monkeypatch.setattr("realtime_client.log_event", lambda k, p: logged.append((k, p)))
+        monkeypatch.setattr("prometheus.core.realtime_client.log_event", lambda k, p: logged.append((k, p)))
 
         async def fake_send(d): pass
         client.send = fake_send
@@ -143,7 +143,7 @@ class TestDrainWindowOnZeroBytes:
         client._response_active = False
 
         logged = []
-        monkeypatch.setattr("realtime_client.log_event", lambda k, p: logged.append((k, p)))
+        monkeypatch.setattr("prometheus.core.realtime_client.log_event", lambda k, p: logged.append((k, p)))
 
         async def fake_send(d): pass
         client.send = fake_send
@@ -167,7 +167,7 @@ class TestDrainWindowOnZeroBytes:
 
         sent = []
         logged = []
-        monkeypatch.setattr("realtime_client.log_event", lambda k, p: logged.append((k, p)))
+        monkeypatch.setattr("prometheus.core.realtime_client.log_event", lambda k, p: logged.append((k, p)))
         client.send = _fake_send_factory(sent)
 
         import numpy as np
@@ -204,7 +204,7 @@ class TestDrainWindowOnZeroBytes:
 
         sent = []
         logged = []
-        monkeypatch.setattr("realtime_client.log_event", lambda k, p: logged.append((k, p)))
+        monkeypatch.setattr("prometheus.core.realtime_client.log_event", lambda k, p: logged.append((k, p)))
         client.send = _fake_send_factory(sent)
 
         with patch.object(client, "_transcribe_ptt", new_callable=AsyncMock):
@@ -225,7 +225,7 @@ class TestPerTurnCounterReset:
     def test_counters_reset_on_begin_user_turn(self, monkeypatch):
         client = _make_client()
 
-        monkeypatch.setattr("realtime_client.log_event", lambda *a: None)
+        monkeypatch.setattr("prometheus.core.realtime_client.log_event", lambda *a: None)
 
         async def fake_send(d): pass
         client.send = fake_send
@@ -247,7 +247,7 @@ class TestPerTurnCounterReset:
         client = _make_client()
         logged_ids = []
         monkeypatch.setattr(
-            "realtime_client.log_event",
+            "prometheus.core.realtime_client.log_event",
             lambda k, p: logged_ids.append(p.get("trace_id")) if k == "user_turn_started" else None
         )
 
@@ -268,7 +268,7 @@ class TestPerTurnCounterReset:
         client._audio_bytes_since_commit = 0
         client._current_trace_id = "20260608-120000-cnt-xx06"
 
-        monkeypatch.setattr("realtime_client.log_event", lambda *a: None)
+        monkeypatch.setattr("prometheus.core.realtime_client.log_event", lambda *a: None)
 
         sent = []
         client.send = _fake_send_factory(sent)
@@ -291,7 +291,7 @@ class TestPerTurnCounterReset:
         client._audio_bytes_since_commit = 0
         client._current_trace_id = "20260608-120000-ts-xx07"
 
-        monkeypatch.setattr("realtime_client.log_event", lambda *a: None)
+        monkeypatch.setattr("prometheus.core.realtime_client.log_event", lambda *a: None)
         client.send = _fake_send_factory([])
 
         chunk = np.zeros(1280, dtype=np.int16).tobytes()
@@ -309,8 +309,8 @@ class TestCommitTurnOwnership:
 
     def test_commit_turn_sets_user_turn_active_false_after_end_audio(self):
         """After the fix: user_turn_active is True during end_audio(), False after."""
-        import realtime_client as rc
-        import main as m
+        import prometheus.core.realtime_client as rc
+        import prometheus.core.main as m
 
         # We can't easily instantiate JarvisV4 without a full environment, so
         # we verify the fix at the source-code level by reading the behavior:
@@ -342,7 +342,7 @@ class TestCommitTurnOwnership:
         client._current_trace_id = "20260608-120000-commit-xx09"
         client._response_active = False
 
-        monkeypatch.setattr("realtime_client.log_event", lambda *a: None)
+        monkeypatch.setattr("prometheus.core.realtime_client.log_event", lambda *a: None)
         sent = []
         client.send = _fake_send_factory(sent)
 
@@ -364,7 +364,7 @@ class TestObservabilityLogs:
     def test_begin_user_turn_logs_ptt_audio_capture_started(self, monkeypatch):
         client = _make_client()
         logged = []
-        monkeypatch.setattr("realtime_client.log_event", lambda k, p: logged.append((k, p)))
+        monkeypatch.setattr("prometheus.core.realtime_client.log_event", lambda k, p: logged.append((k, p)))
 
         async def fake_send(d): pass
         client.send = fake_send
@@ -383,7 +383,7 @@ class TestObservabilityLogs:
         client._response_active = False
 
         logged = []
-        monkeypatch.setattr("realtime_client.log_event", lambda k, p: logged.append((k, p)))
+        monkeypatch.setattr("prometheus.core.realtime_client.log_event", lambda k, p: logged.append((k, p)))
         client.send = _fake_send_factory([])
 
         asyncio.run(client.end_audio())
@@ -403,7 +403,7 @@ class TestObservabilityLogs:
         client._response_active = False
 
         logged = []
-        monkeypatch.setattr("realtime_client.log_event", lambda k, p: logged.append((k, p)))
+        monkeypatch.setattr("prometheus.core.realtime_client.log_event", lambda k, p: logged.append((k, p)))
         client.send = _fake_send_factory([])
 
         asyncio.run(client.end_audio())
@@ -424,7 +424,7 @@ class TestObservabilityLogs:
         client._current_trace_id = "20260608-120000-obs-xx12"
 
         logged = []
-        monkeypatch.setattr("realtime_client.log_event", lambda k, p: logged.append((k, p)))
+        monkeypatch.setattr("prometheus.core.realtime_client.log_event", lambda k, p: logged.append((k, p)))
         client.send = _fake_send_factory([])
 
         chunk = np.zeros(1280, dtype=np.int16).tobytes()
@@ -453,7 +453,7 @@ class TestSessionConfigUnchanged:
         The GA Realtime API rejects it as unknown_parameter."""
         import asyncio
         import json
-        import realtime_client as rc
+        import prometheus.core.realtime_client as rc
         from unittest.mock import AsyncMock, MagicMock, patch
 
         client = rc.RealtimePrometheusClient(speaker=MagicMock(), tools=MagicMock())
@@ -469,8 +469,8 @@ class TestSessionConfigUnchanged:
         async def _run():
             with patch("websockets.connect", new_callable=AsyncMock) as mock_conn, \
                  patch("asyncio.create_task"), \
-                 patch("realtime_client.log_event"), \
-                 patch("realtime_client.notify"):
+                 patch("prometheus.core.realtime_client.log_event"), \
+                 patch("prometheus.core.realtime_client.notify"):
                 mock_conn.return_value = fake_ws
                 await client.connect()
 
@@ -492,7 +492,7 @@ class TestSessionConfigUnchanged:
         """connect() session.update must include instructions (always required)."""
         import asyncio
         import json
-        import realtime_client as rc
+        import prometheus.core.realtime_client as rc
         from unittest.mock import AsyncMock, MagicMock, patch
 
         client = rc.RealtimePrometheusClient(speaker=MagicMock(), tools=MagicMock())
@@ -508,8 +508,8 @@ class TestSessionConfigUnchanged:
         async def _run():
             with patch("websockets.connect", new_callable=AsyncMock) as mock_conn, \
                  patch("asyncio.create_task"), \
-                 patch("realtime_client.log_event"), \
-                 patch("realtime_client.notify"):
+                 patch("prometheus.core.realtime_client.log_event"), \
+                 patch("prometheus.core.realtime_client.notify"):
                 mock_conn.return_value = fake_ws
                 await client.connect()
 

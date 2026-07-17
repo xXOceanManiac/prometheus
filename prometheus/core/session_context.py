@@ -22,7 +22,7 @@ def build_instructions(
     if vault_context:
         parts.append(vault_context)
     try:
-        from working_memory import WorkingMemory
+        from prometheus.memory.working_memory import WorkingMemory
         wm = WorkingMemory().read()
         wm_lines: list[str] = []
         last_req = str(wm.get("last_user_request") or "").strip()
@@ -44,7 +44,7 @@ def build_instructions(
 def build_live_state_block() -> str:
     """Build a compact live world state block for injection before each LLM response."""
     try:
-        from world_model import build_world_snapshot
+        from prometheus.context.world_model import build_world_snapshot
         snap = build_world_snapshot()
 
         # Always inject fresh local time — never rely on stale session instructions
@@ -52,7 +52,7 @@ def build_live_state_block() -> str:
         try:
             from datetime import datetime as _dt
             from zoneinfo import ZoneInfo
-            from config import CONFIG
+            from prometheus.infra.config import CONFIG
             _tz_name = str(CONFIG.get("timezone") or "America/New_York")
             try:
                 _tz = ZoneInfo(_tz_name)

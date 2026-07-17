@@ -8,7 +8,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from agent_base import BaseAgent, AgentTask, AgentResult
+from prometheus.agents.agent_base import BaseAgent, AgentTask, AgentResult
 
 
 class CoderAgent(BaseAgent):

@@ -35,7 +35,7 @@ def _make_connection_closed(code: int, reason: str):
 
 def _make_client():
     """Build a RealtimePrometheusClient with mocked speaker and tools."""
-    import realtime_client as _rc
+    import prometheus.core.realtime_client as _rc
     speaker = MagicMock()
     speaker.finish_realtime = MagicMock()
     tools = MagicMock()
@@ -49,32 +49,32 @@ def _make_client():
 class TestIsQuotaClose:
 
     def test_code_1013_is_quota(self):
-        from realtime_client import RealtimePrometheusClient
+        from prometheus.core.realtime_client import RealtimePrometheusClient
         exc = _make_connection_closed(1013, "insufficient_quota.insufficient_quota")
         assert RealtimePrometheusClient._is_quota_close(exc) is True
 
     def test_code_1013_no_reason_is_quota(self):
-        from realtime_client import RealtimePrometheusClient
+        from prometheus.core.realtime_client import RealtimePrometheusClient
         exc = _make_connection_closed(1013, "")
         assert RealtimePrometheusClient._is_quota_close(exc) is True
 
     def test_reason_insufficient_quota_is_quota(self):
-        from realtime_client import RealtimePrometheusClient
+        from prometheus.core.realtime_client import RealtimePrometheusClient
         exc = _make_connection_closed(1000, "insufficient_quota")
         assert RealtimePrometheusClient._is_quota_close(exc) is True
 
     def test_reason_billing_not_active_is_quota(self):
-        from realtime_client import RealtimePrometheusClient
+        from prometheus.core.realtime_client import RealtimePrometheusClient
         exc = _make_connection_closed(1000, "billing_not_active")
         assert RealtimePrometheusClient._is_quota_close(exc) is True
 
     def test_normal_close_1000_not_quota(self):
-        from realtime_client import RealtimePrometheusClient
+        from prometheus.core.realtime_client import RealtimePrometheusClient
         exc = _make_connection_closed(1000, "normal closure")
         assert RealtimePrometheusClient._is_quota_close(exc) is False
 
     def test_code_1001_not_quota(self):
-        from realtime_client import RealtimePrometheusClient
+        from prometheus.core.realtime_client import RealtimePrometheusClient
         exc = _make_connection_closed(1001, "going away")
         assert RealtimePrometheusClient._is_quota_close(exc) is False
 
@@ -82,19 +82,19 @@ class TestIsQuotaClose:
 class TestIsQuotaStr:
 
     def test_insufficient_quota_string(self):
-        from realtime_client import RealtimePrometheusClient
+        from prometheus.core.realtime_client import RealtimePrometheusClient
         assert RealtimePrometheusClient._is_quota_str("insufficient_quota") is True
 
     def test_billing_not_active_string(self):
-        from realtime_client import RealtimePrometheusClient
+        from prometheus.core.realtime_client import RealtimePrometheusClient
         assert RealtimePrometheusClient._is_quota_str("billing_not_active error") is True
 
     def test_quota_exceeded_string(self):
-        from realtime_client import RealtimePrometheusClient
+        from prometheus.core.realtime_client import RealtimePrometheusClient
         assert RealtimePrometheusClient._is_quota_str("quota exceeded") is True
 
     def test_normal_auth_error_not_quota(self):
-        from realtime_client import RealtimePrometheusClient
+        from prometheus.core.realtime_client import RealtimePrometheusClient
         assert RealtimePrometheusClient._is_quota_str("invalid_api_key") is False
 
 
@@ -255,7 +255,7 @@ class TestMainStartupResilience:
 
     def test_realtime_required_false_continues_on_connect_failure(self):
         """PROMETHEUS_REALTIME_REQUIRED=false: startup continues when connect raises."""
-        import main as _main
+        import prometheus.core.main as _main
 
         core = object.__new__(_main.PrometheusCore)
         core.client = MagicMock()
@@ -279,7 +279,7 @@ class TestMainStartupResilience:
 
     def test_realtime_required_true_propagates_connect_failure(self):
         """PROMETHEUS_REALTIME_REQUIRED=true: startup raises when connect fails."""
-        import main as _main
+        import prometheus.core.main as _main
 
         core = object.__new__(_main.PrometheusCore)
         core.client = MagicMock()

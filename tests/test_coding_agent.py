@@ -11,9 +11,9 @@ import time
 
 import pytest
 
-from git_safety import GitSafety
-from success_criteria import SuccessCriteria, SuccessCriteriaEngine
-from coding_agent import CodingAgent, start_coding_task, get_coding_status
+from prometheus.execution.git_safety import GitSafety
+from prometheus.execution.success_criteria import SuccessCriteria, SuccessCriteriaEngine
+from prometheus.execution.coding_agent import CodingAgent, start_coding_task, get_coding_status
 
 
 # ── GitSafety ─────────────────────────────────────────────────────────────────
@@ -174,8 +174,8 @@ class TestBackgroundDispatch:
     def test_start_coding_task_is_immediate_and_tracked(
         self, temp_git_repo, monkeypatch
     ):
-        import coding_agent as ca_mod
-        import git_safety as gs_mod
+        import prometheus.execution.coding_agent as ca_mod
+        import prometheus.execution.git_safety as gs_mod
 
         # Isolate: checkpoints land in the temp repo, claude never runs
         monkeypatch.setattr(gs_mod, "_REPO_ROOT", temp_git_repo)
@@ -184,7 +184,7 @@ class TestBackgroundDispatch:
             lambda self, prompt: "done — mocked", raising=True,
         )
 
-        from working_memory import WorkingMemory
+        from prometheus.memory.working_memory import WorkingMemory
         WorkingMemory().write({"last_coding_result": None})
 
         t0 = time.time()

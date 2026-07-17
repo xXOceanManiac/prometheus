@@ -4,8 +4,8 @@ import json
 import os
 import threading
 
-from config import VISUAL_STATE_PATH
-from utils import log_event
+from prometheus.infra.config import VISUAL_STATE_PATH
+from prometheus.infra.utils import log_event
 
 
 class VisualStateController:

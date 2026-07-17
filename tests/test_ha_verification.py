@@ -83,7 +83,7 @@ class TestVerifyHaScriptRouting:
 
     def test_returns_tool_result_type(self):
         from prometheus.integrations.ha_verifier import verify_ha_script
-        from tools import ToolResult
+        from prometheus.execution.tools import ToolResult
         with _patch_sleep(), _patch_get_state(None), \
              patch("prometheus.integrations.ha_verifier.log_event"):
             result = verify_ha_script("jarvis_lights_power_on")
@@ -97,7 +97,7 @@ class TestVerifyHaScriptRouting:
 class TestLightEntityNotConfigured:
     def test_no_light_entity_accepted_unverified(self, monkeypatch):
         from prometheus.integrations.ha_verifier import verify_ha_script
-        from tools import ToolStatus
+        from prometheus.execution.tools import ToolStatus
         monkeypatch.setattr(
             "prometheus.integrations.ha_verifier.CONFIG",
             {"ha_light_entity": ""},
@@ -133,7 +133,7 @@ class TestLightsPowerOn:
             return verify_ha_script("jarvis_lights_power_on")
 
     def test_light_on_is_verified_success(self):
-        from tools import ToolStatus
+        from prometheus.execution.tools import ToolStatus
         result = self._run("on")
         assert result.status == ToolStatus.VERIFIED_SUCCESS
 
@@ -142,12 +142,12 @@ class TestLightsPowerOn:
         assert result.verified is True
 
     def test_light_off_is_verified_failure(self):
-        from tools import ToolStatus
+        from prometheus.execution.tools import ToolStatus
         result = self._run("off")
         assert result.status == ToolStatus.VERIFIED_FAILURE
 
     def test_light_transitional_state_is_accepted_unverified(self):
-        from tools import ToolStatus
+        from prometheus.execution.tools import ToolStatus
         result = self._run("unavailable")
         assert result.status == ToolStatus.ACCEPTED_UNVERIFIED
 
@@ -163,12 +163,12 @@ class TestLightsPowerOff:
             return verify_ha_script("jarvis_lights_power_off")
 
     def test_light_off_is_verified_success(self):
-        from tools import ToolStatus
+        from prometheus.execution.tools import ToolStatus
         result = self._run("off")
         assert result.status == ToolStatus.VERIFIED_SUCCESS
 
     def test_light_on_is_verified_failure(self):
-        from tools import ToolStatus
+        from prometheus.execution.tools import ToolStatus
         result = self._run("on")
         assert result.status == ToolStatus.VERIFIED_FAILURE
 
@@ -188,49 +188,49 @@ class TestLightColorScenes:
             return verify_ha_script(f"jarvis_lights_scene_{color}")
 
     def test_red_lights_off_is_verified_failure(self):
-        from tools import ToolStatus
+        from prometheus.execution.tools import ToolStatus
         result = self._run("red", "off")
         assert result.status == ToolStatus.VERIFIED_FAILURE
 
     def test_red_lights_mismatch_not_verified_success(self):
-        from tools import ToolStatus
+        from prometheus.execution.tools import ToolStatus
         # Light is on but hs_color indicates blue, not red
         result = self._run("red", "on", {"hs_color": [240.0, 100.0]})
         assert result.status != ToolStatus.VERIFIED_SUCCESS
 
     def test_red_lights_hs_match_is_verified_success(self):
-        from tools import ToolStatus
+        from prometheus.execution.tools import ToolStatus
         result = self._run("red", "on", {"hs_color": [5.0, 100.0]})
         assert result.status == ToolStatus.VERIFIED_SUCCESS
 
     def test_blue_lights_hs_match_is_verified_success(self):
-        from tools import ToolStatus
+        from prometheus.execution.tools import ToolStatus
         result = self._run("blue", "on", {"hs_color": [240.0, 100.0]})
         assert result.status == ToolStatus.VERIFIED_SUCCESS
 
     def test_green_lights_hs_match_is_verified_success(self):
-        from tools import ToolStatus
+        from prometheus.execution.tools import ToolStatus
         result = self._run("green", "on", {"hs_color": [120.0, 100.0]})
         assert result.status == ToolStatus.VERIFIED_SUCCESS
 
     def test_purple_lights_hs_match_is_verified_success(self):
-        from tools import ToolStatus
+        from prometheus.execution.tools import ToolStatus
         result = self._run("purple", "on", {"hs_color": [285.0, 100.0]})
         assert result.status == ToolStatus.VERIFIED_SUCCESS
 
     def test_red_rgb_match_is_verified_success(self):
-        from tools import ToolStatus
+        from prometheus.execution.tools import ToolStatus
         result = self._run("red", "on", {"rgb_color": [255, 0, 0]})
         assert result.status == ToolStatus.VERIFIED_SUCCESS
 
     def test_no_color_attrs_is_accepted_unverified(self):
-        from tools import ToolStatus
+        from prometheus.execution.tools import ToolStatus
         # Light is on but no hs_color or rgb_color in attributes
         result = self._run("red", "on", {})
         assert result.status == ToolStatus.ACCEPTED_UNVERIFIED
 
     def test_desaturated_hs_is_accepted_unverified(self):
-        from tools import ToolStatus
+        from prometheus.execution.tools import ToolStatus
         # Saturation too low — can't confirm color
         result = self._run("red", "on", {"hs_color": [5.0, 10.0]})
         assert result.status == ToolStatus.ACCEPTED_UNVERIFIED
@@ -256,12 +256,12 @@ class TestLightNonColorScene:
             return verify_ha_script(f"jarvis_lights_scene_{scene}")
 
     def test_movie_mode_light_on_is_accepted_unverified(self):
-        from tools import ToolStatus
+        from prometheus.execution.tools import ToolStatus
         result = self._run("movie", "on")
         assert result.status == ToolStatus.ACCEPTED_UNVERIFIED
 
     def test_movie_mode_light_off_is_verified_failure(self):
-        from tools import ToolStatus
+        from prometheus.execution.tools import ToolStatus
         result = self._run("movie", "off")
         assert result.status == ToolStatus.VERIFIED_FAILURE
 
@@ -277,7 +277,7 @@ class TestLightNonColorScene:
 class TestGetStateFails:
     def test_get_returns_none_gives_accepted_unverified_lights(self, monkeypatch):
         from prometheus.integrations.ha_verifier import verify_ha_script
-        from tools import ToolStatus
+        from prometheus.execution.tools import ToolStatus
         monkeypatch.setattr(
             "prometheus.integrations.ha_verifier.CONFIG",
             {"ha_light_entity": "light.rgb_strip"},
@@ -289,7 +289,7 @@ class TestGetStateFails:
 
     def test_get_returns_none_gives_accepted_unverified_xbox(self):
         from prometheus.integrations.ha_verifier import verify_ha_script
-        from tools import ToolStatus
+        from prometheus.execution.tools import ToolStatus
         with _patch_sleep(), _patch_get_state(None), \
              patch("prometheus.integrations.ha_verifier.log_event"):
             result = verify_ha_script("jarvis_xbox_power_on")
@@ -297,7 +297,7 @@ class TestGetStateFails:
 
     def test_get_returns_empty_dict_entity_not_found_lights(self, monkeypatch):
         from prometheus.integrations.ha_verifier import verify_ha_script
-        from tools import ToolStatus
+        from prometheus.execution.tools import ToolStatus
         monkeypatch.setattr(
             "prometheus.integrations.ha_verifier.CONFIG",
             {"ha_light_entity": "light.rgb_strip"},
@@ -309,7 +309,7 @@ class TestGetStateFails:
 
     def test_get_returns_empty_dict_entity_not_found_xbox(self):
         from prometheus.integrations.ha_verifier import verify_ha_script
-        from tools import ToolStatus
+        from prometheus.execution.tools import ToolStatus
         with _patch_sleep(), _patch_get_state({}), \
              patch("prometheus.integrations.ha_verifier.log_event"):
             result = verify_ha_script("jarvis_xbox_power_on")
@@ -329,27 +329,27 @@ class TestXboxPowerOn:
             return verify_ha_script("jarvis_xbox_power_on")
 
     def test_xbox_on_state_is_verified_success(self):
-        from tools import ToolStatus
+        from prometheus.execution.tools import ToolStatus
         result = self._run("on")
         assert result.status == ToolStatus.VERIFIED_SUCCESS
 
     def test_xbox_playing_state_is_verified_success(self):
-        from tools import ToolStatus
+        from prometheus.execution.tools import ToolStatus
         result = self._run("playing")
         assert result.status == ToolStatus.VERIFIED_SUCCESS
 
     def test_xbox_idle_state_is_verified_success(self):
-        from tools import ToolStatus
+        from prometheus.execution.tools import ToolStatus
         result = self._run("idle")
         assert result.status == ToolStatus.VERIFIED_SUCCESS
 
     def test_xbox_off_is_verified_failure(self):
-        from tools import ToolStatus
+        from prometheus.execution.tools import ToolStatus
         result = self._run("off")
         assert result.status == ToolStatus.VERIFIED_FAILURE
 
     def test_xbox_unavailable_is_verified_failure(self):
-        from tools import ToolStatus
+        from prometheus.execution.tools import ToolStatus
         result = self._run("unavailable")
         assert result.status == ToolStatus.VERIFIED_FAILURE
 
@@ -363,12 +363,12 @@ class TestXboxPowerOff:
             return verify_ha_script("jarvis_xbox_power_off")
 
     def test_xbox_off_is_verified_success(self):
-        from tools import ToolStatus
+        from prometheus.execution.tools import ToolStatus
         result = self._run("off")
         assert result.status == ToolStatus.VERIFIED_SUCCESS
 
     def test_xbox_playing_is_verified_failure(self):
-        from tools import ToolStatus
+        from prometheus.execution.tools import ToolStatus
         result = self._run("playing")
         assert result.status == ToolStatus.VERIFIED_FAILURE
 
@@ -382,34 +382,34 @@ class TestXboxAppLaunch:
             return verify_ha_script(app_script)
 
     def test_youtube_confirmed_when_app_name_matches(self):
-        from tools import ToolStatus
+        from prometheus.execution.tools import ToolStatus
         result = self._run("jarvis_xbox_app_youtube", "YouTube")
         assert result.status == ToolStatus.VERIFIED_SUCCESS
 
     def test_netflix_confirmed_when_app_name_matches(self):
-        from tools import ToolStatus
+        from prometheus.execution.tools import ToolStatus
         result = self._run("jarvis_xbox_app_netflix", "Netflix")
         assert result.status == ToolStatus.VERIFIED_SUCCESS
 
     def test_spotify_confirmed_when_app_name_matches(self):
-        from tools import ToolStatus
+        from prometheus.execution.tools import ToolStatus
         result = self._run("jarvis_xbox_app_spotify", "Spotify")
         assert result.status == ToolStatus.VERIFIED_SUCCESS
 
     def test_xbox_app_unknown_is_accepted_unverified(self):
-        from tools import ToolStatus
+        from prometheus.execution.tools import ToolStatus
         # App hasn't loaded yet — app_name is empty
         result = self._run("jarvis_xbox_app_youtube", "")
         assert result.status == ToolStatus.ACCEPTED_UNVERIFIED
 
     def test_xbox_app_unknown_does_not_say_launched(self):
-        from tools import ToolStatus
+        from prometheus.execution.tools import ToolStatus
         result = self._run("jarvis_xbox_app_youtube", "")
         assert result.status != ToolStatus.VERIFIED_SUCCESS
         assert "launched" not in result.message.lower()
 
     def test_wrong_app_is_accepted_unverified_not_failure(self):
-        from tools import ToolStatus
+        from prometheus.execution.tools import ToolStatus
         # Different app is open — app may still be loading, so accepted_unverified
         result = self._run("jarvis_xbox_app_youtube", "Netflix")
         assert result.status == ToolStatus.ACCEPTED_UNVERIFIED
@@ -417,7 +417,7 @@ class TestXboxAppLaunch:
 
 class TestXboxMediaPauseResume:
     def test_pause_confirmed_when_paused(self):
-        from tools import ToolStatus
+        from prometheus.execution.tools import ToolStatus
         from prometheus.integrations.ha_verifier import verify_ha_script
         with _patch_sleep(), \
              _patch_get_state(_make_ha_state("paused")), \
@@ -426,7 +426,7 @@ class TestXboxMediaPauseResume:
         assert result.status == ToolStatus.VERIFIED_SUCCESS
 
     def test_pause_not_confirmed_when_playing(self):
-        from tools import ToolStatus
+        from prometheus.execution.tools import ToolStatus
         from prometheus.integrations.ha_verifier import verify_ha_script
         with _patch_sleep(), \
              _patch_get_state(_make_ha_state("playing")), \
@@ -435,7 +435,7 @@ class TestXboxMediaPauseResume:
         assert result.status == ToolStatus.ACCEPTED_UNVERIFIED
 
     def test_resume_confirmed_when_playing(self):
-        from tools import ToolStatus
+        from prometheus.execution.tools import ToolStatus
         from prometheus.integrations.ha_verifier import verify_ha_script
         with _patch_sleep(), \
              _patch_get_state(_make_ha_state("playing")), \
@@ -446,7 +446,7 @@ class TestXboxMediaPauseResume:
 
 class TestXboxVolume:
     def test_volume_command_is_accepted_unverified(self):
-        from tools import ToolStatus
+        from prometheus.execution.tools import ToolStatus
         from prometheus.integrations.ha_verifier import verify_ha_script
         with patch("prometheus.integrations.ha_verifier.log_event"):
             result = verify_ha_script("jarvis_xbox_volume_up")
@@ -526,12 +526,12 @@ class TestTraceIdInLogs:
 class TestToolRegistryHAVerification:
     def test_run_ha_script_lights_calls_verifier(self, monkeypatch):
         """ToolRegistry._execute_one_inner should call verify_ha_script for lights."""
-        from tools import ToolRegistry, ToolStatus
+        from prometheus.execution.tools import ToolRegistry, ToolStatus
 
-        monkeypatch.setattr("tools.run_ha_script", lambda name: __import__("tools").ToolResult(True, f"Executed: {name}"))
-        monkeypatch.setattr("tools.log_event", lambda k, p: None)
+        monkeypatch.setattr("prometheus.execution.tools.run_ha_script", lambda name: __import__("prometheus.execution.tools", fromlist=["ToolResult"]).ToolResult(True, f"Executed: {name}"))
+        monkeypatch.setattr("prometheus.execution.tools.log_event", lambda k, p: None)
 
-        verified_result = __import__("tools").ToolResult.verified_success(
+        verified_result = __import__("prometheus.execution.tools", fromlist=["ToolResult"]).ToolResult.verified_success(
             "Executed: jarvis_lights_power_on",
             summary="Light confirmed on",
         )
@@ -545,10 +545,10 @@ class TestToolRegistryHAVerification:
 
     def test_run_ha_script_verifier_crash_is_non_fatal(self, monkeypatch):
         """If verifier raises, _execute_one_inner falls back to original result."""
-        from tools import ToolRegistry, ToolStatus
+        from prometheus.execution.tools import ToolRegistry, ToolStatus
 
-        monkeypatch.setattr("tools.run_ha_script", lambda name: __import__("tools").ToolResult(True, f"Executed: {name}"))
-        monkeypatch.setattr("tools.log_event", lambda k, p: None)
+        monkeypatch.setattr("prometheus.execution.tools.run_ha_script", lambda name: __import__("prometheus.execution.tools", fromlist=["ToolResult"]).ToolResult(True, f"Executed: {name}"))
+        monkeypatch.setattr("prometheus.execution.tools.log_event", lambda k, p: None)
 
         with patch("prometheus.integrations.ha_verifier.verify_ha_script",
                    side_effect=RuntimeError("verifier exploded")):
@@ -561,10 +561,10 @@ class TestToolRegistryHAVerification:
 
     def test_run_ha_script_verifier_returns_none_keeps_original(self, monkeypatch):
         """If verifier returns None (routine script), original result is used."""
-        from tools import ToolRegistry, ToolStatus
+        from prometheus.execution.tools import ToolRegistry, ToolStatus
 
-        monkeypatch.setattr("tools.run_ha_script", lambda name: __import__("tools").ToolResult(True, f"Executed: {name}"))
-        monkeypatch.setattr("tools.log_event", lambda k, p: None)
+        monkeypatch.setattr("prometheus.execution.tools.run_ha_script", lambda name: __import__("prometheus.execution.tools", fromlist=["ToolResult"]).ToolResult(True, f"Executed: {name}"))
+        monkeypatch.setattr("prometheus.execution.tools.log_event", lambda k, p: None)
 
         with patch("prometheus.integrations.ha_verifier.verify_ha_script",
                    return_value=None):
@@ -576,13 +576,13 @@ class TestToolRegistryHAVerification:
 
     def test_run_ha_script_failure_does_not_call_verifier(self, monkeypatch):
         """Verifier must not be called when run_ha_script returns ok=False."""
-        from tools import ToolRegistry
+        from prometheus.execution.tools import ToolRegistry
 
         monkeypatch.setattr(
-            "tools.run_ha_script",
-            lambda name: __import__("tools").ToolResult(False, "HA error")
+            "prometheus.execution.tools.run_ha_script",
+            lambda name: __import__("prometheus.execution.tools", fromlist=["ToolResult"]).ToolResult(False, "HA error")
         )
-        monkeypatch.setattr("tools.log_event", lambda k, p: None)
+        monkeypatch.setattr("prometheus.execution.tools.log_event", lambda k, p: None)
 
         with patch("prometheus.integrations.ha_verifier.verify_ha_script") as mock_verify:
             reg = ToolRegistry()

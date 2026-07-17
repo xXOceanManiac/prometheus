@@ -499,19 +499,19 @@ class TestProactiveLoopFlags:
 
     def test_wrapup_disabled_by_default(self):
         """PROMETHEUS_PROACTIVE_WRAP_UP_ENABLED defaults to false."""
-        from proactive_loop import ProactiveLoop, _cfg_bool
+        from prometheus.core.proactive_loop import ProactiveLoop, _cfg_bool
         with patch.dict(os.environ, {}, clear=False):
             os.environ.pop("PROMETHEUS_PROACTIVE_WRAP_UP_ENABLED", None)
             enabled = _cfg_bool("PROMETHEUS_PROACTIVE_WRAP_UP_ENABLED", False)
         assert enabled is False
 
     def test_wrapup_enabled_when_env_set_true(self):
-        from proactive_loop import _cfg_bool
+        from prometheus.core.proactive_loop import _cfg_bool
         with patch.dict(os.environ, {"PROMETHEUS_PROACTIVE_WRAP_UP_ENABLED": "true"}):
             assert _cfg_bool("PROMETHEUS_PROACTIVE_WRAP_UP_ENABLED", False) is True
 
     def test_checkins_disabled_by_default(self):
-        from proactive_loop import _cfg_bool
+        from prometheus.core.proactive_loop import _cfg_bool
         with patch.dict(os.environ, {}, clear=False):
             os.environ.pop("PROMETHEUS_PROACTIVE_CHECKINS_ENABLED", None)
             enabled = _cfg_bool("PROMETHEUS_PROACTIVE_CHECKINS_ENABLED", False)
@@ -519,26 +519,26 @@ class TestProactiveLoopFlags:
 
     def test_evening_wrapup_category_blocked_when_disabled(self):
         """_is_category_allowed returns False for evening_wrapup when disabled."""
-        from proactive_loop import ProactiveLoop
+        from prometheus.core.proactive_loop import ProactiveLoop
         loop = ProactiveLoop(client=None, workspace_manager=None)
         with patch.dict(os.environ, {"PROMETHEUS_PROACTIVE_WRAP_UP_ENABLED": "false"}):
             assert loop._is_category_allowed("evening_wrapup", "wrap up reason") is False
 
     def test_evening_wrapup_category_allowed_when_enabled(self):
-        from proactive_loop import ProactiveLoop
+        from prometheus.core.proactive_loop import ProactiveLoop
         loop = ProactiveLoop(client=None, workspace_manager=None)
         with patch.dict(os.environ, {"PROMETHEUS_PROACTIVE_WRAP_UP_ENABLED": "true"}):
             assert loop._is_category_allowed("evening_wrapup", "wrap up reason") is True
 
     def test_productivity_checkin_blocked_when_disabled(self):
-        from proactive_loop import ProactiveLoop
+        from prometheus.core.proactive_loop import ProactiveLoop
         loop = ProactiveLoop(client=None, workspace_manager=None)
         with patch.dict(os.environ, {"PROMETHEUS_PROACTIVE_CHECKINS_ENABLED": "false"}):
             assert loop._is_category_allowed("productivity_checkin", "progress update") is False
 
     def test_background_task_not_blocked_by_wrapup_flag(self):
         """background_task category is unaffected by wrap-up disable flag."""
-        from proactive_loop import ProactiveLoop
+        from prometheus.core.proactive_loop import ProactiveLoop
         loop = ProactiveLoop(client=None, workspace_manager=None)
         with patch.dict(os.environ, {
             "PROMETHEUS_PROACTIVE_WRAP_UP_ENABLED": "false",
@@ -580,23 +580,23 @@ class TestProactiveLoopFlags:
 class TestCategoryExtraction:
 
     def test_evening_wrapup_category(self):
-        from proactive_loop import ProactiveLoop
+        from prometheus.core.proactive_loop import ProactiveLoop
         loop = ProactiveLoop(client=None, workspace_manager=None)
         assert loop._extract_category("evening with no wrap-up") == "evening_wrapup"
         assert loop._extract_category("wrap up for the day") == "evening_wrapup"
 
     def test_productivity_checkin_category(self):
-        from proactive_loop import ProactiveLoop
+        from prometheus.core.proactive_loop import ProactiveLoop
         loop = ProactiveLoop(client=None, workspace_manager=None)
         assert loop._extract_category("productivity check-in") == "productivity_checkin"
         assert loop._extract_category("progress update on project") == "productivity_checkin"
 
     def test_background_task_category(self):
-        from proactive_loop import ProactiveLoop
+        from prometheus.core.proactive_loop import ProactiveLoop
         loop = ProactiveLoop(client=None, workspace_manager=None)
         assert loop._extract_category("background task completed") == "background_task"
 
     def test_vault_connection_category(self):
-        from proactive_loop import ProactiveLoop
+        from prometheus.core.proactive_loop import ProactiveLoop
         loop = ProactiveLoop(client=None, workspace_manager=None)
         assert loop._extract_category("relevant vault memory fragment") == "vault_connection"

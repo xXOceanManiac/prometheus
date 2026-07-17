@@ -22,7 +22,7 @@ from pathlib import Path
 _ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(_ROOT))
 
-from contextual_intent import ContextualIntentResolver, _is_vague  # noqa: E402
+from prometheus.context.contextual_intent import ContextualIntentResolver, _is_vague  # noqa: E402
 
 _EVAL_FILE = Path(__file__).parent / "contextual_intent_eval.jsonl"
 _resolver = ContextualIntentResolver()

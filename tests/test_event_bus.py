@@ -9,7 +9,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from event_bus import Event, EventBus, EventType, Priority
+from prometheus.sensors.event_bus import Event, EventBus, EventType, Priority
 
 
 def _make_event(

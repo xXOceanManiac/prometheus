@@ -1391,7 +1391,7 @@ class TestParserImprovements:
 class TestResponseSynthesizerCalendarCreate:
     def _synth(self, action, data):
         from prometheus.execution.response_synthesizer import synthesize_tool_response
-        from tools import ToolResult  # type: ignore[import]
+        from prometheus.execution.tools import ToolResult  # type: ignore[import]
         tr = ToolResult(ok=True, message="ok", data=data)
         return synthesize_tool_response(action, tr)
 

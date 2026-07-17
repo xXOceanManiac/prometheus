@@ -13,7 +13,7 @@ _ROOT = Path(__file__).resolve().parent.parent
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
-from contextual_intent import ContextualIntentResolver, _is_vague, resolve_command
+from prometheus.context.contextual_intent import ContextualIntentResolver, _is_vague, resolve_command
 
 
 def _resolver() -> ContextualIntentResolver:

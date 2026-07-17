@@ -10,7 +10,7 @@ import json
 import re
 from typing import Any
 
-from agent_base import BaseAgent, AgentTask, AgentResult
+from prometheus.agents.agent_base import BaseAgent, AgentTask, AgentResult
 
 
 class ArchitectAgent(BaseAgent):

@@ -26,7 +26,7 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from utils import log_event
+from prometheus.infra.utils import log_event
 
 # ── Canonical state path ─────────────────────────────────────────────────────
 

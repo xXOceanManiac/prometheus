@@ -15,7 +15,7 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from world_model import build_world_snapshot
+from prometheus.context.world_model import build_world_snapshot
 
 
 class TestWorldSnapshotFields(unittest.TestCase):
@@ -86,7 +86,7 @@ class TestWorldSnapshotPerformance(unittest.TestCase):
             time.sleep(0)  # Should not actually block
             return {}
 
-        with patch("sensors.window_sensor.get_cache", side_effect=slow_cache):
+        with patch("prometheus.sensors.window_sensor.get_cache", side_effect=slow_cache):
             start = time.monotonic()
             build_world_snapshot()
             elapsed_ms = (time.monotonic() - start) * 1000
@@ -97,11 +97,11 @@ class TestWorldSnapshotRobustness(unittest.TestCase):
     """Snapshot must never throw, even if every sensor explodes."""
 
     def test_never_raises_if_sensors_unavailable(self) -> None:
-        with patch("sensors.window_sensor.get_cache", side_effect=ImportError):
-            with patch("sensors.clipboard_sensor.get_cache", side_effect=RuntimeError):
-                with patch("sensors.filesystem_sensor.get_cache", side_effect=OSError):
-                    with patch("sensors.error_sensor.get_cache", side_effect=Exception):
-                        with patch("sensors.process_sensor.get_cache", side_effect=Exception):
+        with patch("prometheus.sensors.window_sensor.get_cache", side_effect=ImportError):
+            with patch("prometheus.sensors.clipboard_sensor.get_cache", side_effect=RuntimeError):
+                with patch("prometheus.sensors.filesystem_sensor.get_cache", side_effect=OSError):
+                    with patch("prometheus.sensors.error_sensor.get_cache", side_effect=Exception):
+                        with patch("prometheus.sensors.process_sensor.get_cache", side_effect=Exception):
                             snap = build_world_snapshot()
         # Should return a valid dict with safe defaults
         self.assertIsInstance(snap, dict)
@@ -131,7 +131,7 @@ class TestWorldSnapshotSensorIntegration(unittest.TestCase):
             "window_class": "code",
             "updated_at": "2026-05-12T10:00:00",
         }
-        with patch("sensors.window_sensor.get_cache", return_value=fake_cache):
+        with patch("prometheus.sensors.window_sensor.get_cache", return_value=fake_cache):
             snap = build_world_snapshot()
         self.assertEqual(snap["active_window_title"], "VS Code — contextual_intent.py")
         self.assertEqual(snap["active_app"], "vscode")
@@ -142,7 +142,7 @@ class TestWorldSnapshotSensorIntegration(unittest.TestCase):
             "char_count": 20,
             "updated_at": "2026-05-12T10:00:00",
         }
-        with patch("sensors.clipboard_sensor.get_cache", return_value=fake_cache):
+        with patch("prometheus.sensors.clipboard_sensor.get_cache", return_value=fake_cache):
             snap = build_world_snapshot()
         self.assertEqual(snap["selected_text"], "def fix_that(): pass")
 
@@ -151,7 +151,7 @@ class TestWorldSnapshotSensorIntegration(unittest.TestCase):
             {"filename": "main.py", "change_type": "MODIFY", "project": "prometheus", "timestamp": "2026-05-12T10:00:00"},
             {"filename": "tools.py", "change_type": "MODIFY", "project": "prometheus", "timestamp": "2026-05-12T10:00:01"},
         ]
-        with patch("sensors.filesystem_sensor.get_cache", return_value=fake_changes):
+        with patch("prometheus.sensors.filesystem_sensor.get_cache", return_value=fake_changes):
             snap = build_world_snapshot()
         self.assertEqual(len(snap["recent_file_changes"]), 2)
         self.assertEqual(snap["recent_file_changes"][0]["filename"], "main.py")
@@ -166,7 +166,7 @@ class TestWorldSnapshotSensorIntegration(unittest.TestCase):
                 "timestamp": "2026-05-12T10:00:00",
             }
         ]
-        with patch("sensors.error_sensor.get_cache", return_value=fake_errors):
+        with patch("prometheus.sensors.error_sensor.get_cache", return_value=fake_errors):
             snap = build_world_snapshot()
         self.assertEqual(len(snap["recent_errors"]), 1)
         self.assertIn("database connection refused", snap["recent_errors"][0]["description"])
@@ -175,7 +175,7 @@ class TestWorldSnapshotSensorIntegration(unittest.TestCase):
         fake_procs = [
             {"pid": 1234, "name": "uvicorn", "cmdline_summary": "uvicorn main:app --reload"},
         ]
-        with patch("sensors.process_sensor.get_cache", return_value=fake_procs):
+        with patch("prometheus.sensors.process_sensor.get_cache", return_value=fake_procs):
             snap = build_world_snapshot()
         self.assertEqual(len(snap["running_dev_processes"]), 1)
         self.assertEqual(snap["running_dev_processes"][0]["name"], "uvicorn")
@@ -190,7 +190,7 @@ class TestWorldSnapshotSensorIntegration(unittest.TestCase):
                 "timestamp": "2026-05-12T10:00:00",
             }
         ]
-        with patch("sensors.error_sensor.get_cache", return_value=fake_live):
+        with patch("prometheus.sensors.error_sensor.get_cache", return_value=fake_live):
             snap = build_world_snapshot()
         # Live sensor errors should populate recent_errors
         self.assertTrue(any("live sensor error" in e["description"] for e in snap["recent_errors"]))
@@ -200,7 +200,7 @@ class TestWorldSnapshotSensorIntegration(unittest.TestCase):
             {"filename": f"file{i}.py", "change_type": "MODIFY", "project": "p", "timestamp": "2026-05-12T10:00:00"}
             for i in range(10)
         ]
-        with patch("sensors.filesystem_sensor.get_cache", return_value=fake_changes):
+        with patch("prometheus.sensors.filesystem_sensor.get_cache", return_value=fake_changes):
             snap = build_world_snapshot()
         self.assertLessEqual(len(snap["recent_file_changes"]), 5)
 

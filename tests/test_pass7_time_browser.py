@@ -34,15 +34,15 @@ if str(_ROOT) not in sys.path:
 
 def _make_tool_registry() -> "ToolRegistry":
     """Minimal ToolRegistry without real memory or disk IO."""
-    from tools import ToolRegistry
+    from prometheus.execution.tools import ToolRegistry
     with (
-        patch("tools.MemoryStore"),
-        patch("tools.EpisodicMemory"),
-        patch("tools.SemanticMemory"),
-        patch("tools.ProceduralMemory"),
-        patch("tools.WorkingMemory"),
-        patch("tools.DreamManager"),
-        patch("tools.BehaviorLearningEngine"),
+        patch("prometheus.execution.tools.MemoryStore"),
+        patch("prometheus.execution.tools.EpisodicMemory"),
+        patch("prometheus.execution.tools.SemanticMemory"),
+        patch("prometheus.execution.tools.ProceduralMemory"),
+        patch("prometheus.execution.tools.WorkingMemory"),
+        patch("prometheus.execution.tools.DreamManager"),
+        patch("prometheus.execution.tools.BehaviorLearningEngine"),
     ):
         return ToolRegistry()
 
@@ -53,11 +53,11 @@ def _make_tool_registry() -> "ToolRegistry":
 
 class TestDefaultConfig:
     def test_timezone_in_default_config(self):
-        from config import DEFAULT_CONFIG
+        from prometheus.infra.config import DEFAULT_CONFIG
         assert "timezone" in DEFAULT_CONFIG
 
     def test_timezone_defaults_to_new_york(self):
-        from config import DEFAULT_CONFIG
+        from prometheus.infra.config import DEFAULT_CONFIG
         assert DEFAULT_CONFIG["timezone"] == "America/New_York"
 
 
@@ -67,7 +67,7 @@ class TestDefaultConfig:
 
 class TestTellTimeStatus:
     def test_tell_time_is_verified_success(self):
-        from tools import ToolStatus
+        from prometheus.execution.tools import ToolStatus
         registry = _make_tool_registry()
         result = registry.execute({"action": "tell_time"})
         assert result.status == ToolStatus.VERIFIED_SUCCESS
@@ -103,8 +103,8 @@ class TestTellTimeTimezone:
         ny_tz = ZoneInfo("America/New_York")
         expected_hour = frozen_utc.astimezone(ny_tz).strftime("%I").lstrip("0")
 
-        with patch("tools.CONFIG", {"timezone": "America/New_York"}):
-            with patch("tools._datetime") as mock_dt:
+        with patch("prometheus.execution.tools.CONFIG", {"timezone": "America/New_York"}):
+            with patch("prometheus.execution.tools._datetime") as mock_dt:
                 mock_dt.now.return_value = frozen_utc.astimezone(ny_tz)
                 result = registry.execute({"action": "tell_time"})
 
@@ -113,7 +113,7 @@ class TestTellTimeTimezone:
     def test_tell_time_falls_back_to_new_york_for_invalid_tz(self):
         """Invalid timezone falls back gracefully — no exception."""
         registry = _make_tool_registry()
-        with patch("tools.CONFIG", {"timezone": "Not/A/Real/Timezone"}):
+        with patch("prometheus.execution.tools.CONFIG", {"timezone": "Not/A/Real/Timezone"}):
             result = registry.execute({"action": "tell_time"})
         assert result.ok is True
         assert "it is" in result.message.lower()
@@ -124,8 +124,8 @@ class TestTellTimeTimezone:
         from datetime import datetime as _datetime
         frozen = _datetime(2026, 6, 7, 12, 0, 0, tzinfo=ZoneInfo("UTC"))
         registry = _make_tool_registry()
-        with patch("tools.CONFIG", {"timezone": "UTC"}):
-            with patch("tools._datetime") as mock_dt:
+        with patch("prometheus.execution.tools.CONFIG", {"timezone": "UTC"}):
+            with patch("prometheus.execution.tools._datetime") as mock_dt:
                 mock_dt.now.return_value = frozen
                 result = registry.execute({"action": "tell_time"})
         assert "12:00" in result.message
@@ -133,7 +133,7 @@ class TestTellTimeTimezone:
     def test_tell_time_summary_contains_timezone_name(self):
         """Verification summary includes the timezone name used."""
         registry = _make_tool_registry()
-        with patch("tools.CONFIG", {"timezone": "America/Chicago"}):
+        with patch("prometheus.execution.tools.CONFIG", {"timezone": "America/Chicago"}):
             result = registry.execute({"action": "tell_time"})
         assert "America/Chicago" in result.verification_summary
 
@@ -144,7 +144,7 @@ class TestTellTimeTimezone:
 
 class TestPrometheusIdentityTimeInjection:
     def _call_build(self, timezone: str = "America/New_York") -> str:
-        from prometheus_identity import build_system_prompt
+        from prometheus.core.prometheus_identity import build_system_prompt
         profile = {
             "name": "Tate",
             "timezone": timezone,
@@ -190,8 +190,8 @@ class TestPrometheusIdentityTimeInjection:
         expected_local = frozen_utc.astimezone(ny)
         expected_hour = expected_local.strftime("%I").lstrip("0")
 
-        from prometheus_identity import build_system_prompt
-        with patch("prometheus_identity._datetime") as mock_dt:
+        from prometheus.core.prometheus_identity import build_system_prompt
+        with patch("prometheus.core.prometheus_identity._datetime") as mock_dt:
             mock_dt.now.return_value = expected_local
             prompt = build_system_prompt(
                 workspace={},
@@ -205,7 +205,7 @@ class TestPrometheusIdentityTimeInjection:
 
     def test_build_never_raises_on_bad_timezone(self):
         """build_system_prompt never raises even with an invalid timezone."""
-        from prometheus_identity import build_system_prompt
+        from prometheus.core.prometheus_identity import build_system_prompt
         profile = {
             "name": "Tate",
             "timezone": "Invalid/Zone",
@@ -223,7 +223,7 @@ class TestPrometheusIdentityTimeInjection:
 
 class TestOpenUrlRaw:
     def test_open_url_raw_is_accepted_unverified(self):
-        from tools import ToolStatus
+        from prometheus.execution.tools import ToolStatus
         registry = _make_tool_registry()
         with patch("webbrowser.open"):
             result = registry.execute({"action": "open_url_raw", "url": "https://example.com"})
@@ -232,7 +232,7 @@ class TestOpenUrlRaw:
         assert result.ok is True
 
     def test_open_url_raw_empty_url_is_failure(self):
-        from tools import ToolStatus
+        from prometheus.execution.tools import ToolStatus
         registry = _make_tool_registry()
         result = registry.execute({"action": "open_url_raw", "url": ""})
         assert result.ok is False
@@ -252,9 +252,9 @@ class TestOpenUrlRaw:
 
 class TestOpenUrlKey:
     def test_open_url_key_is_accepted_unverified(self):
-        from tools import ToolStatus
+        from prometheus.execution.tools import ToolStatus
         registry = _make_tool_registry()
-        with patch("tools.CONFIG", {"urls": {"youtube": "https://youtube.com"}, "apps": {}}):
+        with patch("prometheus.execution.tools.CONFIG", {"urls": {"youtube": "https://youtube.com"}, "apps": {}}):
             with patch("webbrowser.open"):
                 result = registry.execute({"action": "open_url_key", "url_key": "youtube"})
         assert result.status == ToolStatus.ACCEPTED_UNVERIFIED
@@ -262,7 +262,7 @@ class TestOpenUrlKey:
 
     def test_open_url_key_unknown_key_is_failure(self):
         registry = _make_tool_registry()
-        with patch("tools.CONFIG", {"urls": {}, "apps": {}}):
+        with patch("prometheus.execution.tools.CONFIG", {"urls": {}, "apps": {}}):
             result = registry.execute({"action": "open_url_key", "url_key": "nonexistent"})
         assert result.ok is False
 
@@ -273,9 +273,9 @@ class TestOpenUrlKey:
 
 class TestOpenUrlKeys:
     def test_open_url_keys_all_ok_is_accepted_unverified(self):
-        from tools import ToolStatus
+        from prometheus.execution.tools import ToolStatus
         registry = _make_tool_registry()
-        with patch("tools.CONFIG", {"urls": {"youtube": "https://youtube.com",
+        with patch("prometheus.execution.tools.CONFIG", {"urls": {"youtube": "https://youtube.com",
                                              "gmail": "https://mail.google.com"}, "apps": {}}):
             with patch("webbrowser.open"):
                 result = registry.execute({"action": "open_url_keys",
@@ -285,9 +285,9 @@ class TestOpenUrlKeys:
 
     def test_open_url_keys_partial_failure_not_verified(self):
         """If any key is unknown, result is not verified_success."""
-        from tools import ToolStatus
+        from prometheus.execution.tools import ToolStatus
         registry = _make_tool_registry()
-        with patch("tools.CONFIG", {"urls": {"youtube": "https://youtube.com"}, "apps": {}}):
+        with patch("prometheus.execution.tools.CONFIG", {"urls": {"youtube": "https://youtube.com"}, "apps": {}}):
             with patch("webbrowser.open"):
                 result = registry.execute({"action": "open_url_keys",
                                            "url_keys": ["youtube", "badkey"]})
@@ -300,12 +300,12 @@ class TestOpenUrlKeys:
 
 class TestOpenAppAlreadyRunning:
     def test_already_running_is_verified_success(self):
-        from tools import ToolStatus
+        from prometheus.execution.tools import ToolStatus
         registry = _make_tool_registry()
         proc_name = "code"
         with (
-            patch("tools._APP_PROCESS_NAMES", {"code": proc_name}),
-            patch("tools.command_exists", return_value=True),
+            patch("prometheus.execution.tools._APP_PROCESS_NAMES", {"code": proc_name}),
+            patch("prometheus.execution.tools.command_exists", return_value=True),
             patch("subprocess.run") as mock_run,
             patch("subprocess.Popen"),
         ):
@@ -323,8 +323,8 @@ class TestOpenAppAlreadyRunning:
     def test_already_running_message_contains_already_open(self):
         registry = _make_tool_registry()
         with (
-            patch("tools._APP_PROCESS_NAMES", {"code": "code"}),
-            patch("tools.command_exists", return_value=True),
+            patch("prometheus.execution.tools._APP_PROCESS_NAMES", {"code": "code"}),
+            patch("prometheus.execution.tools.command_exists", return_value=True),
             patch("subprocess.run") as mock_run,
             patch("subprocess.Popen"),
         ):
@@ -349,13 +349,13 @@ class TestOpenAppFreshLaunch:
         _launch_with_fallback returns ok=True.
         Post-launch pgrep returns post_pgrep_rc.
         """
-        from tools import ToolStatus
+        from prometheus.execution.tools import ToolStatus
         registry = _make_tool_registry()
         with (
-            patch("tools._APP_PROCESS_NAMES", {"spotify": proc_name}),
-            patch("tools.command_exists", return_value=True),
+            patch("prometheus.execution.tools._APP_PROCESS_NAMES", {"spotify": proc_name}),
+            patch("prometheus.execution.tools.command_exists", return_value=True),
             patch("subprocess.run") as mock_run,
-            patch("tools.ToolRegistry._launch_with_fallback") as mock_launch,
+            patch("prometheus.execution.tools.ToolRegistry._launch_with_fallback") as mock_launch,
             patch("time.sleep"),
         ):
             # Pre-launch check: pgrep says not running (rc=1)
@@ -366,54 +366,54 @@ class TestOpenAppFreshLaunch:
             post_check.returncode = post_pgrep_rc
             mock_run.side_effect = [pre_check, post_check]
 
-            from tools import ToolResult as TR
+            from prometheus.execution.tools import ToolResult as TR
             mock_launch.return_value = TR(True, "Launched spotify.")
 
             result = registry.execute({"action": "open_app", "app": "spotify"})
         return result
 
     def test_fresh_launch_process_confirmed_is_verified_success(self):
-        from tools import ToolStatus
+        from prometheus.execution.tools import ToolStatus
         result = self._fresh_launch_result(post_pgrep_rc=0)
         assert result.status == ToolStatus.VERIFIED_SUCCESS
         assert result.verified is True
 
     def test_fresh_launch_process_not_found_is_accepted_unverified(self):
-        from tools import ToolStatus
+        from prometheus.execution.tools import ToolStatus
         result = self._fresh_launch_result(post_pgrep_rc=1)
         assert result.status == ToolStatus.ACCEPTED_UNVERIFIED
         assert result.verified is False
 
     def test_fresh_launch_no_proc_name_is_accepted_unverified(self):
         """App with no known process name cannot be verified — accepted_unverified."""
-        from tools import ToolStatus
+        from prometheus.execution.tools import ToolStatus
         registry = _make_tool_registry()
         with (
-            patch("tools._APP_PROCESS_NAMES", {}),
-            patch("tools.command_exists", return_value=False),
+            patch("prometheus.execution.tools._APP_PROCESS_NAMES", {}),
+            patch("prometheus.execution.tools.command_exists", return_value=False),
             patch("subprocess.run") as mock_run,
-            patch("tools.ToolRegistry._launch_with_fallback") as mock_launch,
+            patch("prometheus.execution.tools.ToolRegistry._launch_with_fallback") as mock_launch,
             patch("time.sleep"),
         ):
-            from tools import ToolResult as TR
+            from prometheus.execution.tools import ToolResult as TR
             mock_launch.return_value = TR(True, "Launched unknownapp.")
             result = registry.execute({"action": "open_app", "app": "unknownapp"})
         assert result.status == ToolStatus.ACCEPTED_UNVERIFIED
 
     def test_fresh_launch_failure_is_tool_failure(self):
         """If _launch_with_fallback returns ok=False, that propagates."""
-        from tools import ToolStatus
+        from prometheus.execution.tools import ToolStatus
         registry = _make_tool_registry()
         with (
-            patch("tools._APP_PROCESS_NAMES", {"code": "code"}),
-            patch("tools.command_exists", return_value=True),
+            patch("prometheus.execution.tools._APP_PROCESS_NAMES", {"code": "code"}),
+            patch("prometheus.execution.tools.command_exists", return_value=True),
             patch("subprocess.run") as mock_run,
-            patch("tools.ToolRegistry._launch_with_fallback") as mock_launch,
+            patch("prometheus.execution.tools.ToolRegistry._launch_with_fallback") as mock_launch,
         ):
             pre_check = MagicMock()
             pre_check.returncode = 1
             mock_run.side_effect = [pre_check]
-            from tools import ToolResult as TR
+            from prometheus.execution.tools import ToolResult as TR
             mock_launch.return_value = TR(False, "Could not find command for code.")
             result = registry.execute({"action": "open_app", "app": "code"})
         assert result.ok is False
@@ -470,8 +470,8 @@ class TestTellTimeDateInResponse:
         from zoneinfo import ZoneInfo
         frozen = _datetime(2026, 6, 7, 14, 30, 0, tzinfo=ZoneInfo("America/New_York"))
         registry = _make_tool_registry()
-        with patch("tools.CONFIG", {"timezone": "America/New_York"}):
-            with patch("tools._datetime") as mock_dt:
+        with patch("prometheus.execution.tools.CONFIG", {"timezone": "America/New_York"}):
+            with patch("prometheus.execution.tools._datetime") as mock_dt:
                 mock_dt.now.return_value = frozen
                 result = registry.execute({"action": "tell_time"})
         msg = result.message
@@ -481,8 +481,8 @@ class TestTellTimeDateInResponse:
         from zoneinfo import ZoneInfo
         frozen = _datetime(2026, 6, 7, 14, 30, 0, tzinfo=ZoneInfo("America/New_York"))
         registry = _make_tool_registry()
-        with patch("tools.CONFIG", {"timezone": "America/New_York"}):
-            with patch("tools._datetime") as mock_dt:
+        with patch("prometheus.execution.tools.CONFIG", {"timezone": "America/New_York"}):
+            with patch("prometheus.execution.tools._datetime") as mock_dt:
                 mock_dt.now.return_value = frozen
                 result = registry.execute({"action": "tell_time"})
         assert "June" in result.message
@@ -491,8 +491,8 @@ class TestTellTimeDateInResponse:
         from zoneinfo import ZoneInfo
         frozen = _datetime(2026, 6, 7, 14, 30, 0, tzinfo=ZoneInfo("America/New_York"))
         registry = _make_tool_registry()
-        with patch("tools.CONFIG", {"timezone": "America/New_York"}):
-            with patch("tools._datetime") as mock_dt:
+        with patch("prometheus.execution.tools.CONFIG", {"timezone": "America/New_York"}):
+            with patch("prometheus.execution.tools._datetime") as mock_dt:
                 mock_dt.now.return_value = frozen
                 result = registry.execute({"action": "tell_time"})
         assert "2026" in result.message
@@ -513,8 +513,8 @@ class TestTellTimeDateInResponse:
         ny = ZoneInfo("America/New_York")
         frozen_local = frozen_utc.astimezone(ny)
         registry = _make_tool_registry()
-        with patch("tools.CONFIG", {"timezone": "America/New_York"}):
-            with patch("tools._datetime") as mock_dt:
+        with patch("prometheus.execution.tools.CONFIG", {"timezone": "America/New_York"}):
+            with patch("prometheus.execution.tools._datetime") as mock_dt:
                 mock_dt.now.return_value = frozen_local
                 result = registry.execute({"action": "tell_time"})
         assert "2:45 PM" in result.message, f"Expected 2:45 PM, got: {result.message!r}"
@@ -528,7 +528,7 @@ class TestUrlKeyMessageTruthfulness:
     def test_open_url_key_message_does_not_say_opened(self):
         """'Opened X in browser' implies confirmed state — must not appear."""
         registry = _make_tool_registry()
-        with patch("tools.CONFIG", {"urls": {"youtube": "https://youtube.com"}, "apps": {}}):
+        with patch("prometheus.execution.tools.CONFIG", {"urls": {"youtube": "https://youtube.com"}, "apps": {}}):
             with patch("webbrowser.open"):
                 result = registry.execute({"action": "open_url_key", "url_key": "youtube"})
         assert "opened youtube in browser" not in result.message.lower()
@@ -536,7 +536,7 @@ class TestUrlKeyMessageTruthfulness:
     def test_open_url_key_message_says_launch_sent(self):
         """Message must communicate that a command was sent, not that the URL is open."""
         registry = _make_tool_registry()
-        with patch("tools.CONFIG", {"urls": {"google": "https://google.com"}, "apps": {}}):
+        with patch("prometheus.execution.tools.CONFIG", {"urls": {"google": "https://google.com"}, "apps": {}}):
             with patch("webbrowser.open"):
                 result = registry.execute({"action": "open_url_key", "url_key": "google"})
         msg = result.message.lower()
@@ -547,7 +547,7 @@ class TestUrlKeyMessageTruthfulness:
     def test_open_url_keys_message_does_not_say_opened(self):
         """open_url_keys items must not say 'Opened X.' — that implies confirmed state."""
         registry = _make_tool_registry()
-        with patch("tools.CONFIG", {"urls": {"youtube": "https://youtube.com",
+        with patch("prometheus.execution.tools.CONFIG", {"urls": {"youtube": "https://youtube.com",
                                              "gmail": "https://mail.google.com"}, "apps": {}}):
             with patch("webbrowser.open"):
                 result = registry.execute({"action": "open_url_keys",
@@ -583,7 +583,7 @@ class TestLiveStateBlockTime:
         import re
         from zoneinfo import ZoneInfo
         from prometheus.core.session_context import build_live_state_block
-        from config import CONFIG
+        from prometheus.infra.config import CONFIG
         block = build_live_state_block()
         # Extract HH:MM from block
         m = re.search(r"(\d{1,2}):(\d{2})\s*(AM|PM)", block)

@@ -16,7 +16,7 @@ import subprocess as _subprocess
 from pathlib import Path
 from typing import Any
 
-from utils import log_event
+from prometheus.infra.utils import log_event
 
 _SPEAK_TIMEOUT = 60.0  # seconds to wait for response.done before giving up
 
@@ -220,7 +220,7 @@ class HomeAssistantMorningClient:
             })
             return False
 
-        from tools import run_ha_script
+        from prometheus.execution.tools import run_ha_script
 
         name = entity_id
         if name.startswith("script."):

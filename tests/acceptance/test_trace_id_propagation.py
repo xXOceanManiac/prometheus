@@ -33,7 +33,7 @@ if str(_ROOT) not in sys.path:
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _make_client():
-    import realtime_client as rc
+    import prometheus.core.realtime_client as rc
     speaker = MagicMock()
     speaker.finish_realtime = MagicMock()
     client = rc.RealtimePrometheusClient(speaker=speaker, tools=MagicMock())
@@ -52,30 +52,30 @@ class TestTraceIdFormat:
     """make_trace_id() produces correctly formatted, unique IDs."""
 
     def test_format_is_date_time_slug(self):
-        from utils import make_trace_id
+        from prometheus.infra.utils import make_trace_id
         tid = make_trace_id()
         assert TRACE_RE.match(tid), f"unexpected format: {tid!r}"
 
     def test_contains_date_prefix(self):
-        from utils import make_trace_id
+        from prometheus.infra.utils import make_trace_id
         from datetime import date
         tid = make_trace_id()
         today = date.today().strftime("%Y%m%d")
         assert tid.startswith(today), f"trace_id must start with today's date: {tid!r}"
 
     def test_twenty_ids_are_all_unique(self):
-        from utils import make_trace_id
+        from prometheus.infra.utils import make_trace_id
         ids = [make_trace_id() for _ in range(20)]
         assert len(set(ids)) == 20, "duplicate trace IDs detected"
 
     def test_id_has_three_parts_separated_by_hyphens(self):
-        from utils import make_trace_id
+        from prometheus.infra.utils import make_trace_id
         tid = make_trace_id()
         parts = tid.split("-")
         assert len(parts) >= 3, f"expected at least 3 hyphen-separated parts, got: {tid!r}"
 
     def test_slug_part_is_not_empty(self):
-        from utils import make_trace_id
+        from prometheus.infra.utils import make_trace_id
         tid = make_trace_id()
         slug = tid.split("-", 2)[-1]
         assert slug, "slug part of trace_id must not be empty"
@@ -87,28 +87,28 @@ class TestTraceSlug:
     """_trace_slug() derives a human-readable 2-word slug from transcript text."""
 
     def test_slug_from_simple_phrase(self):
-        from utils import _trace_slug
+        from prometheus.infra.utils import _trace_slug
         slug = _trace_slug("turn the lights red")
         assert slug, "slug must not be empty"
 
     def test_slug_is_kebab_case_or_words(self):
-        from utils import _trace_slug
+        from prometheus.infra.utils import _trace_slug
         slug = _trace_slug("open spotify")
         # Accept any non-empty alphanumeric-with-hyphens string
         assert re.match(r"^[a-z0-9-]+$", slug), f"unexpected slug format: {slug!r}"
 
     def test_slug_handles_empty_transcript(self):
-        from utils import _trace_slug
+        from prometheus.infra.utils import _trace_slug
         slug = _trace_slug("")
         assert isinstance(slug, str)  # must not raise
 
     def test_slug_handles_single_word(self):
-        from utils import _trace_slug
+        from prometheus.infra.utils import _trace_slug
         slug = _trace_slug("hello")
         assert isinstance(slug, str)
 
     def test_slug_length_is_reasonable(self):
-        from utils import _trace_slug
+        from prometheus.infra.utils import _trace_slug
         slug = _trace_slug("what time is it right now please")
         assert len(slug) <= 40, f"slug too long: {slug!r}"
 
@@ -121,7 +121,7 @@ class TestPTTTraceIdPropagation:
     def test_ptt_start_sets_trace_id(self, monkeypatch):
         client = _make_client()
         logged = []
-        monkeypatch.setattr("realtime_client.log_event", lambda k, p: logged.append((k, p)))
+        monkeypatch.setattr("prometheus.core.realtime_client.log_event", lambda k, p: logged.append((k, p)))
 
         async def fake_send(d): pass
         client.send = fake_send
@@ -134,7 +134,7 @@ class TestPTTTraceIdPropagation:
     def test_ptt_start_trace_id_matches_format(self, monkeypatch):
         client = _make_client()
         logged = []
-        monkeypatch.setattr("realtime_client.log_event", lambda k, p: logged.append((k, p)))
+        monkeypatch.setattr("prometheus.core.realtime_client.log_event", lambda k, p: logged.append((k, p)))
 
         async def fake_send(d): pass
         client.send = fake_send
@@ -153,7 +153,7 @@ class TestPTTTraceIdPropagation:
         client._response_active = False
 
         logged = []
-        monkeypatch.setattr("realtime_client.log_event", lambda k, p: logged.append((k, p)))
+        monkeypatch.setattr("prometheus.core.realtime_client.log_event", lambda k, p: logged.append((k, p)))
 
         async def fake_send(d): pass
         client.send = fake_send
@@ -174,7 +174,7 @@ class TestPTTTraceIdPropagation:
         client._response_active = True  # no longer blocks end_audio in Pass 12
 
         logged = []
-        monkeypatch.setattr("realtime_client.log_event", lambda k, p: logged.append((k, p)))
+        monkeypatch.setattr("prometheus.core.realtime_client.log_event", lambda k, p: logged.append((k, p)))
 
         async def fake_send(d): pass
         client.send = fake_send
@@ -196,7 +196,7 @@ class TestPTTTraceIdPropagation:
         client._current_trace_id = "20260608-120000-test-commit-xx03"
 
         logged = []
-        monkeypatch.setattr("realtime_client.log_event", lambda k, p: logged.append((k, p)))
+        monkeypatch.setattr("prometheus.core.realtime_client.log_event", lambda k, p: logged.append((k, p)))
 
         async def fake_send(d): pass
         client.send = fake_send
@@ -215,9 +215,9 @@ class TestToolExecutionTraceIdPropagation:
     """tool_execute and tool_result log events must carry the same trace_id."""
 
     def test_tool_execute_log_has_trace_id(self, monkeypatch):
-        from tools import ToolRegistry
+        from prometheus.execution.tools import ToolRegistry
         logged = []
-        monkeypatch.setattr("tools.log_event", lambda k, p: logged.append((k, p)))
+        monkeypatch.setattr("prometheus.execution.tools.log_event", lambda k, p: logged.append((k, p)))
         r = ToolRegistry()
         r.execute({"action": "tell_time"}, trace_id="20260608-120000-ttest-xx04")
 
@@ -226,9 +226,9 @@ class TestToolExecutionTraceIdPropagation:
         assert exec_events[0]["trace_id"] == "20260608-120000-ttest-xx04"
 
     def test_tool_result_log_has_trace_id(self, monkeypatch):
-        from tools import ToolRegistry
+        from prometheus.execution.tools import ToolRegistry
         logged = []
-        monkeypatch.setattr("tools.log_event", lambda k, p: logged.append((k, p)))
+        monkeypatch.setattr("prometheus.execution.tools.log_event", lambda k, p: logged.append((k, p)))
         r = ToolRegistry()
         r.execute({"action": "tell_time"}, trace_id="20260608-120000-ttest-xx05")
 
@@ -237,9 +237,9 @@ class TestToolExecutionTraceIdPropagation:
         assert result_events[0]["trace_id"] == "20260608-120000-ttest-xx05"
 
     def test_execute_and_result_trace_ids_match(self, monkeypatch):
-        from tools import ToolRegistry
+        from prometheus.execution.tools import ToolRegistry
         logged = []
-        monkeypatch.setattr("tools.log_event", lambda k, p: logged.append((k, p)))
+        monkeypatch.setattr("prometheus.execution.tools.log_event", lambda k, p: logged.append((k, p)))
         r = ToolRegistry()
         tid = "20260608-120000-ttest-match-xx06"
         r.execute({"action": "tell_time"}, trace_id=tid)
@@ -250,9 +250,9 @@ class TestToolExecutionTraceIdPropagation:
         assert result_id == tid
 
     def test_no_trace_id_fallback_is_string(self, monkeypatch):
-        from tools import ToolRegistry
+        from prometheus.execution.tools import ToolRegistry
         logged = []
-        monkeypatch.setattr("tools.log_event", lambda k, p: logged.append((k, p)))
+        monkeypatch.setattr("prometheus.execution.tools.log_event", lambda k, p: logged.append((k, p)))
         r = ToolRegistry()
         r.execute({"action": "tell_time"})  # no trace_id kwarg
 
@@ -262,9 +262,9 @@ class TestToolExecutionTraceIdPropagation:
             "trace_id must always be a string even without explicit caller value"
 
     def test_trace_id_in_tool_execute_log_has_payload(self, monkeypatch):
-        from tools import ToolRegistry
+        from prometheus.execution.tools import ToolRegistry
         logged = []
-        monkeypatch.setattr("tools.log_event", lambda k, p: logged.append((k, p)))
+        monkeypatch.setattr("prometheus.execution.tools.log_event", lambda k, p: logged.append((k, p)))
         r = ToolRegistry()
         r.execute({"action": "tell_time"}, trace_id="20260608-120000-action-xx07")
 
@@ -286,9 +286,9 @@ class TestErrorEventsCarryTraceId:
     """Errors logged during tool execution and Realtime API must include trace_id."""
 
     def test_tool_failure_logged_with_trace_id(self, monkeypatch):
-        from tools import ToolRegistry
+        from prometheus.execution.tools import ToolRegistry
         logged = []
-        monkeypatch.setattr("tools.log_event", lambda k, p: logged.append((k, p)))
+        monkeypatch.setattr("prometheus.execution.tools.log_event", lambda k, p: logged.append((k, p)))
         r = ToolRegistry()
         r.execute({"action": "_nonexistent_abc"}, trace_id="20260608-120000-err-xx08")
 
@@ -297,9 +297,9 @@ class TestErrorEventsCarryTraceId:
         assert result_events[0]["trace_id"] == "20260608-120000-err-xx08"
 
     def test_tool_result_log_includes_status(self, monkeypatch):
-        from tools import ToolRegistry, ToolStatus
+        from prometheus.execution.tools import ToolRegistry, ToolStatus
         logged = []
-        monkeypatch.setattr("tools.log_event", lambda k, p: logged.append((k, p)))
+        monkeypatch.setattr("prometheus.execution.tools.log_event", lambda k, p: logged.append((k, p)))
         r = ToolRegistry()
         r.execute({"action": "tell_time"}, trace_id="20260608-120000-stat-xx09")
 
@@ -323,8 +323,8 @@ class TestTraceIdUniquePerTurn:
             call_count[0] += 1
             return f"fake-{call_count[0]}-unique"
 
-        monkeypatch.setattr("realtime_client.make_trace_id", fake_make_trace_id)
-        monkeypatch.setattr("realtime_client.log_event",
+        monkeypatch.setattr("prometheus.core.realtime_client.make_trace_id", fake_make_trace_id)
+        monkeypatch.setattr("prometheus.core.realtime_client.log_event",
                             lambda k, p: seen_ids.append(p.get("trace_id"))
                             if k == "user_turn_started" else None)
 

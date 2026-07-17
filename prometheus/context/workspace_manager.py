@@ -1,1 +1,1 @@
-from workspace.workspace_manager import *  # noqa
+from prometheus.workspace.workspace_manager import *  # noqa

@@ -9,7 +9,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from tools import ToolResult
+    from prometheus.execution.tools import ToolResult
 
 
 def tool_response_instructions(result: "ToolResult", action: str) -> str:
@@ -27,7 +27,7 @@ def tool_response_instructions(result: "ToolResult", action: str) -> str:
     - blocked            → must explain why it was blocked
     - pending_confirmation → must ask the user to confirm
     """
-    from tools import ToolStatus  # runtime import — avoids module-level circular risk
+    from prometheus.execution.tools import ToolStatus  # runtime import — avoids module-level circular risk
 
     status = getattr(result, "status", "")
     message = (result.message or "")[:200]

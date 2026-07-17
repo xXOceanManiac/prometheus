@@ -15,8 +15,8 @@ import pytest
 ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(ROOT))
 
-from planner.executor import Executor, StepResult, ExecutionResult
-from planner.planner import Plan, PlanStep
+from prometheus.planning.executor import Executor, StepResult, ExecutionResult
+from prometheus.planning.planner import Plan, PlanStep
 
 
 # ── Minimal ToolResult stub ───────────────────────────────────────────────────
@@ -47,7 +47,7 @@ class TestStepResultFields:
         assert sr.verification_summary == ""
 
     def test_to_dict_includes_verified(self):
-        from planner.executor import ExecutionResult
+        from prometheus.planning.executor import ExecutionResult
         er = ExecutionResult()
         sr = StepResult(0, "tell_time", True, "10:30", {}, 1, True, 0.99, "Time returned")
         er.steps.append(sr)
@@ -71,8 +71,8 @@ class TestExecutorVerification:
         tools = MagicMock()
         tools.execute.return_value = _TR(True, "3:45 PM")
 
-        with patch("planner.executor._try_verify") as mock_verify, \
-             patch("planner.executor._get_world_snapshot", return_value={}):
+        with patch("prometheus.planning.executor._try_verify") as mock_verify, \
+             patch("prometheus.planning.executor._get_world_snapshot", return_value={}):
             from prometheus.execution.verification import VerificationResult
             mock_verify.return_value = VerificationResult(
                 verified=True, confidence=0.99,
@@ -115,8 +115,8 @@ class TestExecutorVerification:
                 retry_recommended=False,
             )
 
-        with patch("planner.executor._try_verify", side_effect=fake_verify), \
-             patch("planner.executor._get_world_snapshot", return_value={}), \
+        with patch("prometheus.planning.executor._try_verify", side_effect=fake_verify), \
+             patch("prometheus.planning.executor._get_world_snapshot", return_value={}), \
              patch("time.sleep"):  # don't actually sleep in tests
             ex = Executor(tools)
             result = ex.run(self._make_plan("open_app"))
@@ -129,8 +129,8 @@ class TestExecutorVerification:
         tools = MagicMock()
         tools.execute.return_value = _TR(True, "Commit attempted")
 
-        with patch("planner.executor._try_verify") as mock_verify, \
-             patch("planner.executor._get_world_snapshot", return_value={}):
+        with patch("prometheus.planning.executor._try_verify") as mock_verify, \
+             patch("prometheus.planning.executor._get_world_snapshot", return_value={}):
             from prometheus.execution.verification import VerificationResult
             mock_verify.return_value = VerificationResult(
                 verified=False, confidence=0.92,
@@ -154,8 +154,8 @@ class TestExecutorVerification:
         tools = MagicMock()
         tools.execute.return_value = _TR(False, "Error: file not found")
 
-        with patch("planner.executor._try_verify") as mock_verify, \
-             patch("planner.executor._get_world_snapshot", return_value={}), \
+        with patch("prometheus.planning.executor._try_verify") as mock_verify, \
+             patch("prometheus.planning.executor._get_world_snapshot", return_value={}), \
              patch("time.sleep"):
             ex = Executor(tools)
             result = ex.run(self._make_plan("read_file"))
@@ -169,8 +169,8 @@ class TestExecutorVerification:
         tools.execute.return_value = _TR(True, "Done")
 
         # _try_verify raises inside the verify block — must not surface as tool failure
-        with patch("planner.executor._try_verify", side_effect=Exception("verify crash")), \
-             patch("planner.executor._get_world_snapshot", return_value={}):
+        with patch("prometheus.planning.executor._try_verify", side_effect=Exception("verify crash")), \
+             patch("prometheus.planning.executor._get_world_snapshot", return_value={}):
             ex = Executor(tools)
             result = ex.run(self._make_plan("tell_time"))
 
@@ -185,8 +185,8 @@ class TestExecutorVerification:
         tools.execute.return_value = _TR(True, "Done")
 
         # _get_world_snapshot raises inside the verify block — must not surface as tool failure
-        with patch("planner.executor._get_world_snapshot", side_effect=Exception("snap crash")), \
-             patch("planner.executor._try_verify") as mock_verify:
+        with patch("prometheus.planning.executor._get_world_snapshot", side_effect=Exception("snap crash")), \
+             patch("prometheus.planning.executor._try_verify") as mock_verify:
             from prometheus.execution.verification import VerificationResult
             mock_verify.return_value = VerificationResult(
                 verified=True, confidence=0.75,
@@ -207,8 +207,8 @@ class TestMultiStepExecution:
         tools = MagicMock()
         tools.execute.return_value = _TR(True, "ok")
 
-        with patch("planner.executor._try_verify") as mock_verify, \
-             patch("planner.executor._get_world_snapshot", return_value={}):
+        with patch("prometheus.planning.executor._try_verify") as mock_verify, \
+             patch("prometheus.planning.executor._get_world_snapshot", return_value={}):
             from prometheus.execution.verification import VerificationResult
             mock_verify.return_value = VerificationResult(
                 verified=True, confidence=0.90, summary="ok",
@@ -238,8 +238,8 @@ class TestMultiStepExecution:
             _TR(True, "step 2 ok"),
         ]
 
-        with patch("planner.executor._try_verify") as mock_verify, \
-             patch("planner.executor._get_world_snapshot", return_value={}), \
+        with patch("prometheus.planning.executor._try_verify") as mock_verify, \
+             patch("prometheus.planning.executor._get_world_snapshot", return_value={}), \
              patch("time.sleep"):
             from prometheus.execution.verification import VerificationResult
             mock_verify.return_value = VerificationResult(
@@ -265,13 +265,13 @@ class TestMultiStepExecution:
 
 class TestImportIntegrity:
     def test_executor_imports(self):
-        from planner.executor import Executor, StepResult, ExecutionResult
+        from prometheus.planning.executor import Executor, StepResult, ExecutionResult
         assert Executor is not None
 
     def test_try_verify_function_importable(self):
-        from planner.executor import _try_verify
+        from prometheus.planning.executor import _try_verify
         assert callable(_try_verify)
 
     def test_get_world_snapshot_function_importable(self):
-        from planner.executor import _get_world_snapshot
+        from prometheus.planning.executor import _get_world_snapshot
         assert callable(_get_world_snapshot)

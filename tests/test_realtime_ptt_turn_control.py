@@ -29,7 +29,7 @@ if str(_ROOT) not in sys.path:
 # ── helpers ───────────────────────────────────────────────────────────────────
 
 def _make_client():
-    import realtime_client as _rc
+    import prometheus.core.realtime_client as _rc
     speaker = MagicMock()
     speaker.finish_realtime = MagicMock()
     tools = MagicMock()
@@ -93,8 +93,8 @@ class TestSessionConfigTurnDetection:
         async def _run():
             with patch("websockets.connect", new_callable=AsyncMock) as mock_conn, \
                  patch("asyncio.create_task"), \
-                 patch("realtime_client.log_event"), \
-                 patch("realtime_client.notify"):
+                 patch("prometheus.core.realtime_client.log_event"), \
+                 patch("prometheus.core.realtime_client.notify"):
                 mock_conn.return_value = fake_ws
                 await client.connect()
 
@@ -124,7 +124,7 @@ class TestSessionConfigTurnDetection:
         async def _run():
             with patch("websockets.connect", new_callable=AsyncMock) as mock_conn, \
                  patch("asyncio.create_task"), \
-                 patch("realtime_client.notify") as mock_notify:
+                 patch("prometheus.core.realtime_client.notify") as mock_notify:
                 mock_conn.return_value = fake_ws
                 await client.connect()
                 # If audit blocked, notify() was called with "Realtime payload blocked"
@@ -180,7 +180,7 @@ class TestEmptyBufferSkipsCommit:
 
         client.send = _fake_send
 
-        with patch("realtime_client.log_event", side_effect=lambda k, p: logged.append((k, p))):
+        with patch("prometheus.core.realtime_client.log_event", side_effect=lambda k, p: logged.append((k, p))):
             async def _run():
                 await client.end_audio()
             asyncio.run(_run())
@@ -224,7 +224,7 @@ class TestEmptyBufferSkipsCommit:
 
         logged: list[tuple] = []
 
-        with patch("realtime_client.log_event", side_effect=lambda k, p: logged.append((k, p))):
+        with patch("prometheus.core.realtime_client.log_event", side_effect=lambda k, p: logged.append((k, p))):
             with patch.object(client, "_transcribe_ptt", new_callable=AsyncMock):
                 asyncio.run(client.end_audio())
 
@@ -273,7 +273,7 @@ class TestActiveResponsePreventsCreate:
 
         client.send = _fake_send
 
-        with patch("realtime_client.log_event", side_effect=lambda k, p: logged.append((k, p))):
+        with patch("prometheus.core.realtime_client.log_event", side_effect=lambda k, p: logged.append((k, p))):
             async def _run():
                 await client._guarded_response_create({}, context="test_context")
             asyncio.run(_run())
@@ -301,7 +301,7 @@ class TestActiveResponsePreventsCreate:
 
         client.send = _fake_send
 
-        with patch("realtime_client.log_event", side_effect=lambda k, p: logged.append((k, p))):
+        with patch("prometheus.core.realtime_client.log_event", side_effect=lambda k, p: logged.append((k, p))):
             with patch.object(client, "_transcribe_ptt", new_callable=AsyncMock):
                 asyncio.run(client.end_audio())
 
@@ -358,15 +358,15 @@ class TestInputTranscriptCompleted:
         transcript = "what time is it"
 
         # Simulate only the transcription event handling inline
-        with patch("realtime_client.log_event", side_effect=lambda k, p: logged.append((k, p))), \
-             patch("realtime_client.notify"):
+        with patch("prometheus.core.realtime_client.log_event", side_effect=lambda k, p: logged.append((k, p))), \
+             patch("prometheus.core.realtime_client.notify"):
             async def _run():
                 # Simulate the receiver processing a transcription event
                 event_type = "conversation.item.input_audio_transcription.completed"
                 ev = {"type": event_type, "transcript": transcript}
                 t = ev.get("transcript", "")
-                from utils import log_event as real_log_event
-                from realtime_client import log_event as rc_log_event
+                from prometheus.infra.utils import log_event as real_log_event
+                from prometheus.core.realtime_client import log_event as rc_log_event
 
                 # Run the actual inner logic by calling the transcription handler path
                 # We test the end_audio guard, which is simpler than mocking the full receiver.
@@ -379,7 +379,7 @@ class TestInputTranscriptCompleted:
         # The above approach won't work cleanly — use direct import test instead
         # Verify that the log call is in the source (structural check)
         import inspect
-        import realtime_client as rc_module
+        import prometheus.core.realtime_client as rc_module
         src = inspect.getsource(rc_module.RealtimePrometheusClient._receiver)
         assert "input_transcript_completed" in src, (
             "input_transcript_completed event not found in _receiver source"
@@ -388,7 +388,7 @@ class TestInputTranscriptCompleted:
     def test_input_transcript_completed_in_receiver_source(self):
         """input_transcript_completed log event must exist in _receiver with trace_id."""
         import inspect
-        import realtime_client as rc_module
+        import prometheus.core.realtime_client as rc_module
         src = inspect.getsource(rc_module.RealtimePrometheusClient._receiver)
         assert '"input_transcript_completed"' in src
         assert "trace_id" in src  # trace_id must be in the same region
@@ -396,7 +396,7 @@ class TestInputTranscriptCompleted:
     def test_realtime_api_error_carries_trace_id(self):
         """realtime_api_error log must include trace_id field."""
         import inspect
-        import realtime_client as rc_module
+        import prometheus.core.realtime_client as rc_module
         src = inspect.getsource(rc_module.RealtimePrometheusClient._receiver)
         # Find realtime_api_error block and verify trace_id is in it
         lines = src.splitlines()
@@ -449,9 +449,9 @@ class TestWhatTimeIsItFlow:
 
     def test_tell_time_produces_tool_execute_and_result(self, monkeypatch):
         """tell_time action must produce tool_execute and tool_result log events."""
-        from tools import ToolRegistry
+        from prometheus.execution.tools import ToolRegistry
         logged = []
-        monkeypatch.setattr("tools.log_event", lambda k, p: logged.append((k, p)))
+        monkeypatch.setattr("prometheus.execution.tools.log_event", lambda k, p: logged.append((k, p)))
 
         registry = ToolRegistry()
         result = registry.execute({"action": "tell_time"}, trace_id="20260607-000000-what-time-tt01")
@@ -469,11 +469,11 @@ class TestWhatTimeIsItFlow:
 
     def test_what_time_override_then_tool_execute_chain(self, monkeypatch):
         """Simulated full chain: intent override → execute → tool_execute logged."""
-        from tools import ToolRegistry
+        from prometheus.execution.tools import ToolRegistry
         from prometheus.core.intent_overrides import resolve_direct_intent
 
         logged = []
-        monkeypatch.setattr("tools.log_event", lambda k, p: logged.append((k, p)))
+        monkeypatch.setattr("prometheus.execution.tools.log_event", lambda k, p: logged.append((k, p)))
 
         registry = ToolRegistry()
         override = resolve_direct_intent("what time is it")
@@ -509,7 +509,7 @@ class TestTracePropagation:
 
         client.send = _fake_send
 
-        with patch("realtime_client.log_event", side_effect=lambda k, p: logged.append((k, p))):
+        with patch("prometheus.core.realtime_client.log_event", side_effect=lambda k, p: logged.append((k, p))):
             asyncio.run(client.end_audio())
 
         ev = next((p for k, p in logged if k == "user_turn_commit_skipped"), None)
@@ -529,7 +529,7 @@ class TestTracePropagation:
 
         client.send = _fake_send
 
-        with patch("realtime_client.log_event", side_effect=lambda k, p: logged.append((k, p))):
+        with patch("prometheus.core.realtime_client.log_event", side_effect=lambda k, p: logged.append((k, p))):
             asyncio.run(client._guarded_response_create({}, context="trace_test"))
 
         ev = next((p for k, p in logged if k == "response_create_skipped_active"), None)
@@ -543,13 +543,13 @@ class TestToolTruthContractRegression:
     """Verify core tool truth contract still holds after PTT changes."""
 
     def test_tool_status_constants_intact(self):
-        from tools import ToolStatus
+        from prometheus.execution.tools import ToolStatus
         assert ToolStatus.VERIFIED_SUCCESS == "verified_success"
         assert ToolStatus.ACCEPTED_UNVERIFIED == "accepted_unverified"
         assert ToolStatus.TOOL_FAILURE == "tool_failure"
 
     def test_tool_result_ok_true_does_not_imply_verified(self):
-        from tools import ToolResult
+        from prometheus.execution.tools import ToolResult
         r = ToolResult(True, "Done")
         assert r.ok is True
         assert r.verified is False
@@ -557,9 +557,9 @@ class TestToolTruthContractRegression:
     def test_tell_time_returns_verified_success(self, monkeypatch):
         """tell_time reads the local clock — a deterministic source — and correctly
         returns verified_success per the tool truth contract."""
-        from tools import ToolRegistry, ToolStatus
+        from prometheus.execution.tools import ToolRegistry, ToolStatus
         logged = []
-        monkeypatch.setattr("tools.log_event", lambda k, p: logged.append((k, p)))
+        monkeypatch.setattr("prometheus.execution.tools.log_event", lambda k, p: logged.append((k, p)))
         registry = ToolRegistry()
         result = registry.execute({"action": "tell_time"}, trace_id="regression-truth-ee01")
         assert result.ok is True, f"tell_time failed: {result.message}"
@@ -569,9 +569,9 @@ class TestToolTruthContractRegression:
         assert result.verified is True
 
     def test_tool_result_log_includes_status_and_verified(self, monkeypatch):
-        from tools import ToolRegistry
+        from prometheus.execution.tools import ToolRegistry
         logged = []
-        monkeypatch.setattr("tools.log_event", lambda k, p: logged.append((k, p)))
+        monkeypatch.setattr("prometheus.execution.tools.log_event", lambda k, p: logged.append((k, p)))
         registry = ToolRegistry()
         registry.execute({"action": "get_time"}, trace_id="regression-truth-ee02")
         result_events = [p for k, p in logged if k == "tool_result"]

@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from collections import Counter
 
-from episodic_memory import EpisodicMemory
-from procedural_memory import ProceduralMemory
-from semantic_memory import SemanticMemory
+from prometheus.memory.episodic_memory import EpisodicMemory
+from prometheus.memory.procedural_memory import ProceduralMemory
+from prometheus.memory.semantic_memory import SemanticMemory
 
 
 class DreamManager:

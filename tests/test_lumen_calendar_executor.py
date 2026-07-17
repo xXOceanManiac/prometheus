@@ -679,7 +679,7 @@ class TestSafety:
 
     def test_confirmed_required_in_tool_dispatch(self):
         """ToolRegistry dispatch for calendar_execute_approved_request checks confirmed=true."""
-        src = (ROOT / "tools.py").read_text()
+        src = (ROOT / "prometheus" / "execution" / "tools.py").read_text()
         assert "confirmed" in src
 
 

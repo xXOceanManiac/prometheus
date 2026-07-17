@@ -630,7 +630,7 @@ class TestCalendarIntentOverrides:
 class TestToolRegistryDispatch:
     def _make_registry(self):
         sys.path.insert(0, str(ROOT))
-        from tools import ToolRegistry
+        from prometheus.execution.tools import ToolRegistry
         return ToolRegistry()
 
     def test_calendar_get_today_dispatched(self):

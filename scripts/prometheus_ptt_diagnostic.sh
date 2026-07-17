@@ -268,5 +268,5 @@ echo -e "${BOLD}═════════════════════�
 echo ""
 echo "  To follow live:  tail -f $LOG_FILE | jq '.'"
 echo "  To search trace: $0 --trace <trace_id>"
-echo "  Trace debugger:  python3 tools/prometheus_trace_debug.py --last 1"
+echo "  Trace debugger:  python3 scripts/prometheus_trace_debug.py --last 1"
 echo ""

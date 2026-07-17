@@ -10,13 +10,13 @@ import time
 
 import pytest
 
-from agent_base import BaseAgent, AgentTask, AgentResult
-from agents.architect import ArchitectAgent
-from agents.coder import CoderAgent
-from agents.tester import TesterAgent
-from agents.debugger import DebuggerAgent
-from git_safety import GitSafety
-from orchestrator import (
+from prometheus.agents.agent_base import BaseAgent, AgentTask, AgentResult
+from prometheus.agents.architect import ArchitectAgent
+from prometheus.agents.coder import CoderAgent
+from prometheus.agents.tester import TesterAgent
+from prometheus.agents.debugger import DebuggerAgent
+from prometheus.execution.git_safety import GitSafety
+from prometheus.planning.orchestrator import (
     Orchestrator,
     OrchestrationResult,
     start_build,
@@ -214,8 +214,8 @@ class TestOrchestrator:
 
 class TestBackgroundDispatch:
     def test_start_build_is_immediate_and_tracked(self, temp_git_repo, monkeypatch):
-        import agent_base as ab_mod
-        import git_safety as gs_mod
+        import prometheus.agents.agent_base as ab_mod
+        import prometheus.execution.git_safety as gs_mod
 
         # Isolate: checkpoints land in the temp repo, claude never runs
         monkeypatch.setattr(gs_mod, "_REPO_ROOT", temp_git_repo)
@@ -224,7 +224,7 @@ class TestBackgroundDispatch:
             lambda self, prompt: "mocked output", raising=True,
         )
 
-        from working_memory import WorkingMemory
+        from prometheus.memory.working_memory import WorkingMemory
         WorkingMemory().write({"last_orchestration_result": None})
 
         t0 = time.time()

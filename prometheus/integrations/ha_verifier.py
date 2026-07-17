@@ -16,11 +16,11 @@ import os
 import time
 from typing import TYPE_CHECKING
 
-from config import CONFIG
-from utils import log_event
+from prometheus.infra.config import CONFIG
+from prometheus.infra.utils import log_event
 
 if TYPE_CHECKING:
-    from tools import ToolResult
+    from prometheus.execution.tools import ToolResult
 
 # Xbox media player entity (same constant used by workspace_manager.py)
 _XBOX_ENTITY = "media_player.blackhawkred"
@@ -83,7 +83,7 @@ def _get_ha_state(entity_id: str) -> dict | None:
 # ---------------------------------------------------------------------------
 
 def _accepted(message: str, summary: str = "") -> "ToolResult":
-    from tools import ToolResult
+    from prometheus.execution.tools import ToolResult
     r = ToolResult.accepted_unverified(message)
     if summary:
         r.verification_summary = summary
@@ -91,12 +91,12 @@ def _accepted(message: str, summary: str = "") -> "ToolResult":
 
 
 def _success(message: str, summary: str = "", actual: dict | None = None) -> "ToolResult":
-    from tools import ToolResult
+    from prometheus.execution.tools import ToolResult
     return ToolResult.verified_success(message, summary=summary, actual_state=actual or {})
 
 
 def _failure(message: str, summary: str = "", actual: dict | None = None) -> "ToolResult":
-    from tools import ToolResult
+    from prometheus.execution.tools import ToolResult
     return ToolResult.verified_failure(message, summary=summary, actual_state=actual or {})
 
 

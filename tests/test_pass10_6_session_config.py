@@ -33,7 +33,7 @@ if str(_ROOT) not in sys.path:
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _make_client():
-    import realtime_client as rc
+    import prometheus.core.realtime_client as rc
     speaker = MagicMock()
     speaker.finish_realtime = MagicMock()
     client = rc.RealtimePrometheusClient(speaker=speaker, tools=MagicMock())
@@ -59,8 +59,8 @@ def _run_connect_capture(client, logged: list | None = None) -> list[dict]:
         with (
             patch("websockets.connect", new_callable=AsyncMock) as mock_conn,
             patch("asyncio.create_task"),
-            patch("realtime_client.log_event", side_effect=log_fn),
-            patch("realtime_client.notify"),
+            patch("prometheus.core.realtime_client.log_event", side_effect=log_fn),
+            patch("prometheus.core.realtime_client.notify"),
         ):
             mock_conn.return_value = fake_ws
             # Stub _receiver and _chat_polling_loop so they don't start background loops
@@ -132,7 +132,7 @@ class TestPayloadAuditBlocksServerVad:
     def test_server_vad_in_forbidden_strings(self):
         """'server_vad' must appear in the forbidden payload strings check."""
         src = inspect.getsource(
-            __import__("realtime_client").RealtimePrometheusClient.connect
+            __import__("prometheus.core.realtime_client", fromlist=["RealtimePrometheusClient"]).RealtimePrometheusClient.connect
         )
         assert "server_vad" in src, (
             "connect() source must reference 'server_vad' in its forbidden strings check"
@@ -140,7 +140,7 @@ class TestPayloadAuditBlocksServerVad:
 
     def test_payload_audit_logs_blocked_with_ptt_reason(self):
         """The connect() payload audit must block a session.update that contains server_vad."""
-        import realtime_client as rc
+        import prometheus.core.realtime_client as rc
 
         # Verify the guard is wired: the blocked-event code path exists in source
         src = inspect.getsource(rc.RealtimePrometheusClient.connect)
@@ -168,7 +168,7 @@ class TestPayloadAuditBlocksServerVad:
     def test_payload_blocked_reason_is_ptt_specific(self, monkeypatch):
         """The blocked event reason must identify the PTT-mode violation."""
         src = inspect.getsource(
-            __import__("realtime_client").RealtimePrometheusClient.connect
+            __import__("prometheus.core.realtime_client", fromlist=["RealtimePrometheusClient"]).RealtimePrometheusClient.connect
         )
         assert "server_vad_not_allowed_in_ptt_mode" in src, (
             "connect() must log reason='server_vad_not_allowed_in_ptt_mode'"
@@ -210,7 +210,7 @@ class TestTranscriptionConfig:
 
     def test_transcription_model_constant_is_defined(self):
         """_TRANSCRIPTION_MODEL constant must still exist as a reference value."""
-        import realtime_client as rc
+        import prometheus.core.realtime_client as rc
         model = rc.RealtimePrometheusClient._TRANSCRIPTION_MODEL
         assert model, "_TRANSCRIPTION_MODEL must not be empty (kept for reference)"
 
@@ -242,7 +242,7 @@ class TestUpdateSessionInstructionsTurnDetection:
             client.connected = True
             client.ws = MagicMock()
             client.send = AsyncMock(side_effect=lambda d: sent.append(d))
-            with patch("realtime_client.log_event"), patch("realtime_client.notify"):
+            with patch("prometheus.core.realtime_client.log_event"), patch("prometheus.core.realtime_client.notify"):
                 await client._update_session_instructions()
 
         asyncio.run(_go())
@@ -262,7 +262,7 @@ class TestUpdateSessionInstructionsTurnDetection:
             client.connected = True
             client.ws = MagicMock()
             client.send = AsyncMock(side_effect=lambda d: sent.append(d))
-            with patch("realtime_client.log_event"), patch("realtime_client.notify"):
+            with patch("prometheus.core.realtime_client.log_event"), patch("prometheus.core.realtime_client.notify"):
                 await client._update_session_instructions()
 
         asyncio.run(_go())
@@ -282,7 +282,7 @@ class TestUpdateSessionInstructionsTurnDetection:
             client.connected = True
             client.ws = MagicMock()
             client.send = AsyncMock(side_effect=lambda d: sent.append(d))
-            with patch("realtime_client.log_event"), patch("realtime_client.notify"):
+            with patch("prometheus.core.realtime_client.log_event"), patch("prometheus.core.realtime_client.notify"):
                 await client._update_session_instructions()
 
         asyncio.run(_go())
@@ -301,7 +301,7 @@ class TestUpdateSessionInstructionsTurnDetection:
             client.connected = True
             client.ws = MagicMock()
             client.send = AsyncMock(side_effect=lambda d: sent.append(d))
-            with patch("realtime_client.log_event"), patch("realtime_client.notify"):
+            with patch("prometheus.core.realtime_client.log_event"), patch("prometheus.core.realtime_client.notify"):
                 await client._update_session_instructions()
 
         asyncio.run(_go())
@@ -393,14 +393,14 @@ class TestSimulatedPTTTranscriptFlow:
     def test_transcript_event_type_string_matches_receiver(self):
         """The event type string must match what the receiver checks for."""
         src = inspect.getsource(
-            __import__("realtime_client").RealtimePrometheusClient._receiver
+            __import__("prometheus.core.realtime_client", fromlist=["RealtimePrometheusClient"]).RealtimePrometheusClient._receiver
         )
         assert "conversation.item.input_audio_transcription.completed" in src, \
             "_receiver must handle 'conversation.item.input_audio_transcription.completed'"
 
     def test_transcript_event_logged_as_input_transcript_completed(self, monkeypatch):
         """When the receiver sees a transcript event, it must log input_transcript_completed."""
-        import realtime_client as rc
+        import prometheus.core.realtime_client as rc
 
         client = _make_client()
         client.connected = True
@@ -409,8 +409,8 @@ class TestSimulatedPTTTranscriptFlow:
         client._override_handled = False
 
         logged = []
-        monkeypatch.setattr("realtime_client.log_event", lambda k, p: logged.append((k, p)))
-        monkeypatch.setattr("realtime_client.notify", lambda *a: None)
+        monkeypatch.setattr("prometheus.core.realtime_client.log_event", lambda k, p: logged.append((k, p)))
+        monkeypatch.setattr("prometheus.core.realtime_client.notify", lambda *a: None)
 
         # Feed the transcript event through the receiver dispatch logic
         # by running the receiver with a one-shot websocket that yields exactly
@@ -460,7 +460,7 @@ class TestSimulatedPTTTranscriptFlow:
     def test_commit_then_stt_then_transcript_produces_complete_trace(self, monkeypatch):
         """Simulate: end_audio → STT task → _handle_ptt_transcript → input_transcript_completed.
         Pass 12: audio routes to standalone STT; Realtime buffer commit is never called."""
-        import realtime_client as rc
+        import prometheus.core.realtime_client as rc
         from unittest.mock import patch as _patch
 
         client = _make_client()
@@ -474,8 +474,8 @@ class TestSimulatedPTTTranscriptFlow:
         client._override_handled = False
 
         logged = []
-        monkeypatch.setattr("realtime_client.log_event", lambda k, p: logged.append((k, p)))
-        monkeypatch.setattr("realtime_client.notify", lambda *a: None)
+        monkeypatch.setattr("prometheus.core.realtime_client.log_event", lambda k, p: logged.append((k, p)))
+        monkeypatch.setattr("prometheus.core.realtime_client.notify", lambda *a: None)
 
         # Phase 1: end_audio — should trigger STT task, not Realtime commit
         sent = []

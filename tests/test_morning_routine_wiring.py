@@ -88,7 +88,7 @@ class TestHomeAssistantMorningClient:
             return r
 
         client = HomeAssistantMorningClient()
-        with patch.dict(os.environ, _HA_ENV), patch("tools.run_ha_script", fake_run_ha_script):
+        with patch.dict(os.environ, _HA_ENV), patch("prometheus.execution.tools.run_ha_script", fake_run_ha_script):
             result = client.call_script("script.prometheus_xbox_turn_on")
 
         assert captured["name"] == "prometheus_xbox_turn_on"
@@ -104,7 +104,7 @@ class TestHomeAssistantMorningClient:
             return r
 
         client = HomeAssistantMorningClient()
-        with patch.dict(os.environ, _HA_ENV), patch("tools.run_ha_script", fake_run_ha_script):
+        with patch.dict(os.environ, _HA_ENV), patch("prometheus.execution.tools.run_ha_script", fake_run_ha_script):
             result = client.call_script("script.prometheus_morning_lights_warm_fade")
 
         assert result is False
@@ -122,7 +122,7 @@ class TestHomeAssistantMorningClient:
             return r
 
         client = HomeAssistantMorningClient()
-        with patch.dict(os.environ, _HA_ENV), patch("tools.run_ha_script", fake_run_ha_script):
+        with patch.dict(os.environ, _HA_ENV), patch("prometheus.execution.tools.run_ha_script", fake_run_ha_script):
             client.call_script("no_prefix_name")
 
         assert captured["name"] == "no_prefix_name"
@@ -359,7 +359,7 @@ class TestMainMorningRoutineGate:
 
     def test_service_not_instantiated_when_env_var_false(self):
         """With the default env var (false), _morning_routine_svc stays None."""
-        import main as main_module
+        import prometheus.core.main as main_module
 
         core = object.__new__(main_module.PrometheusCore)
         core._morning_routine_svc = None
@@ -374,7 +374,7 @@ class TestMainMorningRoutineGate:
 
     def test_service_instantiated_when_env_var_true(self):
         """With PROMETHEUS_MORNING_ROUTINE_ENABLED=true, service is created."""
-        import main as main_module
+        import prometheus.core.main as main_module
 
         core = object.__new__(main_module.PrometheusCore)
         core._morning_routine_svc = None

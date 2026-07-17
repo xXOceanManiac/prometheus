@@ -11,7 +11,7 @@ import subprocess
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from utils import log_event
+from prometheus.infra.utils import log_event
 
 
 @dataclass

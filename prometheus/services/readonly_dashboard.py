@@ -637,7 +637,7 @@ class ReadonlyDashboard:
                 name="prometheus-readonly-dashboard",
             )
             self._thread.start()
-            from utils import log_event
+            from prometheus.infra.utils import log_event
             log_event("readonly_dashboard_started", {
                 "host": self._host,
                 "port": self._port,
@@ -649,7 +649,7 @@ class ReadonlyDashboard:
                 flush=True,
             )
         except Exception as exc:
-            from utils import log_event
+            from prometheus.infra.utils import log_event
             log_event("readonly_dashboard_start_error", {"error": str(exc)[:200]})
             print(f"[READONLY_DASHBOARD] failed to start: {exc!r:.100}", flush=True)
 

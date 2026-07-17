@@ -17,8 +17,8 @@ import time
 from collections import deque
 from typing import Any
 
-from event_bus import Event, EventType, Priority, get_bus
-from utils import log_event
+from prometheus.sensors.event_bus import Event, EventType, Priority, get_bus
+from prometheus.infra.utils import log_event
 
 _DEDUPE_SECS = 30.0
 _MAX_LINE = 500
