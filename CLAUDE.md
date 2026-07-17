@@ -12,6 +12,12 @@ via Lumen, Godot dashboard). It is a composed technical aide, not a chatbot:
 fast acknowledgement, short responses, deterministic execution, no fake
 certainty.
 
+**Reactive by default.** Prometheus never initiates speech or model calls on
+its own. The only speech initiators are direct user interaction and the
+explicitly enabled morning routine. Do not add proactive loops, startup
+briefings, announcement queues, or idle model calls — readiness gate 10
+exists to fail if they come back.
+
 ## Runtime
 
 - **One process, one entry point:** `main.py` (thin launcher) →
@@ -46,8 +52,11 @@ certainty.
 ## Testing rules
 
 - `pytest tests/` must stay hermetic: no network, no real claude CLI, no
-  commits to this repository. Anything touching git uses the `temp_git_repo`
-  fixture from `tests/conftest.py`.
+  commits to this repository. `tests/conftest.py` sandboxes `HOME` and blanks
+  API keys before any prometheus import — never bypass that. Anything
+  touching git uses the `temp_git_repo` fixture from `tests/conftest.py`.
+- Read-only live smoke tests live in `tests/live/` and run only with
+  `PROMETHEUS_LIVE_TESTS=1` (that mode runs *only* live tests).
 - `./scripts/prometheus_daily_readiness.sh` runs the 11 acceptance gates.
 - Scripts in `scripts/test_morning_*.py` trigger real Home Assistant devices —
   never run them from automated tests.

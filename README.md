@@ -14,28 +14,36 @@ One process, one entry point. `main.py` is a thin launcher; everything lives in 
 
 ```
 prometheus/
+│  # harness — routing, orchestration, permissions, execution, events
 ├── core/          PrometheusCore runtime loop, Realtime API client,
-│                  deterministic intent overrides, session context/briefing,
-│                  identity/profile, proactive loop
-├── voice/         Mic capture, speaker, push-to-talk, wake word
-├── execution/     ToolRegistry (desktop_action), coding agent (Claude CLI),
-│                  background worker pool, workspace policy, git safety
-├── planning/      Planner → Executor → Verifier loop, orchestrator,
+│                  deterministic intent overrides, session context, identity
+├── execution/     ToolRegistry (desktop_action), background worker pool,
+│                  workspace policy, response synthesizer (truth contract)
+├── planning/      Planner → Executor → Verifier loop for background tasks,
 │                  workflow selector/registry, decision router
-├── agents/        Architect/Coder/Tester/Debugger coding agents,
-│                  Lumen calendar ingestion/router/executor agents
-├── context/       Contextual intent resolver, world model, mission state
+├── sensors/       Event bus + window/process/clipboard/filesystem/error sensors
+├── infra/         Config, paths, logging utils, LLM router
+│
+│  # capabilities — one vertical package per feature
+├── voice/         Mic capture, speaker, push-to-talk, wake word
+├── coding/        Architect/Coder/Tester/Debugger agents, orchestrated builds,
+│                  Claude CLI coding agent, git checkpoint/rollback safety
+├── calendar/      Calendar read/create tools + Lumen proposal queues
+├── routines/      Morning routine + calendar event trigger engine
 ├── memory/        Working/episodic/semantic/procedural memory, vault query
 │                  (Obsidian corpus via SQLite FTS5), session summarizer
-├── sensors/       Event bus + window/process/clipboard/filesystem/error sensors
-├── workspace/     Ambient window/project awareness (wmctrl/xdotool)
-├── routines/      Morning routine + calendar event trigger engine
-├── integrations/  Google Calendar API adapter, Home Assistant verifier
-├── services/      HUD state writer (Godot dashboard), guardian news,
-│                  read-only LAN dashboard, visual state
-├── policies/      Proactive speech presence gate
-└── infra/         Config, paths, logging utils, LLM router (Ollama-first)
+├── context/       Contextual intent resolver, world model, mission state
+├── workspace/     Ambient window/project awareness, project resolver
+├── hud/           Dashboard state writer + visual state (Godot HUD)
+├── news/          Guardian news fetch/scoring for the HUD
+│
+│  # integrations — external system adapters, no harness knowledge
+└── integrations/  Google Calendar API adapter, Home Assistant verifier
 ```
+
+Prometheus is **reactive by default**: it initiates speech only when you talk
+to it or when an explicitly enabled scheduled routine (morning routine) fires.
+There are no proactive announcements, startup briefings, or idle model calls.
 
 See [prometheus/ARCHITECTURE.md](prometheus/ARCHITECTURE.md) for request flow, event flow, and how to add a capability.
 
@@ -60,7 +68,6 @@ HOME_ASSISTANT_API_KEY=...
 HOME_ASSISTANT_URL=http://homeassistant.local:8123
 PORCUPINE_ACCESS_KEY=...              # optional wake word
 PROMETHEUS_MORNING_ROUTINE_ENABLED=true
-PROMETHEUS_READONLY_DASHBOARD_ENABLED=false
 PROMETHEUS_REALTIME_REQUIRED=false    # true = fail startup if Realtime is down
 ```
 
@@ -85,9 +92,15 @@ Voice startup failures are non-fatal by default: the core keeps running (HUD wri
 ## Testing
 
 ```bash
-.venv/bin/python -m pytest tests/            # full suite, hermetic (no API calls)
-./scripts/prometheus_daily_readiness.sh      # 11 readiness gates, scored
+.venv/bin/python -m pytest tests/                       # hermetic suite (sandboxed HOME, no API calls)
+PROMETHEUS_LIVE_TESTS=1 .venv/bin/python -m pytest tests/live -q   # read-only live smoke tests
+./scripts/prometheus_daily_readiness.sh                 # 11 readiness gates, scored
 ```
+
+The hermetic suite redirects `HOME` to a temp sandbox and blanks API keys
+before importing anything — it can never touch real state, paid services, or
+devices. The live smoke layer is read-only (vault, calendar reads, Lumen
+outbox, heartbeat, HUD state) and only runs when explicitly requested.
 
 Manual diagnostics live in `scripts/` (PTT trace, morning-routine dry runs, HA script tests — the `test_morning_*.py` scripts hit real devices; run deliberately).
 
@@ -113,4 +126,3 @@ python -m prometheus.calendar.lumen_executor --execute-approved REQUEST_ID
 - Workspace awareness is X11-only.
 - Home Assistant scripts must exist as `script.jarvis_*` / `script.prometheus_*` entities.
 - Legacy `jarvis` naming persists in `~/.jarvis/` state paths and HA entity names.
-- The read-only LAN dashboard is HTTP with no auth — LAN-trust only, disabled by default.

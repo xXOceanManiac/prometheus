@@ -14,7 +14,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
-REPORT_DIR="$PROJECT_ROOT/../reports"
+REPORT_DIR="$PROJECT_ROOT/runtime/reports"
 
 PYTHON="/usr/bin/python3.12"
 SITE_PACKAGES="$PROJECT_ROOT/.venv/lib/python3.12/site-packages"
@@ -117,7 +117,7 @@ run_gate "ha_verification" \
 
 # ── Gate 6: Time Correctness ──────────────────────────────────────────────────
 run_gate "time_correctness" \
-    "tests/acceptance/test_daily_readiness.py::TestGateTimeCorrectness tests/test_pass7_time_browser.py" \
+    "tests/acceptance/test_daily_readiness.py::TestGateTimeCorrectness tests/test_time_and_app_actions.py" \
     "6. Time Correctness (time phrases route deterministically, date in response)"
 
 # ── Gate 7: Calendar Routines ─────────────────────────────────────────────────
