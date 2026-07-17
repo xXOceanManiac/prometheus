@@ -594,21 +594,6 @@ def run_diagnostics() -> dict:
     except Exception as e:
         result["git"] = {"last_checkpoint": "unknown", "uncommitted_changes": 0, "error": str(e)[:80]}
 
-    # cost
-    try:
-        from cost_tracker import CostTracker
-        ct = CostTracker()
-        summary = ct.session_summary()
-        pct = round(summary["daily_total"] / ct.daily_limit_usd * 100, 1) if ct.daily_limit_usd > 0 else 0.0
-        result["cost"] = {
-            "session_usd": summary["session_total"],
-            "daily_usd": summary["daily_total"],
-            "daily_limit_usd": ct.daily_limit_usd,
-            "pct_used": pct,
-        }
-    except Exception as e:
-        result["cost"] = {"session_usd": 0.0, "daily_usd": 0.0, "daily_limit_usd": 5.0, "pct_used": 0.0, "error": str(e)[:80]}
-
     # system
     try:
         import psutil as _psutil
@@ -619,24 +604,6 @@ def run_diagnostics() -> dict:
         }
     except Exception:
         result["system"] = {"cpu_pct": 0.0, "ram_pct": 0.0, "disk_pct": 0.0}
-
-    # watchdog
-    try:
-        from prometheus.memory.working_memory import WorkingMemory
-        import datetime as _dt2
-        wm = WorkingMemory().read()
-        ts = str(wm.get("watchdog_last_check_ts", ""))
-        if ts:
-            try:
-                age_s = time.time() - _dt2.datetime.fromisoformat(ts).timestamp()
-                w_status = "healthy" if age_s < 120 else "stale"
-            except Exception:
-                w_status = "pending"
-        else:
-            w_status = "pending"  # just started, first cycle hasn't fired yet
-        result["watchdog"] = {"last_check_ts": ts, "status": w_status}
-    except Exception as e:
-        result["watchdog"] = {"last_check_ts": "", "status": "pending", "error": str(e)[:80]}
 
     # proactive_loop
     try:
@@ -709,24 +676,6 @@ def run_diagnostics() -> dict:
         healthy += 1
 
     healthy += 1  # git always counts
-
-    cost = result.get("cost", {})
-    pct = cost.get("pct_used", 0)
-    if pct > 80:
-        critical += 1
-        critical_msgs.append(f"at {pct:.0f}% of daily cost limit")
-    elif pct > 50:
-        warnings += 1
-        warning_msgs.append(f"at {pct:.0f}% of daily cost limit")
-    else:
-        healthy += 1
-
-    watchdog_status = result.get("watchdog", {}).get("status", "pending")
-    if watchdog_status == "stale":
-        warnings += 1
-        warning_msgs.append("watchdog hasn't checked in over 2 minutes")
-    else:
-        healthy += 1  # healthy or pending both count fine
 
     healthy += 1  # proactive loop
 
@@ -1553,8 +1502,7 @@ class ToolRegistry:
             for key, label in [
                 ("voice", "Voice"), ("ollama", "Ollama"), ("claude_code", "Claude Code"),
                 ("vault", "Vault"), ("background_workers", "Workers"), ("git", "Git"),
-                ("cost", "Cost"), ("system", "System"), ("watchdog", "Watchdog"),
-                ("proactive_loop", "Proactive"),
+                ("system", "System"), ("proactive_loop", "Proactive"),
             ]:
                 d = data.get(key)
                 if not isinstance(d, dict):
@@ -1563,16 +1511,12 @@ class ToolRegistry:
                     val = f"{'✓' if d.get('available') else '✗'}  {d.get('latency_ms', '?')}ms  models: {', '.join(d.get('models', []))}"
                 elif key == "vault":
                     val = f"{'✓' if d.get('db_exists') else '✗'}  {d.get('chunk_count', 0)} chunks  indexed: {str(d.get('last_indexed', '?'))[:10]}"
-                elif key == "cost":
-                    val = f"session ${d.get('session_usd', 0):.4f}  daily ${d.get('daily_usd', 0):.4f}  ({d.get('pct_used', 0):.0f}% of limit)"
                 elif key == "system":
                     val = f"CPU {d.get('cpu_pct', 0):.0f}%  RAM {d.get('ram_pct', 0):.0f}%  Disk {d.get('disk_pct', 0):.0f}%"
                 elif key == "background_workers":
                     val = f"active: {d.get('active_tasks', 0)}  stuck: {d.get('stuck_tasks', 0)}"
                 elif key == "git":
                     val = f"checkpoint: {d.get('last_checkpoint', '?')}  uncommitted: {d.get('uncommitted_changes', 0)}"
-                elif key == "watchdog":
-                    val = d.get("status", "pending")
                 elif key == "proactive_loop":
                     val = f"{d.get('cycles_this_session', 0)} cycles this session"
                 elif key == "voice":

@@ -1,298 +1,183 @@
 # Prometheus — Architecture Reference
 
 A local-first, voice-driven desktop assistant with deterministic tool routing,
-persistent memory, and ambient workspace awareness.
+persistent memory, and ambient workspace awareness. One process, one entry
+point: `main.py` (thin launcher) → `prometheus.core.main.PrometheusCore`.
 
 ---
 
-## Top-Level Structure
+## Package Structure
 
 ```
 prometheus/
-├── core/           Voice pipeline, session management, identity, intent routing
-├── context/        World model, contextual intent, mission state, workspace awareness
-├── planning/       Planner, executor, verifier, orchestrator, decision router
-├── execution/      Tool registry, coding agent, background worker, workspace policy
-├── memory/         All memory subsystems (episodic, semantic, working, vault)
-├── sensors/        Sensor manager, event bus, input sensors
-├── ui/             Desktop HUD (PyQt6)
-├── voice/          Audio I/O, push-to-talk, wake word
-├── infra/          Utils, config, LLM router
-├── agents/         Architect, Coder, Tester, Debugger autonomous agents
-├── workspace/      Workspace manager and path index
-└── legacy/         Compatibility shims
+├── core/           PrometheusCore loop, Realtime client, intent overrides,
+│                   session context/briefing, identity, profile, proactive loop
+├── voice/          MicRecorder/Speaker (audio.py), push-to-talk, wake word
+├── execution/      ToolRegistry (tools.py), coding agent, background workers,
+│                   workspace policy, git safety, success criteria
+├── planning/       Planner/Executor/Verifier, orchestrator, decision router,
+│                   workflow selector + registry
+├── agents/         agent_base + Architect/Coder/Tester/Debugger,
+│                   Lumen calendar ingestion/router/executor + create flow
+├── context/        Contextual intent resolver, world model, mission state,
+│                   cognition (operational snapshot for LLM planning)
+├── memory/         memory, memory_core (vault FTS5), working/episodic/
+│                   semantic/procedural memory, session summarizer,
+│                   dream manager, behavior learning
+├── sensors/        Event bus, sensor manager, window/clipboard/filesystem/
+│                   error/process sensors
+├── workspace/      WorkspaceManager — window/project awareness, Xbox polling
+├── routines/       Morning routine service + calendar event trigger engine
+├── integrations/   Google Calendar adapter, Home Assistant verifier
+├── services/       HUD state writer (Godot dashboard), guardian news,
+│                   read-only LAN dashboard, visual state controller
+├── policies/       Proactive speech presence gate
+└── infra/          config, paths, utils (log_event), llm_router, log_viewer
 ```
 
-Root-level `.py` files are the implementation; `prometheus/domain/module.py` files
-are thin re-exports providing the `prometheus.*` namespace for clean imports.
+Harness vs capabilities: `core/` owns the runtime loop, session state, routing,
+and event emission. Domain behavior lives in the other packages and is invoked
+through `ToolRegistry` or explicit service objects wired in
+`core/main.py::PrometheusCore.startup()`.
 
 ---
 
-## System Flow Overview
+## Request Flow
 
 ```
-Microphone audio
-    │
+Microphone (voice/audio.py MicRecorder)
+    │ PCM16 chunks, PTT- or wake-word-gated (core/main.py turn logic)
     ▼
-MicRecorder (audio.py)
-    │  PCM16 chunks
-    ▼
-RealtimePrometheusClient (realtime_client.py)
-    │
-    ├─► _direct_intent_override()      ← deterministic, zero-latency
-    │       │ phrase pattern match
+RealtimePrometheusClient (core/realtime_client.py)
+    │ on transcription completed:
+    ├─► resolve_direct_intent()        core/intent_overrides.py — deterministic,
+    │       │                          ~0ms phrase match for known commands
     │       ▼
-    │   _run_direct_tool()             ← ToolRegistry.execute()
-    │       │
+    │   _run_direct_tool()             ToolRegistry.execute()
     │       ▼
-    │   _guarded_response_create()     ← LLM speaks the result
+    │   _guarded_response_create()     LLM speaks the verified result
     │
-    ├─► _contextual_override()         ← vague command resolver (<50ms)
-    │       │ ContextualIntentResolver (rule-based, no LLM)
-    │       ▼
-    │   _run_direct_tool() or _speak_text()
+    ├─► _contextual_override()         context/contextual_intent.py — rule-based
+    │                                  resolver for vague commands (<50ms, no LLM)
     │
-    └─► OpenAI Realtime API            ← LLM path (last resort)
+    └─► OpenAI Realtime API            last resort for open-ended requests
             │ function_call → desktop_action
             ▼
-        _handle_tool_call()            ← ToolRegistry.execute()
-            │
-            ▼
-        _guarded_response_create()     ← LLM speaks the result
+        _handle_tool_call()            ToolRegistry.execute()
 ```
 
----
+Text requests follow the same path: the HUD writes `chat_input` into
+WorkingMemory; `_chat_polling_loop` in the Realtime client picks it up, applies
+the same overrides, and answers via `llm_router.chat_completion()` when voice
+is unavailable.
 
-## Module Responsibilities
+The deterministic path is always preferred. All 71 tool actions are enumerated
+in `ACTION_ENUM` (execution/tools.py); nothing executes via voice outside that
+set.
 
-### core/
-| Module | Responsibility |
-|--------|---------------|
-| `realtime_client.py` | WebSocket connection to OpenAI Realtime API; session lifecycle; audio streaming; tool call dispatch |
-| `main.py` | Entry point; process orchestration; mic recorder; workspace polling; background worker pool |
-| `prometheus_identity.py` | Dynamic system prompt builder from workspace + vault + profile |
-| `prometheus_profile.py` | Daily-cached user profile; active projects; patterns |
-| `session_briefing.py` | Startup briefing; session history loading |
-| `intent_overrides.py` | Extracted phrase registries and `resolve_direct_intent()` |
-| `session_context.py` | Extracted `build_instructions()` and `build_live_state_block()` |
-| `tool_followups.py` | Extracted `FOLLOWUP_ACTIONS` constant |
+## Tool Truth Contract
 
-### context/
-| Module | Responsibility |
-|--------|---------------|
-| `world_model.py` | Real-time snapshot: active window, git state, errors, processes, selected text |
-| `contextual_intent.py` | Vague command resolver ("fix that", "continue", "what's wrong") |
-| `mission_state.py` | Persistent mission/subtask/blocker tracking |
-| `cognition.py` | Higher-order reasoning helpers |
-| `workspace/workspace_manager.py` | Window tracking, project inference, Xbox HA polling |
+`ToolResult` (execution/tools.py) carries a status that the response layer must
+respect:
 
-### planning/
-| Module | Responsibility |
-|--------|---------------|
-| `planner/planner.py` | Rule-based fast path + Ollama/OpenAI LLM fallback; builds `Plan` with `PlanStep` list |
-| `planner/executor.py` | Runs plan steps via ToolRegistry; 3-retry per step; intermediate WorkingMemory writes |
-| `planner/verifier.py` | Checks `all_ok`; builds correction context for Executor retry |
-| `planner/decision_router.py` | Routes intents to appropriate planning or execution path |
-| `orchestrator.py` | Architect → Coder → Tester → Debugger pipeline for autonomous feature building |
+- `verified_success` — ran AND a post-execution check confirmed the outcome
+  (e.g. Home Assistant state re-read by integrations/ha_verifier.py)
+- `accepted_unverified` — ran, reported ok, outcome not independently confirmed
+- `tool_failure` — failed; the spoken response must say so
 
-### execution/
-| Module | Responsibility |
-|--------|---------------|
-| `tools.py` | `ToolRegistry` with 59 `ACTION_ENUM` actions; all local machine control |
-| `coding_agent.py` | Autonomous coding loop: runs Claude CLI, evaluates success criteria, retries, rolls back |
-| `background_worker.py` | ProcessPoolExecutor pinned to CPU cores 4-7; task file tracking; completion callbacks |
-| `workspace_policy.py` | `WORKSPACE_ROOT` and `resolve_workspace_path()`: enforces write-only-to-workspace boundary |
+`execution/response_synthesizer.py` generates response instructions from this
+status so the assistant never claims unverified success.
 
-### memory/
-| Module | Responsibility |
-|--------|---------------|
-| `memory.py` | Primary named-context store |
-| `memory_core.py` | Shared utilities; `query_vault()` FTS5 search over 32K+ Obsidian chunks |
-| `working_memory.py` | Temporary active context; last request, tool result, active goal |
-| `episodic_memory.py` | Session/event memory |
-| `semantic_memory.py` | Facts, concepts, stable knowledge |
-| `procedural_memory.py` | Routines, workflows, repeated procedures |
-| `session_summarizer.py` | End-of-session vault write; `trigger_wrapup()` |
-
-### sensors/
-| Module | Responsibility |
-|--------|---------------|
-| `sensor_manager.py` | Coordinates all sensor polling |
-| `event_bus.py` | Typed pub/sub event bus; priority levels |
-| `sensors/window_sensor.py` | Active window tracking via xdotool |
-| `sensors/clipboard_sensor.py` | Primary selection monitoring via xclip |
-| `sensors/filesystem_sensor.py` | File change events via inotifywait |
-| `sensors/error_sensor.py` | Error/exception detection in log streams |
-| `sensors/process_sensor.py` | Dev process monitoring |
-
-### voice/
-| Module | Responsibility |
-|--------|---------------|
-| `audio.py` | `MicRecorder` (PCM input), `Speaker` (PCM playback), format conversion |
-| `ptt.py` | Push-to-talk controller (ESC / ALT keys) |
-| `wakeword.py` | Optional Porcupine wake word detector |
-
-### infra/
-| Module | Responsibility |
-|--------|---------------|
-| `config.py` | `CONFIG` dict; deep-merge of defaults with `~/.jarvis/config.json` |
-| `utils.py` | `log_event()`, `command_exists()`, `run_cmd()`, `notify()` |
-| `llm_router.py` | Ollama-first, OpenAI fallback; `chat_completion()`, `get_llm()` |
-
----
-
-## Voice Flow (detailed)
+## Background Execution
 
 ```
-1. Audio captured by MicRecorder
-2. Sent as PCM16 chunks via send_audio() → OpenAI Realtime API
-3. On transcription.completed event:
-   a. _direct_intent_override(transcript)
-      - Calls resolve_direct_intent() from prometheus/core/intent_overrides.py
-      - Pure function; phrase pattern matching; ~0ms latency
-      - Returns direct_tool or vault_recall intent, or None
-   b. If direct_tool → _run_direct_tool(payload)
-      - ToolRegistry.execute(payload)
-      - WorkingMemory.set_tool_result()
-      - _guarded_response_create() with action-specific response_instructions
-   c. If vault_recall → _handle_vault_recall(query)
-      - query_vault() → inject_vault_context() → _update_session_instructions()
-      - _guarded_response_create()
-   d. _contextual_override(transcript)
-      - ContextualIntentResolver.resolve(transcript, snapshot, mode="fast")
-      - Rule-based only; no LLM; handles "fix that", "continue", "what's wrong"
-   e. No override matched → pass to Realtime API LLM
-      - Injects _build_live_state_block() as system message
-      - _guarded_response_create() with no instructions override
-4. LLM may call desktop_action → _handle_tool_call()
-5. Speaker plays PCM audio as it streams
-```
-
----
-
-## Planner Flow
-
-```
-User intent (voice or background task)
-    │
+start_coding_task / start_build / BackgroundWorkerPool.submit
+    │ (execution/coding_agent.py, planning/orchestrator.py)
     ▼
-Planner.build(intent, context)
-    │
-    ├─► Rule-based fast path (regex + keyword matching)
-    │   confidence ≥ 0.6 → Plan with PlanStep list
-    │
-    └─► Ollama/OpenAI LLM fallback
-        confidence < 0.6 → clarification request
-    │
+Git checkpoint (execution/git_safety.py — commits repo before the run)
     ▼
-Executor.run(plan)
-    │  Per step: ToolRegistry.execute() → WorkingMemory write
-    │  3 retries per step
-    │
+Claude CLI (coding) or Planner → Executor → Verifier loop (general tasks,
+    ProcessPoolExecutor pinned to cores 4-7, execution/background_worker.py)
     ▼
-Verifier.check(result, intent)
-    │
-    ├─► all_ok → done, notify user
-    └─► failure → correction context → Executor retry (max 3 cycles)
-```
-
----
-
-## Event Flow (sensors)
-
-```
-Sensor polling (async background tasks)
-    │
-    ├─ WindowSensor      → EventType.WINDOW_CHANGED
-    ├─ ClipboardSensor   → EventType.CLIPBOARD_CHANGED
-    ├─ FilesystemSensor  → EventType.FILE_CHANGED
-    ├─ ErrorSensor       → EventType.ERROR_DETECTED (high priority)
-    └─ ProcessSensor     → EventType.PROCESS_STARTED / STOPPED
-    │
+Success criteria evaluated → retry (≤3) → rollback to checkpoint on failure
     ▼
-EventBus.publish(event)
-    │
+Result → WorkingMemory → spoken announcement (presence-gated)
+```
+
+## Event Flow
+
+```
+sensors (window/clipboard/filesystem/error/process, async polling)
     ▼
-Subscribers (world_model.py, WorkspaceManager, etc.)
+EventBus.publish (sensors/event_bus.py, typed events, priorities)
+    ▼
+subscribers: core/main.py (session context refresh), context/world_model.py
 ```
 
----
+HUD: `services/hud_state_writer.py` composes assistant state + calendar +
+news + system metrics and atomically writes
+`<ecosystem>/state/dashboard_state.json` once per minute (state changes
+immediately); the Godot dashboard (`../Frontend_Dashboard`) only reads that
+file. Visual states: idle/armed, listening, processing, speaking,
+background_working. `services/visuals.py` writes `~/.jarvis/visual_state.json`
+for the same purpose at higher frequency.
 
-## Safety Boundaries
+## Memory Model
 
-### Workspace write safety
-All `write_file` actions route through `workspace_policy.resolve_workspace_path()`:
-- Relative paths → `~/PROMETHEUS/workspace/<path>`
-- Absolute paths outside workspace → `PermissionError`, logged as `write_file_blocked`
-- Path traversal → blocked
-- `~/.jarvis`, `/etc`, `/tmp` → blocked
+| Store | File(s) | Purpose | Retention |
+|-------|---------|---------|-----------|
+| WorkingMemory | `~/.jarvis/working_memory.json` | current session context, last tool result, chat handoff | overwritten continuously |
+| Episodic | `~/.jarvis/memory_v2/` | session/event history | append; summarized |
+| Semantic | `~/.jarvis/memory_v2/` | durable facts | append/update |
+| Procedural | `~/.jarvis/memory_v2/` | learned routines | append/update |
+| Vault | `$VAULT_PATH/data/memory.db` (external Obsidian corpus) | long-term personal memory, 32K+ chunks | queried at runtime via FTS5 (`memory_core.query_vault`), never duplicated |
+| Session summaries | vault markdown | end-of-session wrap-up written by session_summarizer | permanent |
 
-### Tool execution safety
-- `run_shell`: token whitelist (18 allowed first tokens); per-command restrictions
-- `run_python`: blocks `os.remove`, `shutil.rmtree`, `rm `, `eval()`, `exec()`, `subprocess`
-- `git_commit`: always requires `confirmed=True`
-- Destructive Home Assistant changes: require confirmation
+Logs (`~/.jarvis/logs/*.jsonl`, via `infra/utils.log_event`) are diagnostics,
+not memory: one file per day, queried by `run_diagnostics` and the trace
+debugger, safe to delete.
 
-### Response guard
-`_guarded_response_create()` blocks duplicate `response.create` while one is in flight.
-Resets on `response.done`, `response.cancelled`, `response.failed`.
+## Permission Model
 
----
+- **Workspace boundary** — every `write_file` resolves through
+  `execution/workspace_policy.resolve_workspace_path()`: paths are
+  `.resolve()`d (symlinks followed) then containment-checked against
+  `runtime/workspace/`. Traversal, absolute-path escape, and symlink escape
+  all raise `PermissionError`.
+- **Shell** — `run_shell` accepts only a whitelisted set of first tokens;
+  `run_python` blocks destructive builtins and subprocess use.
+- **Git** — `git_commit` always requires `confirmed=True`; coding agents
+  checkpoint before running and roll back on failure.
+- **Calendar writes** — proposals flow through file queues and require
+  explicit approval (`lumen_calendar_executor --approve` then
+  `--execute-approved`); reads are unrestricted.
+- **Home Assistant** — deterministic script allowlist (`HARDCODED_HA_SCRIPTS`);
+  post-execution state verification; destructive actions require confirmation.
+- **Proactive speech** — `policies/proactive_speech_policy.py` gates all
+  unprompted speech on user presence (locked/idle ⇒ suppressed).
 
-## Deterministic vs LLM Systems
+## Adding or Modifying a Capability
 
-| System | Type | Latency |
-|--------|------|---------|
-| `_direct_intent_override()` | Deterministic | ~0ms |
-| `_contextual_override()` | Deterministic (rule-based) | <50ms |
-| `ToolRegistry.execute()` | Deterministic | varies |
-| OpenAI Realtime API LLM | LLM | 200-800ms |
-| Planner rule-based path | Deterministic | <10ms |
-| Planner LLM fallback | LLM | 1-5s |
-| CodingAgent | LLM (Claude Code CLI) | 30-300s |
-| Orchestrator | Multi-LLM pipeline | minutes |
+1. Add the action name to `ACTION_ENUM` in `execution/tools.py` and implement
+   its handler in `ToolRegistry._execute_one_inner`. Return a `ToolResult`
+   with an honest status.
+2. If the LLM should follow up after the tool, add it to
+   `core/tool_followups.FOLLOWUP_ACTIONS`.
+3. For latency-sensitive phrases, add a pattern to
+   `core/intent_overrides.resolve_direct_intent()`.
+4. Long-running work goes through `BackgroundWorkerPool` or a coding-agent
+   dispatch — never block the voice loop.
+5. New external systems get a small adapter in `integrations/`; wire any
+   always-on service object in `PrometheusCore.startup()` with a matching
+   `stop()` in `shutdown()`.
+6. Test both paths (direct override and LLM function call). Git-touching
+   tests must use the `temp_git_repo` fixture — never the real repo.
 
-The deterministic path is always preferred. LLM is only invoked when no deterministic
-override matches, or when planning requires language understanding.
+## Testing
 
----
-
-## Architectural Rules
-
-1. **Preserve modular boundaries** — `execution/` does not import from `core/`; `memory/` does not import from `sensors/`
-2. **Deterministic where possible** — phrase matching beats LLM routing for known commands
-3. **Bounded behavior** — all tool actions are enumerated in `ACTION_ENUM`; nothing executes outside this set via voice
-4. **Reliability over novelty** — the voice path must never crash; errors are caught, logged, and surfaced gracefully
-5. **Avoid giant prompt architecture** — context is injected selectively (workspace, vault, working memory), not as one monolithic blob
-6. **Workspace write safety** — code and build output goes to `~/PROMETHEUS/workspace/` only
-7. **No silent failures** — all tool results are logged; all errors are caught and reported
-8. **Memory is append-not-overwrite** — existing context is preserved; new context is merged
-
----
-
-## Workspace Safety Model
-
-```
-~/PROMETHEUS/workspace/          ← WORKSPACE_ROOT (all file writes land here)
-    .prometheus_workspace.json   ← manifest: registered_projects, created_at
-    <project>/                   ← coding agent output, build artifacts
-```
-
-`write_file` action:
-- Relative path `"foo/bar.py"` → `~/PROMETHEUS/workspace/foo/bar.py`
-- Absolute path inside workspace → allowed
-- Any path outside workspace → blocked, logged, ToolResult(ok=False)
-
----
-
-## Runtime Processes
-
-Three independent processes; started via `prometheus.sh start`:
-
-1. **`main.py`** — core assistant: voice, tools, memory, workspace polling, background workers
-2. **`jarvis_desktop_hud.py`** — PyQt6 HUD; polls 6 JSON files at 120ms; closing stops all processes
-3. **`gesture_control/gesture_service.py`** — standalone gesture subsystem
-
-State files read by HUD: `~/.jarvis/visual_state.json`, `~/.jarvis/heartbeat.json`,
-`~/.jarvis/audio_levels.json`, `~/.jarvis/activity.jsonl`, `~/.jarvis/background_tasks.json`,
-`~/.jarvis/agents.json`
+- `tests/` — hermetic pytest suite (~1700 tests); no network, no real claude
+  CLI, no real repo commits.
+- `tests/acceptance/test_daily_readiness.py` — 11 scored gates, run via
+  `scripts/prometheus_daily_readiness.sh`.
+- Manual device-touching diagnostics live in `scripts/` (morning routine,
+  HA scripts, audio sink).

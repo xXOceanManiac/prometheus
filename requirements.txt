@@ -1,17 +1,28 @@
+# Prometheus core runtime
 numpy
 sounddevice
+resampy
 websockets>=16.0
+httpx
 orjson
+requests
 python-dotenv
 pynput>=1.8.0
-PyQt6>=6.6.0
-resampy
-requests
-pillow
-opencv-python
+psutil
+
+# LLM routing (Ollama-first, OpenAI Realtime over websockets, Claude for coding)
+anthropic
+ollama
+
+# Google Calendar integration
+google-api-python-client
+google-auth
+google-auth-oauthlib
+
+# gesture_control/ standalone subsystem only — not needed for the core runtime
 mediapipe
+opencv-python
 mss
-pyside6
 pyautogui
-xclip 
-inotify-tools
+pillow
+PyQt6>=6.6.0
