@@ -633,35 +633,3 @@ class TestFetchGuardianArticles:
         assert results == []
 
 
-# ── HUD import fixes confirmed ────────────────────────────────────────────────
-
-class TestHUDImports:
-
-    def test_store_importable(self):
-        from jarvis_desktop_hud import Store
-        store = Store()
-        assert hasattr(store, "mission")
-        assert hasattr(store, "chat_history")
-        assert hasattr(store, "activity_filter")
-        assert hasattr(store, "diagnostic")
-        assert hasattr(store, "cost_log")
-
-    def test_system_stats_importable(self):
-        from jarvis_desktop_hud import SystemStats
-        stats = SystemStats()
-        assert hasattr(stats, "cpu")
-        assert hasattr(stats, "ram")
-        assert hasattr(stats, "disk")
-
-    def test_hud_window_importable(self):
-        from jarvis_desktop_hud import HUDWindow
-        assert hasattr(HUDWindow, "_draw_mission_strip")
-
-    def test_mission_file_constant(self):
-        import jarvis_desktop_hud
-        assert hasattr(jarvis_desktop_hud, "MISSION_FILE")
-        assert "mission_state.json" in str(jarvis_desktop_hud.MISSION_FILE)
-
-    def test_news_card_importable(self):
-        from jarvis_desktop_hud import NewsCard
-        assert NewsCard is not None

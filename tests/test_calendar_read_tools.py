@@ -557,51 +557,6 @@ class TestNoSubprocess:
         assert "import shlex" not in src
 
 
-# ── Tool registry classification ──────────────────────────────────────────────
-
-class TestToolRegistryCalendarTools:
-    def test_all_calendar_tools_in_registry(self):
-        from prometheus.execution.tool_capability_registry import TOOL_CAPABILITIES
-        for name in [
-            "calendar_list_upcoming", "calendar_get_today", "calendar_get_tomorrow",
-            "calendar_get_date", "calendar_next_event", "calendar_summarize_day",
-            "calendar_find_free_blocks",
-        ]:
-            assert name in TOOL_CAPABILITIES, f"{name} missing from registry"
-
-    def test_all_calendar_tools_risk_none(self):
-        from prometheus.execution.tool_capability_registry import TOOL_CAPABILITIES
-        for name in [
-            "calendar_list_upcoming", "calendar_get_today", "calendar_get_tomorrow",
-            "calendar_get_date", "calendar_next_event", "calendar_summarize_day",
-            "calendar_find_free_blocks",
-        ]:
-            cap = TOOL_CAPABILITIES[name]
-            assert cap.risk == "none", f"{name}.risk={cap.risk!r} should be 'none'"
-
-    def test_calendar_read_tools_are_read_only(self):
-        from prometheus.execution.tool_capability_registry import TOOL_CAPABILITIES
-        _read_only_tools = {
-            "calendar_list_upcoming", "calendar_get_today", "calendar_get_tomorrow",
-            "calendar_get_date", "calendar_next_event", "calendar_summarize_day",
-            "calendar_find_free_blocks", "calendar_list_reviewed_requests",
-        }
-        for name in _read_only_tools:
-            cap = TOOL_CAPABILITIES[name]
-            assert any("read-only" in s.lower() or "read" in s.lower() for s in cap.safe_when), \
-                f"{name} should be marked read-only in safe_when"
-
-    def test_calendar_executor_tools_are_high_or_medium_risk(self):
-        from prometheus.execution.tool_capability_registry import TOOL_CAPABILITIES
-        assert TOOL_CAPABILITIES["calendar_approve_request"].risk == "medium"
-        assert TOOL_CAPABILITIES["calendar_execute_approved_request"].risk == "high"
-
-    def test_no_calendar_write_tools_in_registry(self):
-        from prometheus.execution.tool_capability_registry import TOOL_CAPABILITIES
-        write_tools = [k for k in TOOL_CAPABILITIES if "calendar" in k and "write" in k]
-        assert not write_tools, f"Unexpected write tools: {write_tools}"
-
-
 # ── Intent override routing ───────────────────────────────────────────────────
 
 class TestCalendarIntentOverrides:

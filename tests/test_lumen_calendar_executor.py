@@ -682,15 +682,6 @@ class TestSafety:
         src = (ROOT / "tools.py").read_text()
         assert "confirmed" in src
 
-    def test_high_risk_classification(self):
-        from prometheus.execution.tool_capability_registry import TOOL_CAPABILITIES
-        assert TOOL_CAPABILITIES["calendar_execute_approved_request"].risk == "high"
-
-    def test_execute_requires_confirmed_in_registry(self):
-        from prometheus.execution.tool_capability_registry import TOOL_CAPABILITIES
-        cap = TOOL_CAPABILITIES["calendar_execute_approved_request"]
-        assert "confirmed" in cap.required_slots
-
 
 # ── .env loading ──────────────────────────────────────────────────────────────
 

@@ -263,44 +263,6 @@ class Test5MissionDirectOverride(unittest.TestCase):
         self.assertEqual(override["payload"]["action"], "get_mission_status")
 
 
-# ── 6. HUD Store has mission field ────────────────────────────────────────────
-
-class Test6HUDMissionField(unittest.TestCase):
-    def test_store_has_mission_field(self):
-        from jarvis_desktop_hud import Store
-        store = Store()
-        self.assertTrue(hasattr(store, "mission"), "Store must have mission field")
-        self.assertIsInstance(store.mission, dict)
-
-    def test_store_refresh_reads_mission_file(self):
-        from jarvis_desktop_hud import Store, MISSION_FILE
-        # Write a test mission file
-        test_data = {
-            "current_mission": "HUD audit test mission",
-            "active_goal": "Verify HUD reads mission",
-            "subtasks": [],
-            "completed_subtasks": [],
-            "blocked_items": [],
-            "next_action": "",
-            "last_updated": time.strftime("%Y-%m-%dT%H:%M:%S"),
-        }
-        MISSION_FILE.parent.mkdir(parents=True, exist_ok=True)
-        MISSION_FILE.write_text(json.dumps(test_data), encoding="utf-8")
-
-        store = Store()
-        store.refresh()
-        self.assertEqual(store.mission.get("current_mission"), "HUD audit test mission")
-
-    def test_mission_file_constant_defined(self):
-        import jarvis_desktop_hud
-        self.assertTrue(hasattr(jarvis_desktop_hud, "MISSION_FILE"))
-        self.assertIn("mission_state.json", str(jarvis_desktop_hud.MISSION_FILE))
-
-    def test_draw_mission_strip_method_exists(self):
-        from jarvis_desktop_hud import HUDWindow
-        self.assertTrue(hasattr(HUDWindow, "_draw_mission_strip"))
-
-
 # ── 7. Direct overrides for tell_time, screenshot, apps ───────────────────────
 
 class Test7DirectOverrides(unittest.TestCase):

@@ -1,14 +1,14 @@
 {
-  "request_id": "req-direct-6b4f1a4fc01c",
-  "reviewed_at": "2026-05-15T04:22:15.670644+00:00",
+  "request_id": "req-direct-d0691c8ac98c",
+  "reviewed_at": "2026-07-17T06:33:45.317112+00:00",
   "all_dry_run": true,
   "approved": false,
   "original_operations": [
     {
       "operation_type": "create_event",
-      "title": "Focus Block",
-      "start_time": "2026-05-15T14:00:00",
-      "end_time": "2026-05-15T15:30:00",
+      "title": "Standup",
+      "start_time": "2026-07-18T10:00:00",
+      "end_time": "2026-07-18T10:30:00",
       "calendar_id": "primary",
       "requires_prometheus_approval": true,
       "dry_run": true
