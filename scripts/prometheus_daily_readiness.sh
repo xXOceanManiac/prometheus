@@ -135,10 +135,10 @@ run_gate "hud_state" \
     "tests/acceptance/test_daily_readiness.py::TestGateHUDState tests/test_hud_state_writer.py" \
     "9. HUD State Writer (visual state file written atomically)"
 
-# ── Gate 10: Proactive Policy ─────────────────────────────────────────────────
-run_gate "proactive_policy" \
-    "tests/acceptance/test_daily_readiness.py::TestGateProactivePolicy tests/test_proactive_speech_policy.py" \
-    "10. Proactive Policy (nudges disabled by default, no unwanted interruptions)"
+# ── Gate 10: Reactive By Default ──────────────────────────────────────────────
+run_gate "reactive_by_default" \
+    "tests/acceptance/test_daily_readiness.py::TestGateReactiveByDefault" \
+    "10. Reactive By Default (no proactive speech or model-call machinery)"
 
 # ── Gate 11: False Success Prevention ────────────────────────────────────────
 run_gate "false_success_prevention" \

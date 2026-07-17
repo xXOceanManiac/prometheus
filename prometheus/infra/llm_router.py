@@ -143,7 +143,7 @@ class _OpenAIFallbackClient:
 
 
 class _GPT4oClient:
-    """Direct GPT-4o client for planning, proactive loop, and summarization.
+    """Direct GPT-4o client for planning and summarization.
     Uses the OpenAI REST API via requests — does not require the openai SDK."""
 
     _API_URL = "https://api.openai.com/v1/chat/completions"
@@ -190,7 +190,7 @@ class _GPT4oClient:
 
 def get_planning_llm() -> Any | None:
     """
-    Return a GPT-4o client for planning, proactive-loop, and summarize tasks.
+    Return a GPT-4o client for planning and summarize tasks.
     Goes directly to GPT-4o — Ollama is NOT used for planning (too slow on CPU).
     Falls back to Ollama only if no OpenAI API key is present.
     Returns None if neither is available — callers must handle this gracefully.

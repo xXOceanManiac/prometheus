@@ -100,9 +100,9 @@ class TestPrometheusCore:
         from prometheus.core.prometheus_identity import build_system_prompt  # noqa
         assert callable(build_system_prompt)
 
-    def test_core_session_briefing_wrapper(self):
-        from prometheus.core.session_briefing import SessionBriefing  # noqa
-        assert SessionBriefing is not None
+    def test_session_history_loader(self):
+        from prometheus.memory.session_summarizer import load_recent_sessions  # noqa
+        assert callable(load_recent_sessions)
 
 
 # ── prometheus.context.* namespace ───────────────────────────────────────────

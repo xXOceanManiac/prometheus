@@ -149,32 +149,6 @@ class RealtimePrometheusClient:
         except Exception:
             pass
 
-    async def _speak_text(self, text: str) -> None:
-        """Send a text-only response through the Realtime session."""
-        if not self.connected or not self.ws:
-            return
-        try:
-            await self.send({
-                "type": "conversation.item.create",
-                "item": {
-                    "type": "message",
-                    "role": "system",
-                    "content": [{"type": "input_text", "text": text}],
-                },
-            })
-            await self._guarded_response_create(
-                {
-                    "modalities": ["audio", "text"],
-                    "instructions": (
-                        f"Respond as Prometheus. Deliver this message naturally and concisely, "
-                        f"staying in character: {text}"
-                    ),
-                },
-                context="_speak_text",
-            )
-        except Exception:
-            pass
-
     def set_system_prompt(self, prompt: str) -> None:
         """Set the base system prompt. Call before connect() for full effect."""
         if prompt and prompt.strip():
@@ -599,7 +573,7 @@ class RealtimePrometheusClient:
                 response_instructions = (
                     f"Coding task started in background: '{goal}'. "
                     f"Success criteria: {criteria}. "
-                    "Say: 'Coding task started. I'll let you know when it's done.'"
+                    "Say: 'Coding task started. Ask me for status anytime.'"
                 )
             elif action == "get_coding_status":
                 d = result.data or {}
@@ -625,7 +599,7 @@ class RealtimePrometheusClient:
                 response_instructions = (
                     f"Orchestrated build started for: '{goal}'. "
                     "Say: 'Build started. Architect, Coder, and Tester are running in the background. "
-                    "I'll let you know when it's done.'"
+                    "Ask me for status anytime.'"
                 )
             elif action == "get_build_status":
                 d = result.data or {}
@@ -635,7 +609,7 @@ class RealtimePrometheusClient:
                 elif status == "running":
                     response_instructions = (
                         f"Build is still running for: '{d.get('goal','')[:50]}'. "
-                        "Say: 'The build is still in progress. I'll let you know when it completes.'"
+                        "Say: 'The build is still in progress.'"
                     )
                 elif d.get("success"):
                     tr = d.get("test_results", {})
@@ -1523,7 +1497,7 @@ class RealtimePrometheusClient:
                 response_instructions = (
                     f"Coding task started in background: '{goal}'. "
                     f"Success criteria: {criteria}. "
-                    "Say: 'Coding task started. I'll let you know when it's done.'"
+                    "Say: 'Coding task started. Ask me for status anytime.'"
                 )
             elif tool_action == "get_coding_status":
                 d = result.data or {}
@@ -1549,7 +1523,7 @@ class RealtimePrometheusClient:
                 response_instructions = (
                     f"Orchestrated build started for: '{goal}'. "
                     "Say: 'Build started. Architect, Coder, and Tester are running in the background. "
-                    "I'll let you know when it's done.'"
+                    "Ask me for status anytime.'"
                 )
             elif tool_action == "get_build_status":
                 d = result.data or {}
@@ -1559,7 +1533,7 @@ class RealtimePrometheusClient:
                 elif status == "running":
                     response_instructions = (
                         f"Build is still running for: '{d.get('goal','')[:50]}'. "
-                        "Say: 'The build is still in progress. I'll let you know when it completes.'"
+                        "Say: 'The build is still in progress.'"
                     )
                 elif d.get("success"):
                     tr = d.get("test_results", {})

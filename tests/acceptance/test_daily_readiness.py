@@ -16,7 +16,7 @@ Gates:
   7. calendar_routines — calendar event trigger engine runs without live API
   8. morning_routine   — morning routine completes even when speech fails
   9. hud_state         — visual state file is written correctly
- 10. proactive_policy  — nudges disabled by default; no unwanted interruptions
+ 10. reactive_by_default — no proactive speech or model-call machinery exists
  11. false_success_prevention — accepted_unverified / verified_success never swapped
 
 All tests are offline — no real Realtime API, no real HA, no real Google Calendar.
@@ -342,11 +342,8 @@ class TestGateCalendarRoutines:
         class FakeReader:
             def get_upcoming_events(self): return []
 
-        async def noop_speaker(text): pass
-
         engine = CalendarEventTriggerEngine(
             calendar_reader=FakeReader(),
-            speaker_fn=noop_speaker,
             state_path=tmp_path / "state.json",
             logger=MagicMock(),
         )
@@ -354,22 +351,29 @@ class TestGateCalendarRoutines:
 
     def test_engine_does_not_fire_without_events(self, tmp_path):
         import asyncio
-        from prometheus.routines.calendar_event_triggers import CalendarEventTriggerEngine
+        from prometheus.routines.calendar_event_triggers import (
+            CalendarEventTriggerEngine,
+            CalendarRoutineRule,
+        )
         fired = []
 
         class FakeReader:
             def get_upcoming_events(self): return []
 
-        async def track_speaker(text): fired.append(text)
+        async def track_handler(event): fired.append(event)
 
         engine = CalendarEventTriggerEngine(
             calendar_reader=FakeReader(),
-            speaker_fn=track_speaker,
+            rules=[CalendarRoutineRule(
+                name="morning_routine",
+                match_title_contains=["wake up"],
+                handler=track_handler,
+            )],
             state_path=tmp_path / "state.json",
             logger=MagicMock(),
         )
         asyncio.run(engine._poll())
-        assert not fired, "speaker fired with no events"
+        assert not fired, "handler fired with no events"
 
     def test_calendar_read_tool_get_today_does_not_crash(self):
         from prometheus.execution.tools import ToolRegistry
@@ -509,33 +513,38 @@ class TestGateHUDState:
         assert "state" in data, "state file must include state key"
 
 
-# ── Gate 10: Proactive Policy ─────────────────────────────────────────────────
+# ── Gate 10: Reactive By Default ──────────────────────────────────────────────
 
-class TestGateProactivePolicy:
-    """Proactive nudges are disabled by default; no unwanted interruptions."""
+class TestGateReactiveByDefault:
+    """Prometheus never initiates speech or model calls on its own.
 
-    def test_wrapup_disabled_by_default(self):
-        from prometheus.core.proactive_loop import ProactiveLoop
-        loop = ProactiveLoop.__new__(ProactiveLoop)
-        with patch.dict(os.environ, {}, clear=False):
-            os.environ.pop("PROMETHEUS_PROACTIVE_WRAPUPS_ENABLED", None)
-            # The env var controls this; absence means disabled
-            enabled = os.environ.get("PROMETHEUS_PROACTIVE_WRAPUPS_ENABLED", "").lower()
-            assert enabled not in ("1", "true", "yes"), "wrapups must be off by default"
+    The only speech initiators are direct interaction and explicitly enabled
+    scheduled routines. This gate fails if proactive machinery reappears.
+    """
 
-    def test_checkins_disabled_by_default(self):
-        os.environ.pop("PROMETHEUS_PROACTIVE_CHECKINS_ENABLED", None)
-        enabled = os.environ.get("PROMETHEUS_PROACTIVE_CHECKINS_ENABLED", "").lower()
-        assert enabled not in ("1", "true", "yes"), "checkins must be off by default"
+    def test_proactive_loop_module_removed(self):
+        with pytest.raises(ModuleNotFoundError):
+            import prometheus.core.proactive_loop  # noqa: F401
 
-    def test_policy_silence_check_callable(self):
-        from prometheus.core.proactive_loop import ProactiveLoop
-        loop = ProactiveLoop.__new__(ProactiveLoop)
-        loop._last_voice_activity = 0.0
-        loop._last_spoke_at = 0.0
-        loop.config = MagicMock()
-        # Just verify the _can_speak method or equivalent exists
-        assert hasattr(ProactiveLoop, "note_voice_activity")
+    def test_session_briefing_module_removed(self):
+        with pytest.raises(ModuleNotFoundError):
+            import prometheus.core.session_briefing  # noqa: F401
+
+    def test_core_has_no_spoken_background_announcements(self):
+        from prometheus.core.main import PrometheusCore
+        assert not hasattr(PrometheusCore, "_announce_background_task_complete")
+
+    def test_trigger_engine_ignores_unmatched_events(self):
+        """The calendar trigger engine has no default spoken notification."""
+        from prometheus.routines.calendar_event_triggers import CalendarEventTriggerEngine
+        assert not hasattr(CalendarEventTriggerEngine, "_default_notify")
+
+    def test_shutdown_does_not_auto_summarize(self):
+        """Session summaries are written only via the explicit session_wrapup tool."""
+        import inspect
+        from prometheus.core.main import PrometheusCore
+        src = inspect.getsource(PrometheusCore.shutdown)
+        assert "summarize_and_write" not in src
 
 
 # ── Gate 11: False Success Prevention ─────────────────────────────────────────

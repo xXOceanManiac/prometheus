@@ -121,7 +121,7 @@ def _read_activity_lines(n: int = 6) -> list[str]:
                 try:
                     rec = json.loads(line)
                     event = str(rec.get("event", "") or rec.get("type", "")).strip()
-                    if event and not event.startswith("proactive") and not event.startswith("realtime_event"):
+                    if event and not event.startswith("realtime_event"):
                         ts = str(rec.get("ts", ""))[:16].replace("T", " ").replace("-", "/")
                         lines.append(f"{ts}  {event}")
                         if len(lines) >= n:

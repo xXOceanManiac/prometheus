@@ -605,31 +605,6 @@ def run_diagnostics() -> dict:
     except Exception:
         result["system"] = {"cpu_pct": 0.0, "ram_pct": 0.0, "disk_pct": 0.0}
 
-    # proactive_loop
-    try:
-        log_dir = Path.home() / ".jarvis" / "logs"
-        cycles = 0
-        last_fired = ""
-        if log_dir.exists():
-            import json as _json
-            files = sorted(log_dir.glob("*.jsonl"))
-            if files:
-                lines = files[-1].read_text(encoding="utf-8", errors="ignore").splitlines()
-                for raw in lines:
-                    try:
-                        rec = _json.loads(raw)
-                        if rec.get("kind") == "proactive_loop_cycle":
-                            cycles += 1
-                            last_fired = str(rec.get("ts", ""))
-                    except Exception:
-                        pass
-        result["proactive_loop"] = {
-            "last_fired_ts": last_fired,
-            "cycles_this_session": cycles,
-        }
-    except Exception as e:
-        result["proactive_loop"] = {"last_fired_ts": "", "cycles_this_session": 0, "error": str(e)[:80]}
-
     # Build spoken summary
     healthy = 0
     warnings = 0
@@ -676,8 +651,6 @@ def run_diagnostics() -> dict:
         healthy += 1
 
     healthy += 1  # git always counts
-
-    healthy += 1  # proactive loop
 
     healthy += 1  # system
 
@@ -1502,7 +1475,7 @@ class ToolRegistry:
             for key, label in [
                 ("voice", "Voice"), ("ollama", "Ollama"), ("claude_code", "Claude Code"),
                 ("vault", "Vault"), ("background_workers", "Workers"), ("git", "Git"),
-                ("system", "System"), ("proactive_loop", "Proactive"),
+                ("system", "System"),
             ]:
                 d = data.get(key)
                 if not isinstance(d, dict):
@@ -1517,8 +1490,6 @@ class ToolRegistry:
                     val = f"active: {d.get('active_tasks', 0)}  stuck: {d.get('stuck_tasks', 0)}"
                 elif key == "git":
                     val = f"checkpoint: {d.get('last_checkpoint', '?')}  uncommitted: {d.get('uncommitted_changes', 0)}"
-                elif key == "proactive_loop":
-                    val = f"{d.get('cycles_this_session', 0)} cycles this session"
                 elif key == "voice":
                     val = "connected" if d.get("connected", True) else "disconnected"
                 elif key == "claude_code":

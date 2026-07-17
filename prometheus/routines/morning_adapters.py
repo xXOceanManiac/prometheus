@@ -248,8 +248,7 @@ class PrometheusMorningSpeaker:
     """
     Async speaker adapter for MorningRoutineService.
 
-    Replicates the proactive_loop._surface() pattern:
-    sends conversation.item.create then response.create so the Realtime
+    Sends conversation.item.create then response.create so the Realtime
     client reads the text aloud exactly as provided.
     """
 
