@@ -356,33 +356,52 @@ class TestMorningCalendarReader:
 # ── Main wiring: PROMETHEUS_MORNING_ROUTINE_ENABLED gate ──────────────────────
 
 class TestMainMorningRoutineGate:
+    """Exercises the real PrometheusCore._init_morning_routine wiring."""
 
-    def test_service_not_instantiated_when_env_var_false(self):
-        """With the default env var (false), _morning_routine_svc stays None."""
+    @staticmethod
+    def _bare_core():
         import prometheus.core.main as main_module
-
         core = object.__new__(main_module.PrometheusCore)
         core._morning_routine_svc = None
+        core._cal_trigger_engine = None
+        core.client = MagicMock()
+        return core
 
-        # Simulate the gate check with flag disabled
-        enabled_raw = "false"
-        enabled = enabled_raw.strip().lower() in ("1", "true", "yes")
-        if enabled:
-            core._morning_routine_svc = MagicMock()
+    def test_switch_parses_env_values(self):
+        from prometheus.routines.morning_routine import morning_routine_enabled
+        for raw, expected in [
+            ("true", True), ("1", True), ("yes", True), ("TRUE", True),
+            ("false", False), ("0", False), ("", False), ("banana", False),
+        ]:
+            with patch.dict(os.environ, {"PROMETHEUS_MORNING_ROUTINE_ENABLED": raw}):
+                assert morning_routine_enabled() is expected, raw
+        with patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("PROMETHEUS_MORNING_ROUTINE_ENABLED", None)
+            assert morning_routine_enabled() is False
 
+    def test_disabled_constructs_nothing(self):
+        """Disabled switch: no service, no trigger engine, no scheduled task."""
+        core = self._bare_core()
+        with patch.dict(os.environ, {"PROMETHEUS_MORNING_ROUTINE_ENABLED": "false"}):
+            core._init_morning_routine()
         assert core._morning_routine_svc is None
+        assert core._cal_trigger_engine is None
 
-    def test_service_instantiated_when_env_var_true(self):
-        """With PROMETHEUS_MORNING_ROUTINE_ENABLED=true, service is created."""
-        import prometheus.core.main as main_module
+    def test_enabled_constructs_service_and_engine(self):
+        """Enabled switch: real service and trigger engine are wired."""
+        import asyncio
+        core = self._bare_core()
 
-        core = object.__new__(main_module.PrometheusCore)
-        core._morning_routine_svc = None
+        async def _run():
+            with patch.dict(os.environ, {"PROMETHEUS_MORNING_ROUTINE_ENABLED": "true"}):
+                core._init_morning_routine()
+            # Let the created calendar-trigger task start and be cancelled cleanly
+            for t in asyncio.all_tasks():
+                if t is not asyncio.current_task():
+                    t.cancel()
 
-        # Simulate the gate check with flag enabled
-        enabled_raw = "true"
-        enabled = enabled_raw.strip().lower() in ("1", "true", "yes")
-        if enabled:
-            core._morning_routine_svc = MagicMock()
-
+        asyncio.run(_run())
         assert core._morning_routine_svc is not None
+        assert core._cal_trigger_engine is not None
+        # The Wake Up rule is registered on the engine
+        assert [r.name for r in core._cal_trigger_engine._rules] == ["morning_routine"]

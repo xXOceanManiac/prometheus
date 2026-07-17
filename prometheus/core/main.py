@@ -27,7 +27,10 @@ from prometheus.core.prometheus_profile import PrometheusProfile
 from prometheus.memory.session_summarizer import load_recent_sessions
 from prometheus.sensors.event_bus import get_bus, EventType
 from prometheus.sensors.sensor_manager import SensorManager
-from prometheus.routines.morning_routine import MorningRoutineService
+from prometheus.routines.morning_routine import (
+    MorningRoutineService,
+    morning_routine_enabled,
+)
 from prometheus.routines.morning_adapters import (
     JSONMorningRoutineStateStore,
     HomeAssistantMorningClient,
@@ -190,53 +193,7 @@ class PrometheusCore:
 
         self.client.inject_workspace_context(project)
 
-        # Calendar Event Trigger Engine — owns precise event timing for morning routine
-        # and future calendar-driven routines. Gated on PROMETHEUS_MORNING_ROUTINE_ENABLED.
-        # PrometheusMorningSpeaker guards on client.connected before sending.
-        _mrn_raw = os.getenv("PROMETHEUS_MORNING_ROUTINE_ENABLED", "")
-        _mrn_enabled = _mrn_raw.strip().lower()
-        print(f"[MORNING] env={_mrn_raw!r} enabled={_mrn_enabled!r}", flush=True)
-        log_event("morning_routine_env_check", {"raw": _mrn_raw, "enabled": _mrn_enabled})
-        if _mrn_enabled in ("1", "true", "yes"):
-            print("[MORNING] init starting", flush=True)
-            log_event("morning_routine_init_starting", {})
-            try:
-                morning_speaker = PrometheusMorningSpeaker(self.client)
-                self._morning_routine_svc = MorningRoutineService(
-                    calendar_reader=MorningCalendarReader(),
-                    ha_client=HomeAssistantMorningClient(),
-                    speaker=morning_speaker,
-                    weather_provider=MorningWeatherProvider(),
-                    state_store=JSONMorningRoutineStateStore(),
-                    logger=log_event,
-                )
-                # Register the Wake Up rule; grace window matches the routine config
-                _grace_seconds = int(
-                    self._morning_routine_svc._config.missed_trigger_grace_minutes * 60
-                )
-                morning_rule = CalendarRoutineRule(
-                    name="morning_routine",
-                    match_title_contains=["wake up"],
-                    handler=self._morning_routine_handler,
-                    allow_late_seconds=_grace_seconds,
-                )
-                # TODO: register movie routine when implemented
-                # TODO: register gym routine when implemented
-                # TODO: register meeting routine when implemented
-                self._cal_trigger_engine = CalendarEventTriggerEngine(
-                    calendar_reader=TriggerCalendarReader(),
-                    rules=[morning_rule],
-                    logger=log_event,
-                )
-                asyncio.create_task(self._calendar_trigger_loop())
-                print("[MORNING] init complete (trigger engine)", flush=True)
-                log_event("morning_routine_enabled", {})
-            except Exception as exc:
-                print(f"[MORNING] init error={exc!r}", flush=True)
-                log_event("morning_routine_init_error", {"error": str(exc)[:200]})
-        else:
-            print("[MORNING] disabled (env not matched)", flush=True)
-            log_event("morning_routine_disabled", {"raw": _mrn_raw})
+        self._init_morning_routine()
 
         # Connect now — session.update uses the pre-loaded context.
         # PROMETHEUS_REALTIME_REQUIRED=true preserves the old fatal behavior.
@@ -330,6 +287,50 @@ class PrometheusCore:
             except Exception as exc:
                 log_event("heartbeat_error", {"error": str(exc)})
             await asyncio.sleep(5.0)
+
+    def _init_morning_routine(self) -> None:
+        """Wire the morning routine workflow behind its single enable switch.
+
+        When morning_routine_enabled() is False, nothing is constructed: no
+        calendar polling, no Realtime sessions, no speech, no device control.
+        """
+        if not morning_routine_enabled():
+            print("[MORNING] disabled (PROMETHEUS_MORNING_ROUTINE_ENABLED not set)", flush=True)
+            log_event("morning_routine_disabled", {})
+            return
+        print("[MORNING] init starting", flush=True)
+        log_event("morning_routine_init_starting", {})
+        try:
+            morning_speaker = PrometheusMorningSpeaker(self.client)
+            self._morning_routine_svc = MorningRoutineService(
+                calendar_reader=MorningCalendarReader(),
+                ha_client=HomeAssistantMorningClient(),
+                speaker=morning_speaker,
+                weather_provider=MorningWeatherProvider(),
+                state_store=JSONMorningRoutineStateStore(),
+                logger=log_event,
+            )
+            # Register the Wake Up rule; grace window matches the routine config
+            _grace_seconds = int(
+                self._morning_routine_svc._config.missed_trigger_grace_minutes * 60
+            )
+            morning_rule = CalendarRoutineRule(
+                name="morning_routine",
+                match_title_contains=["wake up"],
+                handler=self._morning_routine_handler,
+                allow_late_seconds=_grace_seconds,
+            )
+            self._cal_trigger_engine = CalendarEventTriggerEngine(
+                calendar_reader=TriggerCalendarReader(),
+                rules=[morning_rule],
+                logger=log_event,
+            )
+            asyncio.create_task(self._calendar_trigger_loop())
+            print("[MORNING] init complete (trigger engine)", flush=True)
+            log_event("morning_routine_enabled", {})
+        except Exception as exc:
+            print(f"[MORNING] init error={exc!r}", flush=True)
+            log_event("morning_routine_init_error", {"error": str(exc)[:200]})
 
     async def _calendar_trigger_loop(self) -> None:
         """Drive the CalendarEventTriggerEngine. Never crashes the main loop."""
